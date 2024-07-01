@@ -12,13 +12,13 @@ assert() {
     # 把汇编代码输出到 tmp.s 中 如果失败直接退出
     ./rvcc "$input" > tmp.s || exit
 
-    # 在生成文件的时候注意写明路径 ./
+    # 在生成文件的时候注意写明路径
 
     # 生成 RISCV64 架构下的可执行文件
     riscv64-unknown-linux-gnu-gcc -static tmp.s -o ./tmp
 
     # 在 qemu-riscv64 架构下模拟运行
-    qemu-riscv64 -L $RISCV/sysroot ./tmp
+    qemu-riscv64 -L $RISCV/sysroot tmp
 
     # 记录运行结果
     output="$?"
@@ -37,6 +37,9 @@ assert() {
 # 进行测试
 assert 0 0
 assert 42 42
-assert '1+2-3' 0
+
+assert '1+4-3' 2
+
+assert '1 + 4 -3' 2
 
 echo OK
