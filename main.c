@@ -238,7 +238,8 @@ static Node* second_class_expr(Token** rest, Token* tok);
 // primary_class_expr = '(' | ')' | num
 static Node* primary_class_expr(Token** rest, Token* tok);
 
-// Q: rest 是 where how 起到的作用
+// Q: rest 是 where and how 起到的作用
+// 没看出来
 
 static Node* first_class_expr(Token** rest, Token* tok) {
     // 处理最左表达式
@@ -381,26 +382,6 @@ int main(int argc, char* argv[]) {
 
     // 后端生成代码
     codeGen(currentAST);
-    
-    // int first_num = getNumber(input_token);
-    // printf("  li a0, %d\n", first_num);
-
-    // // 更新 token 的位置(如果语法正确应该是符号)
-    // input_token = input_token->next;
-
-    // while(input_token->token_kind != TOKEN_EOF) {
-    //     // 统一为 addi 处理(因为 RISCV64 只有加法指令)
-    //     if (equal(input_token, "+")) {
-    //         input_token = input_token->next;
-    //         printf("  addi a0, a0, %d\n", getNumber(input_token));
-    //         input_token = input_token->next;
-    //         continue;
-    //     }
-
-    //     input_token = skip(input_token, "-");   // 记得要通过 skip 更新
-    //     printf("  addi a0, a0, -%d\n", getNumber(input_token));
-    //     input_token = input_token->next;
-    // }
 
     printf("  ret\n");
 
