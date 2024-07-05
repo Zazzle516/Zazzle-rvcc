@@ -134,6 +134,7 @@ static Token* newToken(TokenKind token_kind, char* start, char* end) {
     // 为了编译器的效率 这里分配的空间并没有释放
 }
 
+// 词法分析 生成 TokenSteam 交给语法分析
 static Token* tokenize(char* input_ptr) {
     // 词法分析 根据链表的结构去调用 newToken() 构造
     Token HEAD = {};                 // 声明 HEAD 为空
@@ -166,7 +167,7 @@ static Token* tokenize(char* input_ptr) {
         }
 
         // 仅处理运算符
-        if (*input_ptr == '+' || *input_ptr == '-') {
+        if (ispunct(*input_ptr)) {
             // 如果是运算符 目前的运算符只有一位 +/-
             currToken->next = newToken(TOKEN_OP, input_ptr, input_ptr + 1);
             input_ptr ++;
@@ -184,6 +185,170 @@ static Token* tokenize(char* input_ptr) {
     return HEAD.next;
 }
 
+// 语法分析 结合语法规则判断输入是否合法并且生成 AST
+
+// 声明 AST 的节点类型
+typedef enum {
+    ND_NUM,
+    ND_ADD,
+    ND_SUB,
+    ND_MUL,
+    ND_DIV
+}NODE_KIND;
+
+// 定义 AST 的结点结构
+typedef struct Node Node;
+struct Node {
+    NODE_KIND node_kind;
+    int val;                // 针对 ND_NUM 记录大小
+    Node* LHS;
+    Node* RHS;
+};
+
+// 定义 AST 结点  (注意因为 ND_NUM 的定义不同要分开处理)
+
+// 创造新的结点并分配空间
+static Node* createNode(NODE_KIND node_kind) {
+    Node* newNode = calloc(1, sizeof(Node));
+    newNode->node_kind = node_kind;
+    return newNode;
+}
+
+// 针对数字结点的额外的值定义
+static Node* numNode(int val) {
+    Node* newNode = createNode(ND_NUM);
+    newNode->val = val;
+    return newNode;
+}
+
+// 定义 AST 的树型结构  (本质上仍然是一个结点但是有左右子树的定义)
+static Node* createAST(NODE_KIND node_kind, Node* LHS, Node* RHS) {
+    Node* rootNode = createNode(node_kind);
+    rootNode->LHS = LHS;
+    rootNode->RHS = RHS;
+    return rootNode;
+}
+
+
+// 定义产生式关系并完成自顶向下的递归调用
+// first_class_expr = first_class_expr (+|- first_class_expr)*
+static Node* first_class_expr(Token** rest, Token* tok);
+// second_class_expr = second_class_expr (*|/ second_class_expr)
+static Node* second_class_expr(Token** rest, Token* tok);
+// primary_class_expr = '(' | ')' | num
+static Node* primary_class_expr(Token** rest, Token* tok);
+
+// Q: rest 是 where how 起到的作用
+
+static Node* first_class_expr(Token** rest, Token* tok) {
+    // 处理最左表达式
+    Node* ND = second_class_expr(&tok, tok);
+
+    while(true) {
+        // 如果仍然有表达式的话
+        if (equal(tok, "+")) {
+            // 构建 ADD 根节点 (注意使用的是 tok->next) 并且
+            ND = createAST(ND_ADD, ND, second_class_expr(&tok, tok->next));
+            continue;
+        }
+
+        if (equal(tok, "-")) {
+            // 同理建立 SUB 根节点
+            ND = createAST(ND_SUB, ND, second_class_expr(&tok, tok->next));
+            continue;
+        }
+
+        // 表达式解析结束   退出
+        *rest = tok;        // rest 所指向的指针 = tok  rest 仍然维持一个 3 层的指针结构
+        return ND;
+    }
+}
+
+static Node* second_class_expr(Token** rest, Token* tok) {
+    Node* ND = primary_class_expr(&tok, tok);
+
+    while(true) {
+        if (equal(tok, "*")) {
+            ND = createAST(ND_MUL, ND, primary_class_expr(&tok, tok->next));
+            continue;
+        }
+
+        if (equal(tok, "/")) {
+            ND = createAST(ND_DIV, ND, primary_class_expr(&tok, tok->next));
+            continue;
+        }
+
+        *rest = tok;
+        return ND;
+    }
+}
+
+static Node* primary_class_expr(Token** rest, Token* tok) {
+    if (equal(tok, "(")) {
+        // 递归调用顶层表达式处理
+        Node* ND = first_class_expr(&tok, tok->next);
+        *rest = skip(tok, ")");
+        return ND;
+    }
+
+    if ((tok->token_kind) == TOKEN_NUM) {
+        Node* ND = numNode(tok->value);
+        *rest = tok->next;
+        return ND;
+    }
+
+    // 错误处理
+    tokenErrorAt(tok, "expected an expr");
+    return NULL;
+}
+
+// 后端生成 生成指定 ISA 的汇编代码
+
+// 记录当前的栈深度 用于后续的运算合法性判断
+static int StackDepth;
+
+static void push_stack(void) {
+    printf("  addi sp, sp, -8\n");
+    printf("  sd a0, 0(sp)\n");
+    StackDepth++;
+}
+
+static void pop_stack(char* reg) {
+    printf("  ld %s, 0(sp)\n", reg);
+    printf("  addi sp, sp, 8\n");
+    StackDepth--;
+}
+
+// 根据 AST 和目标后端 RISCV-64 生成代码
+static void codeGen(Node* AST) {
+    if (AST->node_kind == ND_NUM) {
+        printf("  li a0, %d\n", AST->val);
+        return;
+    }
+
+    codeGen(AST->RHS);
+    push_stack();
+    codeGen(AST->LHS);
+    pop_stack("a1");        // 把 LHS 的计算结果弹出    根据根节点情况计算
+
+    switch (AST->node_kind)
+    {
+    case ND_ADD:
+        printf("  add a0, a0, a1\n");
+        return;
+    case ND_SUB:
+        printf("  sub a0, a0, a1\n");
+        return;
+    case ND_MUL:
+        printf("  mul a0, a0, a1\n");
+        return;
+    case ND_DIV:
+        printf("  div a0, a0, a1\n");
+        return;
+    default:
+        errorHint("invalid expr");
+    }
+}
 
 int main(int argc, char* argv[]) {
     // 首先是对异常状态的判断
@@ -202,28 +367,46 @@ int main(int argc, char* argv[]) {
     
     // 把输入流进行标签化 得到 TokenStream 链表     此时没有空格
     Token* input_token = tokenize(input_ptr);
-    
-    int first_num = getNumber(input_token);
-    printf("  li a0, %d\n", first_num);
 
-    // 更新 token 的位置(如果语法正确应该是符号)
-    input_token = input_token->next;
+    // 调用语法分析
+    Node* currentAST = first_class_expr(&input_token, input_token);
 
-    while(input_token->token_kind != TOKEN_EOF) {
-        // 统一为 addi 处理(因为 RISCV64 只有加法指令)
-        if (equal(input_token, "+")) {
-            input_token = input_token->next;
-            printf("  addi a0, a0, %d\n", getNumber(input_token));
-            input_token = input_token->next;
-            continue;
-        }
-
-        input_token = skip(input_token, "-");   // 记得要通过 skip 更新
-        printf("  addi a0, a0, -%d\n", getNumber(input_token));
-        input_token = input_token->next;
+    // 注意这里是在语法分析结束后再检查词法的结束正确性
+    if (input_token->token_kind != TOKEN_EOF) {
+        // 因为在 first_class_expr() 执行之前 input_token 仍然指向第一个 token
+        // 在 first_class_expr() 执行之后 此时指向最后一个 Token_EOF
+        // 不放在这个位置会报错
+        tokenErrorAt(input_token, "extra Token");
     }
 
-    // 考虑到终结情况 比如 1-1-1- 转化为 1-1-1-0    (虽然功能上没问题 但是应该报错 Warning
+    // 后端生成代码
+    codeGen(currentAST);
+    
+    // int first_num = getNumber(input_token);
+    // printf("  li a0, %d\n", first_num);
+
+    // // 更新 token 的位置(如果语法正确应该是符号)
+    // input_token = input_token->next;
+
+    // while(input_token->token_kind != TOKEN_EOF) {
+    //     // 统一为 addi 处理(因为 RISCV64 只有加法指令)
+    //     if (equal(input_token, "+")) {
+    //         input_token = input_token->next;
+    //         printf("  addi a0, a0, %d\n", getNumber(input_token));
+    //         input_token = input_token->next;
+    //         continue;
+    //     }
+
+    //     input_token = skip(input_token, "-");   // 记得要通过 skip 更新
+    //     printf("  addi a0, a0, -%d\n", getNumber(input_token));
+    //     input_token = input_token->next;
+    // }
+
     printf("  ret\n");
+
+    // 通过栈对运算合法性判断
+    if (StackDepth != 0) {
+        errorHint("Wrong syntax");
+    }
     return 0;
 }
