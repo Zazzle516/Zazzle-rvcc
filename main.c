@@ -186,13 +186,16 @@ static Token* tokenize() {
 
 // 语法分析 结合语法规则判断输入是否合法并且生成 AST
 
+// 在引入一元运算符后 涉及到单叉树的构造(本质上是看成负号 和一般意义上的 ++|-- 不同)
+
 // 声明 AST 的节点类型
 typedef enum {
     ND_NUM,
     ND_ADD,
     ND_SUB,
     ND_MUL,
-    ND_DIV
+    ND_DIV,
+    ND_NEG
 }NODE_KIND;
 
 // 定义 AST 的结点结构
@@ -228,17 +231,30 @@ static Node* createAST(NODE_KIND node_kind, Node* LHS, Node* RHS) {
     return rootNode;
 }
 
+// 作用于一元运算符的单边树
+static Node* createSingleNEG(Node* single_side) {
+    Node* rootNode = createNode(ND_NEG);
+    rootNode->LHS = single_side;            // 定义在左子树中
+    return rootNode;
+}
+
 
 // 定义产生式关系并完成自顶向下的递归调用
-// first_class_expr = first_class_expr (+|- first_class_expr)*
+// first_class_expr = second_class_expr (+|- second_class_expr)*
 static Node* first_class_expr(Token** rest, Token* tok);
-// second_class_expr = second_class_expr (*|/ second_class_expr)
+
+// second_class_expr = third_class_expr (*|/ third_class_expr)
 static Node* second_class_expr(Token** rest, Token* tok);
+// 针对一元表达式 可能出现多个符号相连的情况 需要优先提取出运算符   剩余的作为一元表达式存在
+// 因为负号有可能改变结点的值   所以只需要针对负号进行判断
+// third_class_expr = (+|-)third_class_expr | primary_class_expr
+static Node* third_class_expr(Token** rest, Token* tok);
+
 // primary_class_expr = '(' | ')' | num
 static Node* primary_class_expr(Token** rest, Token* tok);
 
 // Q: rest 是 where and how 起到的作用
-// 没看出来
+// 没什么作用 把 rest 删了不影响函数功能 只是方便跟踪
 
 static Node* first_class_expr(Token** rest, Token* tok) {
     // 处理最左表达式
@@ -265,22 +281,38 @@ static Node* first_class_expr(Token** rest, Token* tok) {
 }
 
 static Node* second_class_expr(Token** rest, Token* tok) {
-    Node* ND = primary_class_expr(&tok, tok);
+    Node* ND = third_class_expr(&tok, tok);
 
     while(true) {
         if (equal(tok, "*")) {
-            ND = createAST(ND_MUL, ND, primary_class_expr(&tok, tok->next));
+            ND = createAST(ND_MUL, ND, third_class_expr(&tok, tok->next));
             continue;
         }
 
         if (equal(tok, "/")) {
-            ND = createAST(ND_DIV, ND, primary_class_expr(&tok, tok->next));
+            ND = createAST(ND_DIV, ND, third_class_expr(&tok, tok->next));
             continue;
         }
 
         *rest = tok;
         return ND;
     }
+}
+
+static Node* third_class_expr(Token** rest, Token* tok) {
+    if (equal(tok, "+")) {
+        // 正数跳过
+        return third_class_expr(rest, tok->next);
+    }
+
+    if (equal(tok, "-")) {
+        // 作为负数标志记录结点
+        Node* ND = createSingleNEG(third_class_expr(rest, tok->next));
+        return ND;
+    }
+
+    // 直到找到一个非运算符
+    return primary_class_expr(rest, tok);
 }
 
 static Node* primary_class_expr(Token** rest, Token* tok) {
@@ -321,9 +353,19 @@ static void pop_stack(char* reg) {
 
 // 根据 AST 和目标后端 RISCV-64 生成代码
 static void codeGen(Node* AST) {
-    if (AST->node_kind == ND_NUM) {
+    switch (AST->node_kind)
+    {
+    case ND_NUM:
         printf("  li a0, %d\n", AST->val);
         return;
+    case ND_NEG:
+        // 因为是单叉树所以某种程度上也是终结状态   递归找到最后的数字
+        codeGen(AST->LHS);
+        printf("  neg a0, a0\n");
+        return;
+    default:
+        // +|-|*|/ 其余运算 需要继续向下判断
+        break;
     }
 
     codeGen(AST->RHS);
@@ -331,6 +373,7 @@ static void codeGen(Node* AST) {
     codeGen(AST->LHS);
     pop_stack("a1");        // 把 LHS 的计算结果弹出    根据根节点情况计算
 
+    // 根据当前根节点的类型完成运算
     switch (AST->node_kind)
     {
     case ND_ADD:
