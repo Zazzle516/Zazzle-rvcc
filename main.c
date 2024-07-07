@@ -11,7 +11,7 @@
 typedef enum {
     TOKEN_EOF,              // 终结符
     TOKEN_NUM,              // 数字
-    TOKEN_OP                // 运算符
+    TOKEN_OP                // 运算符       在 commit[7] 中新增的比较符也计入 TOKEN_OP 中
 } TokenKind;
 
 // 全局变量 记录输入流的起始位置(方便后续找到具体的错误位置)
@@ -134,6 +134,21 @@ static Token* newToken(TokenKind token_kind, char* start, char* end) {
     // 为了编译器的效率 这里分配的空间并没有释放
 }
 
+// 引入比较符后修改 isdigit() 的判断
+
+// 比较字符串是否相等   和 equal() 中的 memcmp() 区分
+static bool strCmp(char* input_ptr, char* target) {
+    return (strncmp(input_ptr, target, strlen(target)) == 0);
+}
+
+static int readPunct(char* input_ptr) {
+    // 同理通过比较内存的方式   优先判断长度更长的运算符
+    if (strCmp(input_ptr, "==") || strCmp(input_ptr, "!=") || strCmp(input_ptr, ">=") || strCmp(input_ptr, "<=")) {
+        return 2;
+    }
+    return (ispunct(*input_ptr) ? 1: 0);      // 单运算符返回 1 否则为 0
+}
+
 // 词法分析 生成 TokenSteam 交给语法分析
 static Token* tokenize(char* input_ptr) {
     // 词法分析 根据链表的结构去调用 newToken() 构造
@@ -167,10 +182,11 @@ static Token* tokenize(char* input_ptr) {
         }
 
         // 仅处理运算符
-        if (ispunct(*input_ptr)) {
+        int opLen = readPunct(input_ptr);
+        if (opLen > 0) {
             // 如果是运算符 目前的运算符只有一位 +/-
-            currToken->next = newToken(TOKEN_OP, input_ptr, input_ptr + 1);
-            input_ptr ++;
+            currToken->next = newToken(TOKEN_OP, input_ptr, input_ptr + opLen);
+            input_ptr += opLen;                 // 根据符号长度更新指向!!!
             currToken = currToken->next;        // 更新指向下一个位置
             continue;
         }
@@ -196,7 +212,15 @@ typedef enum {
     ND_SUB,
     ND_MUL,
     ND_DIV,
-    ND_NEG
+    ND_NEG,
+
+    // 新增比较运算符
+    ND_EQ,
+    ND_NEQ,
+    ND_GE,      // Greater Equal
+    ND_LE,      // Less Equal
+    ND_GT,      // Greater Then
+    ND_LT       // Less Then
 }NODE_KIND;
 
 // 定义 AST 的结点结构
@@ -239,23 +263,74 @@ static Node* createSingleNEG(Node* single_side) {
     return rootNode;
 }
 
+// 在新增比较符后比较符的运算优先
+// expr = equality          本质上不需要但是结构清晰
+// equality = relation op relation                      op = (!= | ==)
+// relation = first_class_expr op first_class_expr      op = (>= | > | < | <=)
+// first_class_expr = second_class_expr (+|- second_class_expr)*
+// second_class_expr = third_class_expr (*|/ third_class_expr)
+// third_class_expr = (+|-)third_class_expr | primary_class_expr        优先拆分出一个符号作为 减法符号
+// primary_class_expr = '(' | ')' | num
 
 // 定义产生式关系并完成自顶向下的递归调用
-// first_class_expr = second_class_expr (+|- second_class_expr)*
+static Node* expr(Token** rest, Token* tok);
+static Node* equality_expr(Token** rest, Token* tok);       // 针对 (3 < 6 == 5) 需要优先判断 (<)
+static Node* relation_expr(Token** rest, Token* tok);
 static Node* first_class_expr(Token** rest, Token* tok);
-
-// second_class_expr = third_class_expr (*|/ third_class_expr)
 static Node* second_class_expr(Token** rest, Token* tok);
-// 针对一元表达式 可能出现多个符号相连的情况 需要优先提取出运算符   剩余的作为一元表达式存在
-// 因为负号有可能改变结点的值   所以只需要针对负号进行判断
-// third_class_expr = (+|-)third_class_expr | primary_class_expr
 static Node* third_class_expr(Token** rest, Token* tok);
-
-// primary_class_expr = '(' | ')' | num
 static Node* primary_class_expr(Token** rest, Token* tok);
 
 // Q: rest 是 where and how 起到的作用
 // 没什么作用 把 rest 删了不影响函数功能 只是方便跟踪
+static Node* expr(Token** rest, Token* tok) {
+    return equality_expr(rest, tok);
+}
+
+static Node* equality_expr(Token** rest, Token* tok) {
+    Node* ND = relation_expr(&tok, tok);
+    while(true) {
+        // 比较符号后面不可能还是比较符号
+        if (equal(tok, "!=")) {
+            ND = createAST(ND_NEQ, ND, relation_expr(&tok, tok->next));
+            continue;
+        }
+        if (equal(tok, "==")) {
+            ND = createAST(ND_EQ, ND, relation_expr(&tok, tok->next));
+            continue;
+        }
+        *rest = tok;
+        return ND;
+    }
+}
+
+static Node* relation_expr(Token** rest, Token* tok) {
+    Node* ND = first_class_expr(&tok, tok);
+
+    while(true) {
+        if (equal(tok, ">=")) {
+            ND = createAST(ND_GE, ND, first_class_expr(&tok, tok->next));
+            continue;
+        }
+
+        if (equal(tok, "<=")) {
+            ND = createAST(ND_LE, ND, first_class_expr(&tok, tok->next));
+            continue;
+        }
+
+        if (equal(tok, "<")) {
+            ND = createAST(ND_LT, ND, first_class_expr(&tok, tok->next));
+            continue;
+        }
+
+        if (equal(tok, ">")) {
+            ND = createAST(ND_GT, ND, first_class_expr(&tok, tok->next));
+            continue;
+        }
+        *rest = tok;
+        return ND;
+    }
+}
 
 static Node* first_class_expr(Token** rest, Token* tok) {
     // 处理最左表达式
@@ -319,7 +394,7 @@ static Node* third_class_expr(Token** rest, Token* tok) {
 static Node* primary_class_expr(Token** rest, Token* tok) {
     if (equal(tok, "(")) {
         // 递归调用顶层表达式处理
-        Node* ND = first_class_expr(&tok, tok->next);
+        Node* ND = expr(&tok, tok->next);
         *rest = skip(tok, ")");
         return ND;
     }
@@ -389,6 +464,34 @@ static void codeGen(Node* AST) {
     case ND_DIV:
         printf("  div a0, a0, a1\n");
         return;
+
+    case ND_EQ:
+    case ND_NEQ:
+        // 汇编层面通过 xor 比较结果
+        printf("  xor a0, a0, a1\n");       // 异或结果储存在 a0 中
+        if (AST->node_kind == ND_EQ) 
+            printf("  seqz a0, a0\n");                   // 判断结果 == 0
+        if (AST->node_kind == ND_NEQ)
+            printf("  snez a0, a0\n");                   // 判断结果 > 0
+        return;
+
+    case ND_GT:
+        printf("  sgt a0, a0, a1\n");
+        return;
+    case ND_LT:
+        printf("  slt a0, a0, a1\n");
+        return;
+
+    case ND_GE:
+        // 转换为判断是否小于
+        printf("  slt a0, a0, a1\n");       // 先判断 > 情况
+        printf("  xori a0, a0, 1\n");       // 再判断 == 情况
+        return;
+    case ND_LE:
+        printf("  sgt a0, a0, a1\n");
+        printf("  xori a0, a0, 1\n");
+        return;
+    
     default:
         errorHint("invalid expr");
     }
@@ -413,7 +516,7 @@ int main(int argc, char* argv[]) {
     Token* input_token = tokenize(input_ptr);
 
     // 调用语法分析
-    Node* currentAST = first_class_expr(&input_token, input_token);
+    Node* currentAST = expr(&input_token, input_token);
 
     // 注意这里是在语法分析结束后再检查词法的结束正确性
     if (input_token->token_kind != TOKEN_EOF) {
