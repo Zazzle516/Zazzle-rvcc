@@ -51,4 +51,25 @@ assert '- -10' 10
 assert '- - +10' 10
 assert '------12*+++++----++++++++++4' 48
 
+# [7] 支持条件运算符
+assert '0==1' 0
+assert '42==42' 1
+assert '0!=1' 1
+assert '42!=42' 0
+assert '0<1' 1
+assert '1<1' 0
+assert '2<1' 0
+assert '0<=1' 1
+assert '1<=1' 1
+assert '2<=1' 0
+assert '1>0' 1
+assert '1>1' 0
+assert '1>2' 0
+assert '1>=0' 1
+assert '1>=1' 1
+assert '1>=2' 0
+assert '5==2+3' 1
+assert '6==4+3' 0
+assert '0*9+5*2==4+4*(6/3)-2' 1
+
 echo OK
