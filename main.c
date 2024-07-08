@@ -12,6 +12,7 @@ typedef enum {
     TOKEN_EOF,              // 终结符
     TOKEN_NUM,              // 数字
     TOKEN_OP                // 运算符       在 commit[7] 中新增的比较符也计入 TOKEN_OP 中
+    TOKEN_OP                // 运算符       在 commit[7] 中新增的比较符也计入 TOKEN_OP 中
 } TokenKind;
 
 // 全局变量 记录输入流的起始位置(方便后续找到具体的错误位置)
