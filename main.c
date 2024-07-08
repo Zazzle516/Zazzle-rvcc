@@ -134,56 +134,55 @@ static Token* newToken(TokenKind token_kind, char* start, char* end) {
     // 为了编译器的效率 这里分配的空间并没有释放
 }
 
-static Token* tokenize(char* input_ptr) {
+static Token* tokenize() {
     // 词法分析 根据链表的结构去调用 newToken() 构造
     Token HEAD = {};                 // 声明 HEAD 为空
     Token* currToken = &HEAD;        // 指向 HEAD 类型为 Token 的指针 声明为 currToken 注意是指针哦 通过 '->' 调用
     char* P = InputHEAD;
 
-    while(*input_ptr) {
+    while(*P) {
         // 对空格没有使用 while 因为如果在里面写了 continue 的话 while 实际上就没有意义了
         // 如果不写 continue 程序就会继续执行 访问到 errorHint()
-        if (isspace(*input_ptr)) {
+        if (isspace(*P)) {
             // 跳过空格 \t \n \v \f \r
-            input_ptr ++;
+            P ++;
             continue;
         }
 
         // 把数字和操作符分开处理
 
         // 仅处理数字
-        if (isdigit(*input_ptr)) {
+        if (isdigit(*P)) {
             // isdigit() 比较特殊 一次只能判断一个字符 如果是一个很大的数字 需要使用 while 循环判断
-            currToken->next = newToken(TOKEN_NUM, input_ptr, input_ptr);
+            currToken->next = newToken(TOKEN_NUM, P, P);
             currToken = currToken->next;
 
-            const char* start = input_ptr;
-            currToken->value = strtoul(input_ptr, &input_ptr, 10);
-            currToken->length = input_ptr - start;      // 在 newToken() 的时候还无法确定长度 在此时确定后重置
+            const char* start = P;
+            currToken->value = strtoul(P, &P, 10);      // 因为符号会额外处理 所以这里转换为 无符号数
+            currToken->length = P - start;              // 在 newToken() 的时候还无法确定长度 在此时确定后重置
 
-            // 此时 input_ptr 通过 strtoul() 指向了非数字字符 空格或者符号
+            // 此时 P 通过 strtoul() 指向了非数字字符 空格或者符号
             continue;
         }
 
         // 仅处理运算符
-        if (*input_ptr == '+' || *input_ptr == '-') {
+        if (*P == '+' || *P == '-') {
             // 如果是运算符 目前的运算符只有一位 +/-
-            currToken->next = newToken(TOKEN_OP, input_ptr, input_ptr + 1);
-            input_ptr ++;
+            currToken->next = newToken(TOKEN_OP, P, P + 1);
+            P ++;
             currToken = currToken->next;        // 更新指向下一个位置
             continue;
         }
 
-        charErrorAt(input_ptr, "Wrong Syntax: %c", *input_ptr);
+        charErrorAt(P, "Wrong Syntax: %c", *P);
     }
 
     // 添加终结符
-    currToken->next = newToken(TOKEN_EOF, input_ptr, input_ptr);
+    currToken->next = newToken(TOKEN_EOF, P, P);
 
     // 对直接存在的结构体调用 "成员变量"
     return HEAD.next;
 }
-
 
 int main(int argc, char* argv[]) {
     // 首先是对异常状态的判断
@@ -201,7 +200,7 @@ int main(int argc, char* argv[]) {
     InputHEAD = argv[1];
     
     // 把输入流进行标签化 得到 TokenStream 链表     此时没有空格
-    Token* input_token = tokenize(input_ptr);
+    Token* input_token = tokenize();
     
     int first_num = getNumber(input_token);
     printf("  li a0, %d\n", first_num);
@@ -213,7 +212,7 @@ int main(int argc, char* argv[]) {
         // 统一为 addi 处理(因为 RISCV64 只有加法指令)
         if (equal(input_token, "+")) {
             input_token = input_token->next;
-            printf("  addi a0, a0, %d\n", getNumber(input_token));
+            printf("  addi a0, a0, %d\n", getNumber(input_token));      // 如果出现 1++ 这类错误会在 getNumber() 调用 tokenErrorAt()
             input_token = input_token->next;
             continue;
         }
