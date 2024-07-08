@@ -12,7 +12,6 @@ typedef enum {
     TOKEN_EOF,              // 终结符
     TOKEN_NUM,              // 数字
     TOKEN_OP                // 运算符       在 commit[7] 中新增的比较符也计入 TOKEN_OP 中
-    TOKEN_OP                // 运算符       在 commit[7] 中新增的比较符也计入 TOKEN_OP 中
 } TokenKind;
 
 // 全局变量 记录输入流的起始位置(方便后续找到具体的错误位置)
@@ -133,21 +132,6 @@ static Token* newToken(TokenKind token_kind, char* start, char* end) {
     return currToken;
 
     // 为了编译器的效率 这里分配的空间并没有释放
-}
-
-// 引入比较符后修改 isdigit() 的判断
-
-// 比较字符串是否相等   和 equal() 中的 memcmp() 区分
-static bool strCmp(char* input_ptr, char* target) {
-    return (strncmp(input_ptr, target, strlen(target)) == 0);
-}
-
-static int readPunct(char* input_ptr) {
-    // 同理通过比较内存的方式   优先判断长度更长的运算符
-    if (strCmp(input_ptr, "==") || strCmp(input_ptr, "!=") || strCmp(input_ptr, ">=") || strCmp(input_ptr, "<=")) {
-        return 2;
-    }
-    return (ispunct(*input_ptr) ? 1: 0);      // 单运算符返回 1 否则为 0
 }
 
 // 引入比较符后修改 isdigit() 的判断
@@ -462,7 +446,7 @@ static void codeGen(Node* AST) {
     codeGen(AST->RHS);
     push_stack();
     codeGen(AST->LHS);
-    pop_stack("a1");        // 把 LHS 的计算结果弹出    根据根节点情况计算
+    pop_stack("a1");        // 把 RHS 的计算结果弹出    根据根节点情况计算
 
     // 根据当前根节点的类型完成运算
     switch (AST->node_kind)
