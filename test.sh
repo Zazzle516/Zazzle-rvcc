@@ -4,8 +4,8 @@
 assert() {
     # !注意有引号
     # !注意也不能有空格 !!!!
-    input="$1"
-    expected="$2"
+    expected="$1"
+    input="$2"
 
     # 自动化执行过程    默认已经生成 rvcc
 
@@ -34,42 +34,51 @@ assert() {
     fi
 }
 
-# 进行测试
-assert 0 0
-assert 42 42
+# assert 期待值 输入值
+# [1] 返回指定数值
+assert 0 '0;'
+assert 42 '42;'
 
-assert '1+4-3' 2
+# [2] 支持+ -运算符
+assert 34 '12-34+56;'
 
-assert '1 + 4 -3' 2
+# [3] 支持空格
+assert 41 ' 12 + 34 - 5 ;'
 
-assert '5+6*7' 47
-assert '5*(9-6)' 15
-assert '1-8/(2*2)+3*6' 17
+# [5] 支持* / ()运算符
+assert 47 '5+6*7;'
+assert 15 '5*(9-6);'
+assert 17 '1-8/(2*2)+3*6;'
 
-assert '-10+20' 10
-assert '- -10' 10
-assert '- - +10' 10
-assert '------12*+++++----++++++++++4' 48
+# [6] 支持一元运算的+ -
+assert 10 '-10+20;'
+assert 10 '- -10;'
+assert 10 '- - +10;'
+assert 48 '------12*+++++----++++++++++4;'
 
 # [7] 支持条件运算符
-assert '0==1' 0
-assert '42==42' 1
-assert '0!=1' 1
-assert '42!=42' 0
-assert '0<1' 1
-assert '1<1' 0
-assert '2<1' 0
-assert '0<=1' 1
-assert '1<=1' 1
-assert '2<=1' 0
-assert '1>0' 1
-assert '1>1' 0
-assert '1>2' 0
-assert '1>=0' 1
-assert '1>=1' 1
-assert '1>=2' 0
-assert '5==2+3' 1
-assert '6==4+3' 0
-assert '0*9+5*2==4+4*(6/3)-2' 1
+assert 0 '0==1;'
+assert 1 '42==42;'
+assert 1 '0!=1;'
+assert 0 '42!=42;'
+assert 1 '0<1;'
+assert 0 '1<1;'
+assert 0 '2<1;'
+assert 1 '0<=1;'
+assert 1 '1<=1;'
+assert 0 '2<=1;'
+assert 1 '1>0;'
+assert 0 '1>1;'
+assert 0 '1>2;'
+assert 1 '1>=0;'
+assert 1 '1>=1;'
+assert 0 '1>=2;'
+assert 1 '5==2+3;'
+assert 0 '6==4+3;'
+assert 1 '0*9+5*2==4+4*(6/3)-2;'
+
+# [9] 支持;分割语句
+assert 3 '1; 2; 3;'
+assert 12 '12+23;12+99/3;78-66;'
 
 echo OK

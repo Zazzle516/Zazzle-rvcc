@@ -85,10 +85,27 @@ static void assemblyGen(Node* AST) {
     }
 }
 
+static void exprGen(Node* AST) {
+    // 针对单个 exprStamt 结点的 codeGen()  (循环是针对链表的所以不会出现在这里)
+    if (AST->node_kind == ND_STAMT) {
+        return assemblyGen(AST->LHS);
+    }
+
+    errorHint("invalid statement\n");
+}
+
 void codeGen(Node* AST) {
     printf("  .global main\n");
     printf("main:\n");
-    assemblyGen(AST);
+    
+    // 这里的 AST 实际上是链表而不是树结构
+    for (Node* ND = AST; ND != NULL; ND = ND->next) {
+        exprGen(ND);
+        // Q: 每行语句都能保证 stack 为空吗
+        // 目前是的 因为每个完整的语句都是个运算式 虽然不一定有赋值(即使有赋值 因为没有定义寄存器结构会被后面的结果直接覆盖 a0)
+        assert(StackDepth==0);
+    }
+
     printf("  ret\n");
-    assert(StackDepth==0);
+    
 }

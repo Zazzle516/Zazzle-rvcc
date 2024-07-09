@@ -60,7 +60,10 @@ typedef enum {
     ND_GE,      // Greater Equal
     ND_LE,      // Less Equal
     ND_GT,      // Greater Then
-    ND_LT       // Less Then
+    ND_LT,      // Less Then
+
+    // 新增语句分号判断
+    ND_STAMT
 }NODE_KIND;
 
 // 定义 AST 的结点结构
@@ -70,6 +73,9 @@ struct Node {
     int val;                // 针对 ND_NUM 记录大小
     Node* LHS;
     Node* RHS;
+
+    // commit[9]: 添加对 ';' 多语句的支持   每个语句 exprStamt 构成一个结点   整体是一个单叉树
+    Node* next;
 };
 
 Node* parse(Token* tok);
