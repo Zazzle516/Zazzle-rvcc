@@ -1,22 +1,32 @@
 #include "zacc.h"
 
+// 定义程序开始
+// program = stamt*
+
 // 在添加 exprStamt 后顶层以单叉树方式递归
 // stamt = exprStamt*
 // exprStamt = expr->;->expr->;->...
 
+// 添加对标识符的支持后新增 ASSIGN 语句
+// expr = assign
+// assign = equality (= assign)*                        支持递归性赋值
+
 // 在新增比较符后比较符的运算优先
-// expr = equality          本质上不需要但是结构清晰
 // equality = relation op relation                      op = (!= | ==)
 // relation = first_class_expr op first_class_expr      op = (>= | > | < | <=)
 // first_class_expr = second_class_expr (+|- second_class_expr)*
 // second_class_expr = third_class_expr (*|/ third_class_expr)
-// third_class_expr = (+|-)third_class_expr | primary_class_expr        优先拆分出一个符号作为 减法符号
+// third_class_expr = (+|-)third_class_expr | primary_class_expr        优先拆分出一个符号作为减法符号
 // primary_class_expr = '(' | ')' | num
 
 // 定义产生式关系并完成自顶向下的递归调用
+static Node* program(Token** rest, Token* tok);
 static Node* stamt(Token** rest, Token* tok);
 static Node* exprStamt(Token** rest, Token* tok);
 static Node* expr(Token** rest, Token* tok);
+
+static Node* assign(Token** rest, Token* tok);
+
 static Node* equality_expr(Token** rest, Token* tok);       // 针对 (3 < 6 == 5) 需要优先判断 (<)
 static Node* relation_expr(Token** rest, Token* tok);
 static Node* first_class_expr(Token** rest, Token* tok);
@@ -40,6 +50,13 @@ static Node* numNode(int val) {
     return newNode;
 }
 
+// 针对赋值变量(单字符)结点的定义
+static Node* singleVarNode(char name) {
+    Node* varNode = createNode(ND_VAR);
+    varNode->var_name = name;
+    return varNode;
+}
+
 // 定义 AST 的树型结构  (本质上仍然是一个结点但是有左右子树的定义)
 static Node* createAST(NODE_KIND node_kind, Node* LHS, Node* RHS) {
     Node* rootNode = createNode(node_kind);
@@ -60,6 +77,10 @@ static Node* createSingle(NODE_KIND node_kind, Node* single_side) {
 // Q: rest 是 where and how 起到的作用
 // 没什么作用 把 rest 删了不影响函数功能 只是方便跟踪
 
+static Node* program(Token** rest, Token* tok) {
+    return stamt(rest, tok);
+}
+
 static Node* stamt(Token** rest, Token* tok) {
     return exprStamt(rest, tok);
 }
@@ -74,7 +95,19 @@ static Node* exprStamt(Token** rest, Token* tok) {
 }
 
 static Node* expr(Token** rest, Token* tok) {
-    return equality_expr(rest, tok);
+    return assign(rest, tok);
+}
+
+// 赋值语句
+static Node* assign(Token** rest, Token* tok) {
+    Node* ND = equality_expr(&tok, tok);
+
+    // 支持类似于 'a = b = 1;' 这样的递归性赋值
+    if (equal(tok, "=")) {
+        ND = createAST(ND_ASSIGN, ND, assign(&tok, tok->next));
+    }
+    *rest = tok;
+    return ND;
 }
 
 // 相等判断
@@ -201,6 +234,12 @@ static Node* primary_class_expr(Token** rest, Token* tok) {
         return ND;
     }
 
+    if ((tok->token_kind) == TOKEN_IDENT) {
+        Node* ND = singleVarNode(*(tok->place));
+        *rest = tok->next;
+        return ND;
+    }
+
     // 错误处理
     tokenErrorAt(tok, "expected an expr");
     return NULL;
@@ -213,7 +252,7 @@ Node* parse(Token* tok) {
     Node* Curr = &HEAD;
 
     while(tok->token_kind != TOKEN_EOF) {
-        Curr->next = stamt(&tok, tok);      // 在解析中把 tok 指针位置更新到 ';' 的下一个位置
+        Curr->next = program(&tok, tok);      // 在解析中把 tok 指针位置更新到 ';' 的下一个位置
         Curr = Curr->next;                  // 更新下一个 Node 的存储位置
     }
 

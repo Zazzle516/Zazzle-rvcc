@@ -21,7 +21,9 @@
 typedef enum {
     TOKEN_EOF,              // 终结符
     TOKEN_NUM,              // 数字
-    TOKEN_OP                // 运算符       在 commit[7] 中新增的比较符也计入 TOKEN_OP 中
+    TOKEN_OP,               // 运算符       在 commit[7] 中新增的比较符也计入 TOKEN_OP 中
+
+    TOKEN_IDENT             // 标识     变量名 | 函数名  commit[10]
 } TokenKind;
 
 typedef struct Token Token;
@@ -63,7 +65,11 @@ typedef enum {
     ND_LT,      // Less Then
 
     // 新增语句分号判断
-    ND_STAMT
+    ND_STAMT,
+
+    // 新增赋值语句定义
+    ND_ASSIGN,
+    ND_VAR
 }NODE_KIND;
 
 // 定义 AST 的结点结构
@@ -76,6 +82,9 @@ struct Node {
 
     // commit[9]: 添加对 ';' 多语句的支持   每个语句 exprStamt 构成一个结点   整体是一个单叉树
     Node* next;
+
+    // commit[10]: 添加对标识符的支持
+    char var_name;
 };
 
 Node* parse(Token* tok);

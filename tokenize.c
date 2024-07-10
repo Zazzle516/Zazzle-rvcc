@@ -156,6 +156,15 @@ Token* tokenize(char* P) {
             continue;
         }
 
+        // 对单个字符进行处理 commit[10]    通过 ASCII 编码进行判断
+        if (((*P) >= 'a') && ((*P) <= 'z')) {
+            // 当时这里因为判断条件的限制   只能分辨小写字符    如果是大写的就判断不了了
+            currToken->next = newToken(TOKEN_IDENT, P, P + 1);
+            P++;            // 目前是单个字符 长度已知为 1 直接 ++ 就好
+            currToken = currToken->next;
+            continue;
+        }
+
         // 仅处理运算符
         int opLen = readPunct(P);
         if (opLen) {
