@@ -103,4 +103,10 @@ assert 5 'a=3;b=4;a=1;a+b;'
 
 echo commit-10-pass
 
+# [11] 支持多字母变量
+assert 3 'foo=3; foo;'
+assert 74 'foo2=70; bar4=4; foo2+bar4;'
+
+echo commit-11-pass
+
 echo all-test-passed

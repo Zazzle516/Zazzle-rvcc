@@ -8,6 +8,13 @@
 
 // Tip: 注意里面有哪些函数需要 static 修饰
 
+// 通过定义 _POSIX_C_SOURCE 指定一个值 控制头文件对 POSIX 功能的可见性
+// 199309L: 启用POSIX.1b (实时扩展) 标准
+// 199506L: 启用POSIX.1c (线程扩展) 标准
+// 200112L: 启用POSIX.1-2001 标准
+// 200809L: 启用POSIX.1-2008 标准
+#define _POSIX_C_SOURCE 200809L
+
 #include <assert.h>
 #include <ctype.h>
 #include <stdarg.h>
@@ -46,6 +53,28 @@ Token* skip(Token* input_token, char* target);
 Token* tokenize(char* P);       // main() 调用声明
 
 // 语法分析 parse() 数据结构和函数声明
+typedef struct Node Node;
+
+// commit[11]: 定义在 Function 中使用的 local 数据
+typedef struct Object Object;
+struct Object {
+    char* var_name;
+    int offset;         // 或许在当前写 'int value;' 是可行的 但考虑到后续对不同类型数据的可扩展性 直接读写存储位置会更方便
+
+    Object* next;
+};
+
+// commit[11]: 用 Function 结构体包裹 AST 携带数据之类的其他内容
+typedef struct Function Function;
+struct Function {
+    Node* AST;
+    Object* local;
+
+    // 目前只在栈上分配函数帧的空间需求(如果需要的空间非常大 要考虑从堆上动态分配空间)
+    // 现在只会报 Stack Overflow 的错误
+    int StackSize;
+};
+
 
 // 声明 AST 的节点类型
 typedef enum {
@@ -73,7 +102,7 @@ typedef enum {
 }NODE_KIND;
 
 // 定义 AST 的结点结构
-typedef struct Node Node;
+
 struct Node {
     NODE_KIND node_kind;
     int val;                // 针对 ND_NUM 记录大小
@@ -84,10 +113,11 @@ struct Node {
     Node* next;
 
     // commit[10]: 添加对标识符的支持
-    char var_name;
+    // char var_name;
+    Object* var;            // commit[11]: 更新为 Object 的存储方式
 };
 
-Node* parse(Token* tok);
+Function* parse(Token* tok);
 
 // 后端生成 codeGen() 数据结构和函数声明
-void codeGen(Node* AST);
+void codeGen(Function* AST);

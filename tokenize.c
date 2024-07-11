@@ -107,6 +107,21 @@ static Token* newToken(TokenKind token_kind, char* start, char* end) {
     // 为了编译器的效率 这里分配的空间并没有释放
 }
 
+// commit[11] 在支持任意变量名后新增判断
+
+// 变量名首位判断 [a-zA-Z_]
+static bool isIdentIndex1(char input_ptr) {
+    if ((input_ptr >= 'a' && input_ptr <= 'z') || (input_ptr >= 'A' && input_ptr <= 'Z') || input_ptr == '_') {
+        return true;
+    }
+    return false;
+}
+
+// 变量名其余位置判断 [a-zA-Z_0-9]
+static bool isIdentIndex(char input) {
+    return (isIdentIndex1(input) || (input >= '0' && input <= '9'));
+}
+
 // 引入比较符后修改 isdigit() 的判断
 
 // 比较字符串是否相等   和 equal() 中的 memcmp() 区分
@@ -157,10 +172,17 @@ Token* tokenize(char* P) {
         }
 
         // 对单个字符进行处理 commit[10]    通过 ASCII 编码进行判断
-        if (((*P) >= 'a') && ((*P) <= 'z')) {
+        // commit[11] 通过循环完成对变量名的获取
+        if (isIdentIndex1(*P)) {
+            char* start = P;
+            do
+            {
+                P++;
+            } while (isIdentIndex(*P));
+            
             // 当时这里因为判断条件的限制   只能分辨小写字符    如果是大写的就判断不了了
-            currToken->next = newToken(TOKEN_IDENT, P, P + 1);
-            P++;            // 目前是单个字符 长度已知为 1 直接 ++ 就好
+            currToken->next = newToken(TOKEN_IDENT, start, P);
+            // P += length;            目前是单个字符 长度已知为 1 直接 ++ 就好
             currToken = currToken->next;
             continue;
         }

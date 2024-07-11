@@ -14,10 +14,10 @@ int main(int argc, char* argv[]) {
     Token* input_token = tokenize(input_ptr);
 
     // 调用语法分析
-    Node* currentAST = parse(input_token);
+    Function* wrapper = parse(input_token);
 
     // 后端生成代码
-    codeGen(currentAST);
+    codeGen(wrapper);
 
     return 0;
 }

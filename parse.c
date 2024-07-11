@@ -19,6 +19,34 @@
 // third_class_expr = (+|-)third_class_expr | primary_class_expr        优先拆分出一个符号作为减法符号
 // primary_class_expr = '(' | ')' | num
 
+// commit[11]: 语法规则本身没有变化 主要是根据 Object 的修改
+// 定义当前函数栈帧使用到的局部变量链表
+Object* Local;
+
+// 当前只有一个匿名 main 函数帧 一旦扫描到一个 var 就检查一下是否已经定义过 如果没有定义过就在链表中新增定义
+static Object* findVar(Token* tok) {
+    // 找到了返回对应 Object 否则返回 NULL
+    for (Object* obj = Local; obj != NULL; obj = obj->next) {
+        // 优先判断长度 浅浅的提高一下效率
+        if ((strlen(obj->var_name) == tok->length) &&
+            !strncmp(obj->var_name, tok->place, tok->length)) {
+                return obj;
+            }
+        // Tip: strncmp() 相比 strcmp() 可以比较指定长度的字符串
+    }
+    return NULL;
+}
+
+// 对没有定义过的变量名 通过头插法新增到 Local 链表中
+static Object* newLocal(char* varName) {
+    Object* obj = calloc(1, sizeof(Object));
+    obj->var_name = varName;
+    obj->next = Local;      // Q: 每个变量结点其实都是指向了 Local 链表吗
+    Local = obj;
+    return obj;
+}
+
+
 // 定义产生式关系并完成自顶向下的递归调用
 static Node* program(Token** rest, Token* tok);
 static Node* stamt(Token** rest, Token* tok);
@@ -51,9 +79,9 @@ static Node* numNode(int val) {
 }
 
 // 针对赋值变量(单字符)结点的定义
-static Node* singleVarNode(char name) {
+static Node* singleVarNode(Object* var) {
     Node* varNode = createNode(ND_VAR);
-    varNode->var_name = name;
+    varNode->var = var;
     return varNode;
 }
 
@@ -235,7 +263,17 @@ static Node* primary_class_expr(Token** rest, Token* tok) {
     }
 
     if ((tok->token_kind) == TOKEN_IDENT) {
-        Node* ND = singleVarNode(*(tok->place));
+        // 先检查是否已经定义过 根据结果执行
+        Object* varObj = findVar(tok);
+        if (!varObj) {
+            // 已经定义过 => 已经在 Local 链表中添加过 => 直接声明结点就可以
+            // 没有定义过 => 先添加到 Local 链表中
+
+            // strndup() 复制指定长度的字符
+            varObj = newLocal(strndup(tok->place, tok->length));
+        }
+        // 初始化变量结点
+        Node* ND = singleVarNode(varObj);       // Tip: 变量结点指向的是链表 Local 对应结点的位置
         *rest = tok->next;
         return ND;
     }
@@ -246,7 +284,7 @@ static Node* primary_class_expr(Token** rest, Token* tok) {
 }
 
 // 读入 token stream 在每个 stamt 中处理一部分 token 结点
-Node* parse(Token* tok) {
+Function* parse(Token* tok) {
     // 以分号为间隔 每个表达式构成了一个结点 类似于 Token 的方式使用链表存储
     Node HEAD = {};
     Node* Curr = &HEAD;
@@ -263,5 +301,10 @@ Node* parse(Token* tok) {
         // 不放在这个位置会报错
         tokenErrorAt(tok, "extra Token");
     }
-    return HEAD.next;
+
+    Function* Func = calloc(1, sizeof(Function));
+    Func->AST = HEAD.next;
+    Func->local = Local;
+    // 对 Func->StackSize 的处理在 codeGen() 实现
+    return Func;
 }
