@@ -41,7 +41,7 @@ static Object* findVar(Token* tok) {
 static Object* newLocal(char* varName) {
     Object* obj = calloc(1, sizeof(Object));
     obj->var_name = varName;
-    obj->next = Local;      // Q: 每个变量结点其实都是指向了 Local 链表吗
+    obj->next = Local;      // 每个变量结点其实都是指向了 Local 链表
     Local = obj;
     return obj;
 }
@@ -266,7 +266,7 @@ static Node* primary_class_expr(Token** rest, Token* tok) {
         // 先检查是否已经定义过 根据结果执行
         Object* varObj = findVar(tok);
         if (!varObj) {
-            // 已经定义过 => 已经在 Local 链表中添加过 => 直接声明结点就可以
+            // 已经定义过 => 已经在 Local 链表中添加过 => slip 直接声明结点就可以
             // 没有定义过 => 先添加到 Local 链表中
 
             // strndup() 复制指定长度的字符

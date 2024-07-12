@@ -34,7 +34,7 @@ static void preAllocStackSpace(Function* func) {
         realTotal += 8;     // int64_t => 8B
 
         // Tip: 很巧妙!     在计算空间的时候同时顺序得到变量在栈空间(B区域)的偏移量
-        obj->offset = -realTotal;           // 记录在 Function.local 中
+        obj->offset = -realTotal;           // 记录在 Function.local 中     由于 AST 的 ND_VAR 指向 Local 所以会同时改变
     }
     func->StackSize = alignTo(realTotal, 16);
 }
@@ -49,7 +49,7 @@ static void getAddr(Node* nd_assign) {
         // 类似于内存定义好 预计在栈上使用的位置
 
         // commit[11]: 因为存储空间的改变  commit[10] 的写法不适用了
-        printf("  addi a0, fp, %d\n", nd_assign->var->offset);      // 使用的是 Node.Object Q: 为什么使用的源头不一样
+        printf("  addi a0, fp, %d\n", nd_assign->var->offset);      // parse.line_44
         return;
     }
     errorHint("wrong assign Node");
