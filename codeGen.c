@@ -152,8 +152,19 @@ static void assemblyGen(Node* AST) {
 
 static void exprGen(Node* AST) {
     // 针对单个 exprStamt 结点的 codeGen()  (循环是针对链表的所以不会出现在这里)
-    if (AST->node_kind == ND_STAMT) {
+    // 引入 return
+    switch (AST->node_kind)
+    {
+    case ND_RETURN:
+        // 因为在 parse.c 中的 stamt() 是同级定义 所以可以在这里比较
+        // 通过跳转 return-label 的方式返回
+        assemblyGen(AST->LHS);
+        printf("  j .L.return\n");
+        return;
+    case ND_STAMT:
         return assemblyGen(AST->LHS);
+    default:
+        break;
     }
 
     errorHint("invalid statement\n");
@@ -183,6 +194,9 @@ void codeGen(Function* Func) {
         // 目前是的 因为每个完整的语句都是个运算式 虽然不一定有赋值(即使有赋值 因为没有定义寄存器结构会被后面的结果直接覆盖 a0)
         assert(StackDepth==0);
     }
+
+    // 为 return 的跳转定义标签
+    printf(".L.return:\n");
 
     // 目前只支持 main 函数 所以只有一个函数帧
 

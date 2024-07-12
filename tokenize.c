@@ -66,6 +66,15 @@ void charErrorAt(char* place, char* FMT, ...) {
     errorAt(place, FMT, VA);
 }
 
+// 得到所有 Tokens 后针对 KEYWORD 进行判断
+static void convertKeyWord(Token* input_token) {
+    for (Token* tok = input_token; input_token->token_kind != TOKEN_EOF; input_token = input_token->next) {
+        if (equal(tok, "return")) {
+            tok->token_kind = TOKEN_KEYWORD;
+        }
+    }
+}
+
 // 判断当前 Token 与指定 target 是否相同
 bool equal(Token* input_token, char* target) {
     // 使用 memcmp 进行存储内容的比较   因为不清楚 Token 的存储类型 不能直接使用 '=='
@@ -203,6 +212,8 @@ Token* tokenize(char* P) {
     // 添加终结符
     currToken->next = newToken(TOKEN_EOF, P, P);
 
+    // 对完整的 Token 流进行判断 提取关键字
+    convertKeyWord(HEAD.next);
     // 对直接存在的结构体调用 "成员变量"
     return HEAD.next;
 }

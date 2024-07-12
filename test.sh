@@ -39,24 +39,24 @@ assert() {
 assert 0 '0;'
 assert 42 '42;'
 
-echo commit-1-pass
+echo -------------------commit-01-pass-----------------------
 
 # [2] 支持+ -运算符
 assert 34 '12-34+56;'
 
-echo commit-2-pass
+echo -------------------commit-02-pass-----------------------
 
 # [3] 支持空格
 assert 41 ' 12 + 34 - 5 ;'
 
-echo commit-3-pass
+echo -------------------commit-03-pass-----------------------
 
 # [5] 支持* / ()运算符
 assert 47 '5+6*7;'
 assert 15 '5*(9-6);'
 assert 17 '1-8/(2*2)+3*6;'
 
-echo commit-5-pass
+echo -------------------commit-05-pass-----------------------
 
 # [6] 支持一元运算的+ -
 assert 10 '-10+20;'
@@ -64,7 +64,7 @@ assert 10 '- -10;'
 assert 10 '- - +10;'
 assert 48 '------12*+++++----++++++++++4;'
 
-echo commit-6-pass
+echo -------------------commit-06-pass-----------------------
 
 # [7] 支持条件运算符
 assert 0 '0==1;'
@@ -87,13 +87,13 @@ assert 1 '5==2+3;'
 assert 0 '6==4+3;'
 assert 1 '0*9+5*2==4+4*(6/3)-2;'
 
-echo commit-7-pass
+echo -------------------commit-07-pass-----------------------
 
 # [9] 支持;分割语句
 assert 3 '1; 2; 3;'
 assert 12 '12+23;12+99/3;78-66;'
 
-echo commit-9-pass
+echo -------------------commit-09-pass-----------------------
 
 # [10] 支持单字母变量
 assert 3 'a=3; a;'
@@ -101,12 +101,19 @@ assert 8 'a=3; z=5; a+z;'
 assert 6 'a=b=3; a+b;'
 assert 5 'a=3;b=4;a=1;a+b;'
 
-echo commit-10-pass
+echo -------------------commit-10-pass-----------------------
 
 # [11] 支持多字母变量
 assert 3 'foo=3; foo;'
 assert 74 'foo2=70; bar4=4; foo2+bar4;'
 
-echo commit-11-pass
+echo -------------------commit-11-pass-----------------------
+
+# [12] 支持return
+assert 1 'return 1; 2; 3;'
+assert 2 '1; return 2; 3;'
+assert 3 '1; 2; return 3;'
+
+echo -------------------commit-12-pass-----------------------
 
 echo all-test-passed

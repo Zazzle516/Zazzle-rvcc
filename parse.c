@@ -4,7 +4,9 @@
 // program = stamt*
 
 // 在添加 exprStamt 后顶层以单叉树方式递归
-// stamt = exprStamt*
+// 新增 "return" 关键字
+// stamt = "return" expr ";" | exprStamt
+
 // exprStamt = expr->;->expr->;->...
 
 // 添加对标识符的支持后新增 ASSIGN 语句
@@ -102,6 +104,13 @@ static Node* createSingle(NODE_KIND node_kind, Node* single_side) {
     return rootNode;
 }
 
+// 针对 return 结点的定义
+static Node* __returnNode(Token* tok) {
+    // 注意这里是单叉树哦!  读到最后一个参数后直接返回  RETURN 作为单叉树的叶子结点
+    return createSingle(ND_RETURN, expr(&tok, tok->next));
+}
+
+
 // Q: rest 是 where and how 起到的作用
 // 没什么作用 把 rest 删了不影响函数功能 只是方便跟踪
 
@@ -110,6 +119,17 @@ static Node* program(Token** rest, Token* tok) {
 }
 
 static Node* stamt(Token** rest, Token* tok) {
+    // 新增 "return" 关键字的判断后进行修改
+    // Q: 是否要考虑提前结束 parse() 的优化     => 直接返回 不去向下递归
+    if (equal(tok, "return")) {
+        // 在 debug 的时候发现这里不能写成单纯的函数调用 因为 tok 的位置回到 stamt() 的时候并没有更新所以会报错
+        // Node* retNode = returnNode(tok);
+        // 因为有两个值在变化 Node tok  所以没办法用一个函数调用去处理
+        Node* retNode = createSingle(ND_RETURN, expr(&tok, tok->next));
+        *rest = skip(tok, ";");
+        return retNode;
+    }
+    
     return exprStamt(rest, tok);
 }
 

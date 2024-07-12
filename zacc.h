@@ -30,7 +30,9 @@ typedef enum {
     TOKEN_NUM,              // 数字
     TOKEN_OP,               // 运算符       在 commit[7] 中新增的比较符也计入 TOKEN_OP 中
 
-    TOKEN_IDENT             // 标识     变量名 | 函数名  commit[10]
+    TOKEN_IDENT,            // 标识     变量名 | 函数名  commit[10]
+
+    TOKEN_KEYWORD,
 } TokenKind;
 
 typedef struct Token Token;
@@ -98,7 +100,10 @@ typedef enum {
 
     // 新增赋值语句定义
     ND_ASSIGN,
-    ND_VAR
+    ND_VAR,
+
+    // 针对关键字定义结点
+    ND_RETURN,
 }NODE_KIND;
 
 // 定义 AST 的结点结构
