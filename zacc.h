@@ -104,6 +104,9 @@ typedef enum {
 
     // 针对关键字定义结点
     ND_RETURN,
+
+    // 复合代码块
+    ND_BLOCK,
 }NODE_KIND;
 
 // 定义 AST 的结点结构
@@ -120,6 +123,9 @@ struct Node {
     // commit[10]: 添加对标识符的支持
     // char var_name;
     Object* var;            // commit[11]: 更新为 Object 的存储方式
+
+    // COMMIT[13]: 对 CompoundStamt 的 Block 支持
+    Node* Body;     // ??? 为什么
 };
 
 Function* parse(Token* tok);

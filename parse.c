@@ -1,11 +1,17 @@
 #include "zacc.h"
 
+// Q: 在使用 Block 后 目标得到的 AST/Function 的结构是什么
+// Program -> ND_BLOCK/CompoundStamt    单个结点作为 AST 的 root
+
 // 定义程序开始
-// program = stamt*
+// 解析为复合语句
+// program = "{" compoundStamt
+// compoundStamt = stamt* "}"
 
 // 在添加 exprStamt 后顶层以单叉树方式递归
 // 新增 "return" 关键字
-// stamt = "return" expr ";" | exprStamt
+// 新增对 compoundStamt 的支持
+// stamt = "return" expr ";" | exprStamt | "{" compoundStamt
 
 // exprStamt = expr->;->expr->;->...
 
@@ -51,6 +57,7 @@ static Object* newLocal(char* varName) {
 
 // 定义产生式关系并完成自顶向下的递归调用
 static Node* program(Token** rest, Token* tok);
+static Node* compoundStamt(Token** rest, Token* tok);
 static Node* stamt(Token** rest, Token* tok);
 static Node* exprStamt(Token** rest, Token* tok);
 static Node* expr(Token** rest, Token* tok);
@@ -111,11 +118,43 @@ static Node* __returnNode(Token* tok) {
 }
 
 
-// Q: rest 是 where and how 起到的作用
-// 没什么作用 把 rest 删了不影响函数功能 只是方便跟踪
-
+// rest 怎么起到作用的 ???
+// 首先 rest 永远指向上一个函数帧传参的变量的地址   比如 program(rest) -> parse.&tok
+// 也可以认为 rest 保留了上一个函数帧执行的结果
 static Node* program(Token** rest, Token* tok) {
-    return stamt(rest, tok);
+    // 新增语法规则: 要求最外层语句必须有 "{}" 包裹
+    tok = skip(tok, "{");
+    Node* ND = compoundStamt(&tok, tok);
+
+    // 注意这里是在语法分析结束后再检查词法的结束正确性
+    if (tok->token_kind != TOKEN_EOF) {
+        // 因为在 first_class_expr() 执行之前 input_token 仍然指向第一个 token
+        // 在 first_class_expr() 执行之后 此时指向最后一个 Token_EOF
+        // 不放在这个位置会报错
+        tokenErrorAt(tok, "extra Token");
+    }
+
+    return ND;
+}
+
+static Node* compoundStamt(Token** rest, Token* tok) {
+    Node HEAD = {};
+    Node* Curr = &HEAD;
+
+    while (!equal(tok, "}")) {              // rest = &tok 
+        Curr->next = stamt(&tok, tok);      // Q: *rest = tok   为什么会有 &tok 的传参呢    如果不一样是在传什么
+        Curr = Curr->next;
+    }
+    // 得到 CompoundStamt 内部的语句链表
+
+    // 新定义一个 ND_BLOCK 指向该链表
+    Node* ND = createNode(ND_BLOCK);
+    ND->Body = HEAD.next;
+
+    *rest = tok->next;          // 根据 stamt() 的执行更新 tok 
+
+    // Q: 没有更新 ND->var/Local        所以变量域的问题??
+    return ND;
 }
 
 static Node* stamt(Token** rest, Token* tok) {
@@ -128,6 +167,11 @@ static Node* stamt(Token** rest, Token* tok) {
         Node* retNode = createSingle(ND_RETURN, expr(&tok, tok->next));
         *rest = skip(tok, ";");
         return retNode;
+    }
+
+    if (equal(tok, "{")) {
+        Node* ND = compoundStamt(rest, tok->next);      // ???      把这里改了无限递归的问题就解决了?? &tok => rest ???
+        return ND;
     }
     
     return exprStamt(rest, tok);
@@ -306,25 +350,22 @@ static Node* primary_class_expr(Token** rest, Token* tok) {
 // 读入 token stream 在每个 stamt 中处理一部分 token 结点
 Function* parse(Token* tok) {
     // 以分号为间隔 每个表达式构成了一个结点 类似于 Token 的方式使用链表存储
-    Node HEAD = {};
-    Node* Curr = &HEAD;
+    // Node HEAD = {};
+    // Node* Curr = &HEAD;
 
-    while(tok->token_kind != TOKEN_EOF) {
-        Curr->next = program(&tok, tok);      // 在解析中把 tok 指针位置更新到 ';' 的下一个位置
-        Curr = Curr->next;                  // 更新下一个 Node 的存储位置
-    }
+    // while(tok->token_kind != TOKEN_EOF) {
+    //     Curr->next = program(&tok, tok);      // 在解析中把 tok 指针位置更新到 ';' 的下一个位置
+    //     Curr = Curr->next;                  // 更新下一个 Node 的存储位置
+    // }
 
-    // 注意这里是在语法分析结束后再检查词法的结束正确性
-    if (tok->token_kind != TOKEN_EOF) {
-        // 因为在 first_class_expr() 执行之前 input_token 仍然指向第一个 token
-        // 在 first_class_expr() 执行之后 此时指向最后一个 Token_EOF
-        // 不放在这个位置会报错
-        tokenErrorAt(tok, "extra Token");
-    }
+    // 在更新用 Block 的方式后 在 program() 调用    通过递归的方式完成对语句的循环
+    // 生成的 AST 只有一个根节点 而不是像前面的 commit 一样的单链表
+    Node* AST = program(&tok, tok);
 
     Function* Func = calloc(1, sizeof(Function));
-    Func->AST = HEAD.next;
+    Func->AST = AST;
     Func->local = Local;
+
     // 对 Func->StackSize 的处理在 codeGen() 实现
     return Func;
 }

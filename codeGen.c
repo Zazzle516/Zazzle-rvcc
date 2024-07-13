@@ -3,6 +3,8 @@
 
 static int StackDepth;
 
+// Q: 如何解决代码块中变量域的问题??        或者说有解决吗，和 Function.Local 的关系如何
+
 static void push_stack(void) {
     printf("  addi sp, sp, -8\n");
     printf("  sd a0, 0(sp)\n");
@@ -163,6 +165,13 @@ static void exprGen(Node* AST) {
         return;
     case ND_STAMT:
         return assemblyGen(AST->LHS);
+    case ND_BLOCK:
+        // 对 parse().CompoundStamt() 生成的语句链表执行
+        for (Node* ND = AST->Body; ND; ND = ND->next) {
+            // 注意 Block 是可以嵌套的 所以这里继续调用 exprGen()
+            exprGen(ND);
+        }
+        return;
     default:
         break;
     }
@@ -188,12 +197,16 @@ void codeGen(Function* Func) {
     printf("  addi sp, sp, -%d\n", Func->StackSize);
 
     // 这里的 AST 实际上是链表而不是树结构
-    for (Node* ND = Func->AST; ND != NULL; ND = ND->next) {
-        exprGen(ND);
-        // Q: 每行语句都能保证 stack 为空吗
-        // 目前是的 因为每个完整的语句都是个运算式 虽然不一定有赋值(即使有赋值 因为没有定义寄存器结构会被后面的结果直接覆盖 a0)
-        assert(StackDepth==0);
-    }
+    // for (Node* ND = Func->AST; ND != NULL; ND = ND->next) {
+    //     exprGen(ND);
+    //     // Q: 每行语句都能保证 stack 为空吗
+    //     // 目前是的 因为每个完整的语句都是个运算式 虽然不一定有赋值(即使有赋值 因为没有定义寄存器结构会被后面的结果直接覆盖 a0)
+    //     assert(StackDepth==0);
+    // }
+
+    // commit[13]: 现在的 AST 是单节点不是链表了
+    exprGen(Func->AST);
+    assert(StackDepth == 0);
 
     // 为 return 的跳转定义标签
     printf(".L.return:\n");

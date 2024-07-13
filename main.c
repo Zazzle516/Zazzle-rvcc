@@ -12,6 +12,8 @@ int main(int argc, char* argv[]) {
     
     // 把输入流进行标签化 得到 TokenStream 链表     此时没有空格
     Token* input_token = tokenize(input_ptr);
+    // 得到的 input_token 中的 input_token.place 并不是 token 的存储位置    而是输入 ptr 的存储位置
+    // Q: 在后续的 Token** rest 中会看到??
 
     // 调用语法分析
     Function* wrapper = parse(input_token);
