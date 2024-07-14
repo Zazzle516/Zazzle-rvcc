@@ -117,10 +117,13 @@ static Node* __returnNode(Token* tok) {
     return createSingle(ND_RETURN, expr(&tok, tok->next));
 }
 
+// 在不同函数(这里指语法规则函数) 跳转的传参是值传递    (Token* tok) 在传参之后是一个内容相同但是地址不同的拷贝变量
+// 所以通过 *rest 记录
+// 首先 rest 永远指向上一个语法规则传参的变量的地址   比如 program(rest) -> parse.&tok
+// 也可以认为 rest 保留了上一个语法规则的执行断点   所以在调用了新的语法规则(比如新的语法函数) 需要使用 (&tok) 传参更新
+// 在递归返回的时候通过 (*rest = tok;) 更新上一个语法规则中的执行环境   在上一个语法规则中通过 (&tok) 读取新的处理位置
+// 核心: 通过 (Token** rest) 这个结构保持了全局中对处理状态的更新
 
-// rest 怎么起到作用的 ???
-// 首先 rest 永远指向上一个函数帧传参的变量的地址   比如 program(rest) -> parse.&tok
-// 也可以认为 rest 保留了上一个函数帧执行的结果
 static Node* program(Token** rest, Token* tok) {
     // 新增语法规则: 要求最外层语句必须有 "{}" 包裹
     tok = skip(tok, "{");
@@ -141,8 +144,8 @@ static Node* compoundStamt(Token** rest, Token* tok) {
     Node HEAD = {};
     Node* Curr = &HEAD;
 
-    while (!equal(tok, "}")) {              // rest = &tok 
-        Curr->next = stamt(&tok, tok);      // Q: *rest = tok   为什么会有 &tok 的传参呢    如果不一样是在传什么
+    while (!equal(tok, "}")) {
+        Curr->next = stamt(&tok, tok);
         Curr = Curr->next;
     }
     // 得到 CompoundStamt 内部的语句链表
@@ -153,7 +156,8 @@ static Node* compoundStamt(Token** rest, Token* tok) {
 
     *rest = tok->next;          // 根据 stamt() 的执行更新 tok 
 
-    // Q: 没有更新 ND->var/Local        所以变量域的问题??
+    // Q: 没有更新 ND->var/Local
+    // A: 目前的 parse() 不支持变量的作用域访问 全部都是全局变量的形式存在
     return ND;
 }
 
@@ -170,7 +174,13 @@ static Node* stamt(Token** rest, Token* tok) {
     }
 
     if (equal(tok, "{")) {
-        Node* ND = compoundStamt(rest, tok->next);      // ???      把这里改了无限递归的问题就解决了?? &tok => rest ???
+        // Q: 为什么不是 &tok
+        // A: 因为没有 *rest = tok; 的更新      同时把更新放在了 compoundStamt()
+        // Node* ND = compoundStamt(rest, tok->next);
+
+        Node* ND = compoundStamt(&tok, tok->next);
+        *rest = tok;
+
         return ND;
     }
     
