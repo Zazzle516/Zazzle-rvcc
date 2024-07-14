@@ -186,17 +186,21 @@ static Node* stamt(Token** rest, Token* tok) {
         return ND;
     }
     
+    if (equal(tok, ";")) {
+        *rest = skip(tok, ";");
+        return stamt(rest, tok->next);
+    }
     return exprStamt(rest, tok);
 }
 
 // commit[14]: 新增对空语句的支持
 static Node* exprStamt(Token** rest, Token* tok) {
     // 如果第一个字符是 ";" 那么认为是空语句
-    if (equal(tok, ";")) {
-        // 作为一个空语句直接完成分析   回到 compoundStamt() 分析下一句
-        *rest = tok->next;
-        return createNode(ND_BLOCK);
-    }
+    // if (equal(tok, ";")) {
+    //     // 作为一个空语句直接完成分析   回到 compoundStamt() 分析下一句
+    //     *rest = tok->next;
+    //     return createNode(ND_BLOCK);
+    // }
 
     // 分析有效表达式并根据分号构建单叉树
     Node* ND = createSingle(ND_STAMT, expr(&tok, tok));
