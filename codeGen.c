@@ -204,7 +204,7 @@ void codeGen(Function* Func) {
     //     assert(StackDepth==0);
     // }
 
-    // commit[13]: 现在的 AST 是单节点不是链表了
+    // commit[13]: 现在的 AST-root 是单节点不是链表了
     exprGen(Func->AST);
     assert(StackDepth == 0);
 

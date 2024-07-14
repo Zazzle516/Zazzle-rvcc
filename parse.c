@@ -13,7 +13,9 @@
 // 新增对 compoundStamt 的支持
 // stamt = "return" expr ";" | exprStamt | "{" compoundStamt
 
-// exprStamt = expr->;->expr->;->...
+// 新增对空语句的支持   只要求分号存在
+// exprStamt = expr? ";"
+// __exprStamt = expr->;->expr->;->...
 
 // 添加对标识符的支持后新增 ASSIGN 语句
 // expr = assign
@@ -187,8 +189,16 @@ static Node* stamt(Token** rest, Token* tok) {
     return exprStamt(rest, tok);
 }
 
+// commit[14]: 新增对空语句的支持
 static Node* exprStamt(Token** rest, Token* tok) {
-    // 根据分号构建单叉树
+    // 如果第一个字符是 ";" 那么认为是空语句
+    if (equal(tok, ";")) {
+        // 作为一个空语句直接完成分析   回到 compoundStamt() 分析下一句
+        *rest = tok->next;
+        return createNode(ND_BLOCK);
+    }
+
+    // 分析有效表达式并根据分号构建单叉树
     Node* ND = createSingle(ND_STAMT, expr(&tok, tok));
     // 虽然没用到 rest 但是要更新
     // 后面的语法解析式找不到 ';' 对应的处理规则 会递归回到 exprStamt 进行跳过
