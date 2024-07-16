@@ -5,7 +5,7 @@ static int StackDepth;
 
 static int count(void) {
     // 通过函数的方式定义一个值可以变化的全局变量
-    static int count = 0;
+    static int count = 1;
     return count++;             // 莫名想到 yield 虽然实现完全不同...233
 }
 
@@ -63,7 +63,7 @@ static void getAddr(Node* nd_assign) {
 
 // 生成代码有 2 类: expr stamt
 // 某种程度上可以看成是 CPU 和 内存 的关系  互相包含 在执行层次上没有区别
-// 但是从代码角度   AST 的根节点是 ND_BLOCK 所以从 stamt 开始执行
+// 但是从代码角度   AST 的根节点是 ND_BLOCK 所以从 stamt 开始执行    同理所有的计算式都是被 ND_STAMT 包裹的 所以一定要通过 exprGen() 递归调用
 
 // 根据 AST 和目标后端 RISCV-64 生成代码
 // 计算式代码
@@ -174,7 +174,8 @@ static void exprGen(Node* AST) {
         printf("  j .L.return\n");
         return;
     case ND_STAMT:
-        return calcuGen(AST->LHS);
+        calcuGen(AST->LHS);
+        return;
     case ND_BLOCK:
         // 对 parse().CompoundStamt() 生成的语句链表执行
         for (Node* ND = AST->Body; ND; ND = ND->next) {
@@ -182,6 +183,7 @@ static void exprGen(Node* AST) {
             exprGen(ND);
         }
         return;
+    
     case ND_IF:
     // Tip: 如果在 switch-case 语句内部定义变量 比如 num 需要大括号 不然会有 Warning
     {
@@ -209,6 +211,42 @@ static void exprGen(Node* AST) {
         // A: 这就要说到语法定义了最外层必须有 {} 大括号    通过大括号保证了 ND_BLOCK 的递归执行
         // 所以这里的标签其实是写给后续的递归返回的语句的
         // exprGen(AST->next);
+        return;
+    }
+
+    case ND_FOR:
+    {
+        // 汇编的循环本质是通过 if-stamt + goto 实现
+        int num = count();
+
+        // Q: 下面的执行为什么有的使用 exprGen() 有的使用 calcuGen()
+        // A: 要追溯到 parse() 的定义 在 parse() 中 for 的 init, conditon, operation 是一个函数分支中定义的 stamt().for
+        // 因为只能向下调用 所以至高是 ND_ASSIGN 不可能是 ND_STAMT  所以只能使用 calcuGen() 解析
+
+        // 循环初始化
+        exprGen(AST->For_Init);     // 因为 init 在递归中定义为 ND_STAMT 所以通过递归执行 calcuGen()
+
+        // 定义循环开始 用于后续跳转
+        printf(".L.begin.%d:\n", num);
+
+        // 判断循环是否中止
+        if (AST->Cond_Block) {
+            // 如果存在 condition 语句
+            calcuGen(AST->Cond_Block);
+            printf("  beqz a0, .L.end.%d\n", num);
+        }
+
+        // 循环体
+        exprGen(AST->If_BLOCK);
+
+        // 处理循环变量 后续 goto .L.begin 判断是否继续
+        if (AST->Inc)
+            calcuGen(AST->Inc);
+
+        printf("  j .L.begin.%d\n", num);
+
+        // 循环出口
+        printf(".L.end.%d:\n", num);
         return;
     }
 

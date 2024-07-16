@@ -12,7 +12,15 @@
 // 新增 "return" 关键字
 // 新增对 compoundStamt 的支持
 // 新增 "if" 关键字
-// stamt = "return" expr ";" | exprStamt | "{" compoundStamt | "if" "(" cond-expr ")" stamt ("else" stamt)?
+// 新增 "for" 关键字    for(init ; condition; operation)    
+// stamt = "return" expr ";"
+//          | exprStamt
+//          | "{" compoundStamt
+//          | "if" "(" cond-expr ")" stamt ("else" stamt)?
+//          | "for" "(" exprStamt expr? ";" expr? ")" "{" stamt
+
+// Q: 针对 for 的语法可能有点奇怪 为什么使用 exprStamt 和 (expr? ";") 分别判断两个结构相同的语句
+// A: 问到了老师 这个是因为 chibicc 本身开发流程的问题  它在很早的 commit 就会考虑很后面的内容  所以现在看着会很奇怪  只是作者提前考虑到了
 
 // 新增对空语句的支持   只要求分号存在
 // exprStamt = expr? ";"
@@ -192,7 +200,6 @@ static Node* stamt(Token** rest, Token* tok) {
         // {if (a) {a = 1;} else {a = 2;}}
         Node* ND = createNode(ND_IF);
 
-
         tok = skip(tok->next, "(");
         ND->Cond_Block = expr(&tok, tok);
         *rest = tok;
@@ -208,6 +215,35 @@ static Node* stamt(Token** rest, Token* tok) {
         return ND;
     }
     
+    if (equal(tok, "for")) {
+        // for (i = 0; i < 10; i = i + 1)
+        Node* ND = createNode(ND_FOR);
+
+        tok = skip(tok->next, "(");
+        ND->For_Init = exprStamt(&tok, tok);
+        *rest = tok;
+
+        if (!equal(tok, ";"))
+            // 条件语句非空
+            ND->Cond_Block = expr(&tok, tok);
+        
+        // 无论是否为空 都需要处理分号
+        tok = skip(tok, ";");
+        *rest = tok;
+
+        // 对 operation 处理同理        注意没有第三个分号 直接就是右括号了
+        if (!equal(tok, ")")) {
+            ND->Inc = expr(&tok, tok);
+        }
+        tok = skip(tok, ")");
+        *rest = tok;
+
+        // 循环体
+        ND->If_BLOCK = stamt(&tok, tok);            // 也许是需要在这里更新 rest    不过 tok 的位置是正确的
+        *rest = tok;
+        return ND;
+    }
+
     // 实现 empty 的第二种方式
     // if (equal(tok, ";")) {
     //     *rest = skip(tok, ";");

@@ -105,6 +105,7 @@ typedef enum {
     // 针对关键字定义结点
     ND_RETURN,
     ND_IF,
+    ND_FOR,
 
     // 复合代码块
     ND_BLOCK,
@@ -129,9 +130,12 @@ struct Node {
     Node* Body;
 
     // commit[15]: 对 IF-stamt 的支持
+    // commit[16]: 因为在汇编中循环需要复用 if-stamt 所以定义在一起
     Node* If_BLOCK;
     Node* Else_BLOCK;
     Node* Cond_Block;
+    Node* For_Init;     // for-init
+    Node* Inc;          // for-increase
 };
 // 视频有提到 因为不同的 ND_KIND 不一定使用到全部的属性 可以用 struct union 进行优化
 
