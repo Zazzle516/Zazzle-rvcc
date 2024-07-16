@@ -3,7 +3,11 @@
 
 static int StackDepth;
 
-// Q: 如何解决代码块中变量域的问题??        或者说有解决吗，和 Function.Local 的关系如何
+static int count(void) {
+    // 通过函数的方式定义一个值可以变化的全局变量
+    static int count = 0;
+    return count++;             // 莫名想到 yield 虽然实现完全不同...233
+}
 
 static void push_stack(void) {
     printf("  addi sp, sp, -8\n");
@@ -57,8 +61,13 @@ static void getAddr(Node* nd_assign) {
     errorHint("wrong assign Node");
 }
 
+// 生成代码有 2 类: expr stamt
+// 某种程度上可以看成是 CPU 和 内存 的关系  互相包含 在执行层次上没有区别
+// 但是从代码角度   AST 的根节点是 ND_BLOCK 所以从 stamt 开始执行
+
 // 根据 AST 和目标后端 RISCV-64 生成代码
-static void assemblyGen(Node* AST) {
+// 计算式代码
+static void calcuGen(Node* AST) {
     switch (AST->node_kind)
     {
     case ND_NUM:
@@ -66,7 +75,7 @@ static void assemblyGen(Node* AST) {
         return;
     case ND_NEG:
         // 因为是单叉树所以某种程度上也是终结状态   递归找到最后的数字
-        assemblyGen(AST->LHS);
+        calcuGen(AST->LHS);
         printf("  neg a0, a0\n");
         return;
     
@@ -86,7 +95,7 @@ static void assemblyGen(Node* AST) {
         push_stack();
 
         // 进行右侧表达式的计算
-        assemblyGen(AST->RHS);
+        calcuGen(AST->RHS);
 
         // 将左侧的结果弹栈
         pop_stack("a1");
@@ -99,9 +108,9 @@ static void assemblyGen(Node* AST) {
         break;
     }
 
-    assemblyGen(AST->RHS);
+    calcuGen(AST->RHS);
     push_stack();
-    assemblyGen(AST->LHS);
+    calcuGen(AST->LHS);
     pop_stack("a1");        // 把 RHS 的计算结果弹出    根据根节点情况计算
 
     // 根据当前根节点的类型完成运算
@@ -152,6 +161,7 @@ static void assemblyGen(Node* AST) {
     }
 }
 
+// 表达式代码
 static void exprGen(Node* AST) {
     // 针对单个 exprStamt 结点的 codeGen()  (循环是针对链表的所以不会出现在这里)
     // 引入 return
@@ -160,11 +170,11 @@ static void exprGen(Node* AST) {
     case ND_RETURN:
         // 因为在 parse.c 中的 stamt() 是同级定义 所以可以在这里比较
         // 通过跳转 return-label 的方式返回
-        assemblyGen(AST->LHS);
+        calcuGen(AST->LHS);
         printf("  j .L.return\n");
         return;
     case ND_STAMT:
-        return assemblyGen(AST->LHS);
+        return calcuGen(AST->LHS);
     case ND_BLOCK:
         // 对 parse().CompoundStamt() 生成的语句链表执行
         for (Node* ND = AST->Body; ND; ND = ND->next) {
@@ -172,6 +182,36 @@ static void exprGen(Node* AST) {
             exprGen(ND);
         }
         return;
+    case ND_IF:
+    // Tip: 如果在 switch-case 语句内部定义变量 比如 num 需要大括号 不然会有 Warning
+    {
+        // 条件分支语句编号     一个程序中可能有多个 if-else 需要通过编号区分 if-block 的作用范围
+        int num = count();
+
+        // cond-expr 执行开始
+        calcuGen(AST->Cond_Block);
+        printf("  beqz a0, .L.else.%d\n", num);
+
+        // true-branch  不需要 .L.if 标签直接继续执行
+        exprGen(AST->If_BLOCK);
+
+        // if-else 代码块执行完成
+        printf("  j .L.end.%d\n", num);
+
+        // false-branch 跳转 .L.else 标签执行
+        printf(".L.else.%d:\n", num);
+        if (AST->Else_BLOCK)
+            exprGen(AST->Else_BLOCK);       // 只有显式声明 else-branch 存在才会执行
+
+        // else-branch 顺序执行到 end-label 就不需要额外的跳转的语句了
+        printf(".L.end.%d:", num);
+        // Q: 为什么这里不需要后续的执行语句?
+        // A: 这就要说到语法定义了最外层必须有 {} 大括号    通过大括号保证了 ND_BLOCK 的递归执行
+        // 所以这里的标签其实是写给后续的递归返回的语句的
+        // exprGen(AST->next);
+        return;
+    }
+
     default:
         break;
     }

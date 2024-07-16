@@ -104,6 +104,7 @@ typedef enum {
 
     // 针对关键字定义结点
     ND_RETURN,
+    ND_IF,
 
     // 复合代码块
     ND_BLOCK,
@@ -125,8 +126,14 @@ struct Node {
     Object* var;            // commit[11]: 更新为 Object 的存储方式
 
     // COMMIT[13]: 对 CompoundStamt 的 Block 支持
-    Node* Body;     // ??? 为什么
+    Node* Body;
+
+    // commit[15]: 对 IF-stamt 的支持
+    Node* If_BLOCK;
+    Node* Else_BLOCK;
+    Node* Cond_Block;
 };
+// 视频有提到 因为不同的 ND_KIND 不一定使用到全部的属性 可以用 struct union 进行优化
 
 Function* parse(Token* tok);
 

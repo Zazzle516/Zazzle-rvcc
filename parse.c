@@ -11,7 +11,8 @@
 // 在添加 exprStamt 后顶层以单叉树方式递归
 // 新增 "return" 关键字
 // 新增对 compoundStamt 的支持
-// stamt = "return" expr ";" | exprStamt | "{" compoundStamt
+// 新增 "if" 关键字
+// stamt = "return" expr ";" | exprStamt | "{" compoundStamt | "if" "(" cond-expr ")" stamt ("else" stamt)?
 
 // 新增对空语句的支持   只要求分号存在
 // exprStamt = expr? ";"
@@ -185,22 +186,45 @@ static Node* stamt(Token** rest, Token* tok) {
 
         return ND;
     }
-    
-    if (equal(tok, ";")) {
-        *rest = skip(tok, ";");
-        return stamt(rest, tok->next);
+
+    if (equal(tok, "if")) {
+        // 分支控制和 "return" 的处理不太一样 通过 Node 结构实现类似多叉树的结构
+        // {if (a) {a = 1;} else {a = 2;}}
+        Node* ND = createNode(ND_IF);
+
+
+        tok = skip(tok->next, "(");
+        ND->Cond_Block = expr(&tok, tok);
+        *rest = tok;
+
+        ND->If_BLOCK = stamt(&tok, tok->next);
+        *rest = tok;
+
+        if (equal(tok, "else")) {
+            ND->Else_BLOCK = stamt(&tok, tok->next);
+            *rest = tok;
+        }
+
+        return ND;
     }
+    
+    // 实现 empty 的第二种方式
+    // if (equal(tok, ";")) {
+    //     *rest = skip(tok, ";");
+    //     return stamt(rest, tok->next);
+    // }
+
     return exprStamt(rest, tok);
 }
 
 // commit[14]: 新增对空语句的支持
 static Node* exprStamt(Token** rest, Token* tok) {
     // 如果第一个字符是 ";" 那么认为是空语句
-    // if (equal(tok, ";")) {
-    //     // 作为一个空语句直接完成分析   回到 compoundStamt() 分析下一句
-    //     *rest = tok->next;
-    //     return createNode(ND_BLOCK);
-    // }
+    if (equal(tok, ";")) {
+        // 作为一个空语句直接完成分析   回到 compoundStamt() 分析下一句
+        *rest = tok->next;
+        return createNode(ND_BLOCK);
+    }
 
     // 分析有效表达式并根据分号构建单叉树
     Node* ND = createSingle(ND_STAMT, expr(&tok, tok));

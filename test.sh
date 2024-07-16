@@ -124,4 +124,13 @@ echo -------------------commit-13-pass-----------------------
 assert 5 '{ ;;; return 5; }'
 echo -------------------commit-14-pass-----------------------
 
+# [15] 支持if语句
+assert 3 '{ if (0) return 2; return 3; }'
+assert 3 '{ if (1-1) return 2; return 3; }'
+assert 2 '{ if (1) return 2; return 3; }'
+assert 2 '{ if (2-1) return 2; return 3; }'
+assert 4 '{ if (0) { 1; 2; return 3; } else { return 4; } }'
+assert 3 '{ if (1) { 1; 2; return 3; } else { return 4; } }'
+echo -------------------commit-15-pass-----------------------
+
 echo all-test-passed
