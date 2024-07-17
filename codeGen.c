@@ -177,12 +177,14 @@ static void exprGen(Node* AST) {
         calcuGen(AST->LHS);
         return;
     case ND_BLOCK:
+    {
         // 对 parse().CompoundStamt() 生成的语句链表执行
         for (Node* ND = AST->Body; ND; ND = ND->next) {
             // 注意 Block 是可以嵌套的 所以这里继续调用 exprGen()
             exprGen(ND);
         }
         return;
+    }
     
     case ND_IF:
     // Tip: 如果在 switch-case 语句内部定义变量 比如 num 需要大括号 不然会有 Warning
@@ -216,6 +218,7 @@ static void exprGen(Node* AST) {
 
     case ND_FOR:
     {
+        // commit[17]: while 通过简化 for-loop 实现
         // 汇编的循环本质是通过 if-stamt + goto 实现
         int num = count();
 
@@ -224,7 +227,11 @@ static void exprGen(Node* AST) {
         // 因为只能向下调用 所以至高是 ND_ASSIGN 不可能是 ND_STAMT  所以只能使用 calcuGen() 解析
 
         // 循环初始化
-        exprGen(AST->For_Init);     // 因为 init 在递归中定义为 ND_STAMT 所以通过递归执行 calcuGen()
+        // 在 while 中是可能不存在的
+        if (AST->For_Init) {
+            // 因为 init 在递归中定义为 ND_STAMT 所以通过递归执行 calcuGen()
+            exprGen(AST->For_Init);
+        }
 
         // 定义循环开始 用于后续跳转
         printf(".L.begin.%d:\n", num);

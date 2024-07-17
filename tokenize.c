@@ -69,9 +69,9 @@ void charErrorAt(char* place, char* FMT, ...) {
 // 判断是否是 keywords
 // 如果写在一起的话是一个二重循环了 不太好理解
 static bool isKeyWords(Token* input) {
-    static char* keywords[] = {"if", "else", "return", "for"};
+    static char* keywords[] = {"if", "else", "return", "for", "while"};
 
-    // Tip: 注意这里的下标      Q: 指针类型的数组都要这么求大小吗??
+    // Tip: 注意这里的下标      sizeof() 得到的是该对象的总空间
     for (int i = 0; i < sizeof(keywords) / sizeof(*keywords); i ++) {
         if (equal(input, keywords[i]))
             return true;

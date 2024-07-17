@@ -105,11 +105,11 @@ typedef enum {
     // 针对关键字定义结点
     ND_RETURN,
     ND_IF,
-    ND_FOR,
+    ND_FOR,         // commit[17]: 复用了 for-label
 
     // 复合代码块
     ND_BLOCK,
-}NODE_KIND;
+} NODE_KIND;
 
 // 定义 AST 的结点结构
 

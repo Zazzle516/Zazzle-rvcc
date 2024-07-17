@@ -18,6 +18,7 @@
 //          | "{" compoundStamt
 //          | "if" "(" cond-expr ")" stamt ("else" stamt)?
 //          | "for" "(" exprStamt expr? ";" expr? ")" "{" stamt
+//          | "while" "(" expr ")" stamt
 
 // Q: 针对 for 的语法可能有点奇怪 为什么使用 exprStamt 和 (expr? ";") 分别判断两个结构相同的语句
 // A: 问到了老师 这个是因为 chibicc 本身开发流程的问题  它在很早的 commit 就会考虑很后面的内容  所以现在看着会很奇怪  只是作者提前考虑到了
@@ -240,6 +241,21 @@ static Node* stamt(Token** rest, Token* tok) {
 
         // 循环体
         ND->If_BLOCK = stamt(&tok, tok);            // 也许是需要在这里更新 rest    不过 tok 的位置是正确的
+        *rest = tok;
+        return ND;
+    }
+
+    if (equal(tok, "while")) {
+        // while (i < 10) {...}
+        Node* ND = createNode(ND_FOR);              // 复用标签
+
+        // while 循环某种程度上可以看成简化版的 for-loop
+        tok = skip(tok->next, "(");
+        ND->Cond_Block = expr(&tok, tok);
+        tok = skip(tok, ")");
+        *rest = tok;
+
+        ND->If_BLOCK = stamt(&tok, tok);
         *rest = tok;
         return ND;
     }
