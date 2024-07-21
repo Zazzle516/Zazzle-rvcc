@@ -3,6 +3,10 @@
 // Q: 在使用 Block 后 目标得到的 AST/Function 的结构是什么
 // Program -> ND_BLOCK/CompoundStamt    单个结点作为 AST 的 root
 
+// commit[18]: 为了能在 codeGen.c 中应用语法错误提示 在 AST 的构造中新增 Token* token 结点作为终结符
+// 核心思想: 在使用语法规则正确解析一部分语句之前 保存 tok 的执行位置
+// 在 parse.c 的代码实现中有不同的实现方式 expr_return 和 assign 之类的就不一样 取决于它们本身的语法规则
+
 // 定义程序开始
 // 解析为复合语句
 // program = "{" compoundStamt
@@ -86,29 +90,32 @@ static Node* primary_class_expr(Token** rest, Token* tok);
 // 定义 AST 结点  (注意因为 ND_NUM 的定义不同要分开处理)
 
 // 创造新的结点并分配空间
-static Node* createNode(NODE_KIND node_kind) {
+// 每个结点都会随着 AST 的构建记录 tok 执行位置
+static Node* createNode(NODE_KIND node_kind, Token* tok) {
     Node* newNode = calloc(1, sizeof(Node));
     newNode->node_kind = node_kind;
+    newNode->token = tok;
     return newNode;
 }
 
-// 针对数字结点的额外的值定义
-static Node* numNode(int val) {
-    Node* newNode = createNode(ND_NUM);
+// 针对数字结点的额外的值定义(数字节点相对特殊 但是在 AST 扮演的角色没区别)
+static Node* numNode(int val, Token* tok) {
+    Node* newNode = createNode(ND_NUM, tok);
     newNode->val = val;
     return newNode;
 }
 
 // 针对赋值变量(单字符)结点的定义
-static Node* singleVarNode(Object* var) {
-    Node* varNode = createNode(ND_VAR);
+// 后面更新了不再仅仅适配单字符变量 但是函数名懒得改了就这样吧
+static Node* singleVarNode(Object* var, Token* tok) {
+    Node* varNode = createNode(ND_VAR, tok);
     varNode->var = var;
     return varNode;
 }
 
 // 定义 AST 的树型结构  (本质上仍然是一个结点但是有左右子树的定义)
-static Node* createAST(NODE_KIND node_kind, Node* LHS, Node* RHS) {
-    Node* rootNode = createNode(node_kind);
+static Node* createAST(NODE_KIND node_kind, Node* LHS, Node* RHS, Token* tok) {
+    Node* rootNode = createNode(node_kind, tok);
     rootNode->LHS = LHS;
     rootNode->RHS = RHS;
     return rootNode;
@@ -117,16 +124,17 @@ static Node* createAST(NODE_KIND node_kind, Node* LHS, Node* RHS) {
 // 在引入一元运算符后 涉及到单叉树的构造(本质上是看成负号 和一般意义上的 ++|-- 不同)
 
 // 作用于一元运算符的单边树
-static Node* createSingle(NODE_KIND node_kind, Node* single_side) {
-    Node* rootNode = createNode(node_kind);
+static Node* createSingle(NODE_KIND node_kind, Node* single_side, Token* tok) {
+    Node* rootNode = createNode(node_kind, tok);
     rootNode->LHS = single_side;            // 定义在左子树中
     return rootNode;
 }
 
 // 针对 return 结点的定义
+// 一开始想通过这个函数进行拆分 但是设计失败了 这里用下划线 _ 表示未使用
 static Node* __returnNode(Token* tok) {
     // 注意这里是单叉树哦!  读到最后一个参数后直接返回  RETURN 作为单叉树的叶子结点
-    return createSingle(ND_RETURN, expr(&tok, tok->next));
+    return createSingle(ND_RETURN, expr(&tok, tok->next), tok);
 }
 
 // 在不同函数(这里指语法规则函数) 跳转的传参是值传递    (Token* tok) 在传参之后是一个内容相同但是地址不同的拷贝变量
@@ -153,6 +161,10 @@ static Node* program(Token** rest, Token* tok) {
 }
 
 static Node* compoundStamt(Token** rest, Token* tok) {
+    // 因为 stamt() 会更新 tok 的指向 所以这里把结点的定义提前
+    // 新定义一个 ND_BLOCK 指向该链表
+    Node* ND = createNode(ND_BLOCK, tok);
+
     Node HEAD = {};
     Node* Curr = &HEAD;
 
@@ -162,8 +174,8 @@ static Node* compoundStamt(Token** rest, Token* tok) {
     }
     // 得到 CompoundStamt 内部的语句链表
 
-    // 新定义一个 ND_BLOCK 指向该链表
-    Node* ND = createNode(ND_BLOCK);
+    
+    // Node* ND = createNode(ND_BLOCK);
     ND->Body = HEAD.next;
 
     *rest = tok->next;          // 根据 stamt() 的执行更新 tok 
@@ -180,7 +192,13 @@ static Node* stamt(Token** rest, Token* tok) {
         // 在 debug 的时候发现这里不能写成单纯的函数调用 因为 tok 的位置回到 stamt() 的时候并没有更新所以会报错
         // Node* retNode = returnNode(tok);
         // 因为有两个值在变化 Node tok  所以没办法用一个函数调用去处理
-        Node* retNode = createSingle(ND_RETURN, expr(&tok, tok->next));
+
+        // 这里因为 tok 的原因 把 createSingle 拆分实现    在 expr_return 执行之前提前保存 tok
+        // !因为不确定 expr_return 的执行是否合法
+        // Node* retNode = createSingle(ND_RETURN, expr(&tok, tok->next));
+        Node* retNode = createNode(ND_RETURN, tok);
+        retNode->LHS = expr(&tok, tok->next);
+
         *rest = skip(tok, ";");
         return retNode;
     }
@@ -199,7 +217,7 @@ static Node* stamt(Token** rest, Token* tok) {
     if (equal(tok, "if")) {
         // 分支控制和 "return" 的处理不太一样 通过 Node 结构实现类似多叉树的结构
         // {if (a) {a = 1;} else {a = 2;}}
-        Node* ND = createNode(ND_IF);
+        Node* ND = createNode(ND_IF, tok);
 
         tok = skip(tok->next, "(");
         ND->Cond_Block = expr(&tok, tok);
@@ -218,7 +236,7 @@ static Node* stamt(Token** rest, Token* tok) {
     
     if (equal(tok, "for")) {
         // for (i = 0; i < 10; i = i + 1)
-        Node* ND = createNode(ND_FOR);
+        Node* ND = createNode(ND_FOR, tok);
 
         tok = skip(tok->next, "(");
         ND->For_Init = exprStamt(&tok, tok);
@@ -227,7 +245,7 @@ static Node* stamt(Token** rest, Token* tok) {
         if (!equal(tok, ";"))
             // 条件语句非空
             ND->Cond_Block = expr(&tok, tok);
-        
+
         // 无论是否为空 都需要处理分号
         tok = skip(tok, ";");
         *rest = tok;
@@ -247,7 +265,7 @@ static Node* stamt(Token** rest, Token* tok) {
 
     if (equal(tok, "while")) {
         // while (i < 10) {...}
-        Node* ND = createNode(ND_FOR);              // 复用标签
+        Node* ND = createNode(ND_FOR, tok);              // 复用标签
 
         // while 循环某种程度上可以看成简化版的 for-loop
         tok = skip(tok->next, "(");
@@ -275,11 +293,16 @@ static Node* exprStamt(Token** rest, Token* tok) {
     if (equal(tok, ";")) {
         // 作为一个空语句直接完成分析   回到 compoundStamt() 分析下一句
         *rest = tok->next;
-        return createNode(ND_BLOCK);
+        return createNode(ND_BLOCK, tok);
     }
 
     // 分析有效表达式并根据分号构建单叉树
-    Node* ND = createSingle(ND_STAMT, expr(&tok, tok));
+
+    // 由于 tok 进行拆分
+    // Node* ND = createSingle(ND_STAMT, expr(&tok, tok));
+    Node* ND = createNode(ND_STAMT, tok);
+    ND->LHS = expr(&tok, tok);
+
     // 虽然没用到 rest 但是要更新
     // 后面的语法解析式找不到 ';' 对应的处理规则 会递归回到 exprStamt 进行跳过
     *rest = skip(tok, ";");
@@ -296,7 +319,10 @@ static Node* assign(Token** rest, Token* tok) {
 
     // 支持类似于 'a = b = 1;' 这样的递归性赋值
     if (equal(tok, "=")) {
-        ND = createAST(ND_ASSIGN, ND, assign(&tok, tok->next));
+        // Q: 为什么这里类似于负号的处理  没有提前保存 tok 的位置而是直接传递
+        // 因为是自我递归  目前仍然处于该语法规则的解析范围内  所以在递归返回的时候 tok 会被更新到最初的状态
+        // 也就是该语法规则对应的第一个 token 的位置    如果在 codeGen 中该语法规则出错了  指向第一个 token 位置
+        ND = createAST(ND_ASSIGN, ND, assign(&tok, tok->next), tok);
     }
     *rest = tok;
     return ND;
@@ -306,13 +332,16 @@ static Node* assign(Token** rest, Token* tok) {
 static Node* equality_expr(Token** rest, Token* tok) {
     Node* ND = relation_expr(&tok, tok);
     while(true) {
+        // 因为不确定后面的表达式执行是否正确 所以提前保存目前为止正确执行的位置
+        Token* start = tok;
+
         // 比较符号后面不可能还是比较符号
         if (equal(tok, "!=")) {
-            ND = createAST(ND_NEQ, ND, relation_expr(&tok, tok->next));
+            ND = createAST(ND_NEQ, ND, relation_expr(&tok, tok->next), start);
             continue;
         }
         if (equal(tok, "==")) {
-            ND = createAST(ND_EQ, ND, relation_expr(&tok, tok->next));
+            ND = createAST(ND_EQ, ND, relation_expr(&tok, tok->next), start);
             continue;
         }
         *rest = tok;
@@ -325,23 +354,24 @@ static Node* relation_expr(Token** rest, Token* tok) {
     Node* ND = first_class_expr(&tok, tok);
 
     while(true) {
+        Token* start = tok;
         if (equal(tok, ">=")) {
-            ND = createAST(ND_GE, ND, first_class_expr(&tok, tok->next));
+            ND = createAST(ND_GE, ND, first_class_expr(&tok, tok->next), start);
             continue;
         }
 
         if (equal(tok, "<=")) {
-            ND = createAST(ND_LE, ND, first_class_expr(&tok, tok->next));
+            ND = createAST(ND_LE, ND, first_class_expr(&tok, tok->next), start);
             continue;
         }
 
         if (equal(tok, "<")) {
-            ND = createAST(ND_LT, ND, first_class_expr(&tok, tok->next));
+            ND = createAST(ND_LT, ND, first_class_expr(&tok, tok->next), start);
             continue;
         }
 
         if (equal(tok, ">")) {
-            ND = createAST(ND_GT, ND, first_class_expr(&tok, tok->next));
+            ND = createAST(ND_GT, ND, first_class_expr(&tok, tok->next), start);
             continue;
         }
         *rest = tok;
@@ -355,16 +385,18 @@ static Node* first_class_expr(Token** rest, Token* tok) {
     Node* ND = second_class_expr(&tok, tok);
 
     while(true) {
+        Token* start = tok;
+
         // 如果仍然有表达式的话
         if (equal(tok, "+")) {
             // 构建 ADD 根节点 (注意使用的是 tok->next) 并且
-            ND = createAST(ND_ADD, ND, second_class_expr(&tok, tok->next));
+            ND = createAST(ND_ADD, ND, second_class_expr(&tok, tok->next), start);
             continue;
         }
 
         if (equal(tok, "-")) {
             // 同理建立 SUB 根节点
-            ND = createAST(ND_SUB, ND, second_class_expr(&tok, tok->next));
+            ND = createAST(ND_SUB, ND, second_class_expr(&tok, tok->next), start);
             continue;
         }
 
@@ -379,13 +411,15 @@ static Node* second_class_expr(Token** rest, Token* tok) {
     Node* ND = third_class_expr(&tok, tok);
 
     while(true) {
+        Token* start = tok;
+
         if (equal(tok, "*")) {
-            ND = createAST(ND_MUL, ND, third_class_expr(&tok, tok->next));
+            ND = createAST(ND_MUL, ND, third_class_expr(&tok, tok->next), start);
             continue;
         }
 
         if (equal(tok, "/")) {
-            ND = createAST(ND_DIV, ND, third_class_expr(&tok, tok->next));
+            ND = createAST(ND_DIV, ND, third_class_expr(&tok, tok->next), start);
             continue;
         }
 
@@ -403,7 +437,7 @@ static Node* third_class_expr(Token** rest, Token* tok) {
 
     if (equal(tok, "-")) {
         // 作为负数标志记录结点
-        Node* ND = createSingle(ND_NEG, third_class_expr(rest, tok->next));
+        Node* ND = createSingle(ND_NEG, third_class_expr(rest, tok->next), tok);
         return ND;
     }
 
@@ -421,7 +455,7 @@ static Node* primary_class_expr(Token** rest, Token* tok) {
     }
 
     if ((tok->token_kind) == TOKEN_NUM) {
-        Node* ND = numNode(tok->value);
+        Node* ND = numNode(tok->value, tok);
         *rest = tok->next;
         return ND;
     }
@@ -437,7 +471,7 @@ static Node* primary_class_expr(Token** rest, Token* tok) {
             varObj = newLocal(strndup(tok->place, tok->length));
         }
         // 初始化变量结点
-        Node* ND = singleVarNode(varObj);       // Tip: 变量结点指向的是链表 Local 对应结点的位置
+        Node* ND = singleVarNode(varObj, tok);       // Tip: 变量结点指向的是链表 Local 对应结点的位置
         *rest = tok->next;
         return ND;
     }

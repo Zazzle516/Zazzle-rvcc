@@ -119,6 +119,11 @@ struct Node {
     Node* LHS;
     Node* RHS;
 
+    // commit[18]: 支持 parse.c 和 codeGen.c 使用 tokenize.c 中的报错函数
+    // 完成语法错误的提示   因为 tokenErrorAt 使用的是 token 类型的传参    所以需要在 AST 中跟踪 token-stream 的执行
+    // 储存结点对应的终结符
+    Token* token;
+
     // commit[9]: 添加对 ';' 多语句的支持   每个语句 exprStamt 构成一个结点   整体是一个单叉树
     Node* next;
 

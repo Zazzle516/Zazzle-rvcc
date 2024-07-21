@@ -1,7 +1,10 @@
 #include "zacc.h"
-// 记录当前的栈深度 用于后续的运算合法性判断
 
+// 记录当前的栈深度 用于后续的运算合法性判断
 static int StackDepth;
+
+// Q: commit[18]: codeGen() 怎么使用 AST 用作终结符的 tok
+// A: 在 default_err() 处理的部分声明错误发生的位置
 
 static int count(void) {
     // 通过函数的方式定义一个值可以变化的全局变量
@@ -61,7 +64,9 @@ static void getAddr(Node* nd_assign) {
         printf("  addi a0, fp, %d\n", nd_assign->var->offset);      // parse.line_44
         return;
     }
-    errorHint("wrong assign Node");
+
+    // errorHint("wrong assign Node");
+    tokenErrorAt(nd_assign->token, "invalid expr\n");
 }
 
 // 生成代码有 2 类: expr stamt
@@ -167,7 +172,8 @@ static void calcuGen(Node* AST) {
         return;
     
     default:
-        errorHint("invalid expr\n");
+        // errorHint("invalid expr\n");
+        tokenErrorAt(AST->token, "invalid expr\n");
     }
 }
 
@@ -289,7 +295,8 @@ static void exprGen(Node* AST) {
         break;
     }
 
-    errorHint("invalid statement\n");
+    // errorHint("invalid statement\n");
+    tokenErrorAt(AST->token, "invalid expr\n");
 }
 
 void codeGen(Function* Func) {
