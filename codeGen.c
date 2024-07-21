@@ -10,12 +10,14 @@ static int count(void) {
 }
 
 static void push_stack(void) {
+    printf("  # 压栈ing 将 a0 的值存入\n");
     printf("  addi sp, sp, -8\n");
     printf("  sd a0, 0(sp)\n");
     StackDepth++;
 }
 
 static void pop_stack(char* reg) {
+    printf("  # 出栈ing 将 a0 的值取出\n");
     printf("  ld %s, 0(sp)\n", reg);
     printf("  addi sp, sp, 8\n");
     StackDepth--;
@@ -55,6 +57,7 @@ static void getAddr(Node* nd_assign) {
         // 类似于内存定义好 预计在栈上使用的位置
 
         // commit[11]: 因为存储空间的改变  commit[10] 的写法不适用了
+        printf("  # 获取变量 %s 的栈内地址 %d(fp)\n", nd_assign->var->var_name, nd_assign->var->offset);
         printf("  addi a0, fp, %d\n", nd_assign->var->offset);      // parse.line_44
         return;
     }
@@ -71,11 +74,13 @@ static void calcuGen(Node* AST) {
     switch (AST->node_kind)
     {
     case ND_NUM:
+        printf("  # 加载立即数 %d 到 a0\n", AST->val);
         printf("  li a0, %d\n", AST->val);
         return;
     case ND_NEG:
         // 因为是单叉树所以某种程度上也是终结状态   递归找到最后的数字
         calcuGen(AST->LHS);
+        printf("  # 对 a0 的值取反\n");
         printf("  neg a0, a0\n");
         return;
     
@@ -83,10 +88,12 @@ static void calcuGen(Node* AST) {
         // ND_VAR 只会应用在计算语句里吗    因为 AST 结构的问题会优先递归到 ND_ASSIGN
         // 从 a0 的值(存储地址)偏移位置为 0 的位置加载 var 的值本身
         getAddr(AST);
+        printf("  # 把变量从地址 0(a0) 加载到 reg(a0) 中\n");
         printf("  ld a0, 0(a0)\n");
         return;
     
     case ND_ASSIGN:
+    {
         // 定义表达式左侧的存储地址(把栈空间视为内存去使用)
         // 赋值语句需要先得到左侧表达式地址(已经判断是 ASSIGN 左侧理论上只有 ND_VAR
         getAddr(AST->LHS);
@@ -101,8 +108,11 @@ static void calcuGen(Node* AST) {
         pop_stack("a1");
 
         // 完成赋值操作
+        printf("  # 将 a0 的值写入地址 0(a0) 中\n");
         printf("  sd a0, 0(a1)\n");     // 把得到的地址写入 a1 中 取相对于 (a1) 偏移量为 0 的位置赋值
         return;
+    }
+    
     default:
         // +|-|*|/ 其余运算 需要继续向下判断
         break;
@@ -168,14 +178,21 @@ static void exprGen(Node* AST) {
     switch (AST->node_kind)
     {
     case ND_RETURN:
+    {
         // 因为在 parse.c 中的 stamt() 是同级定义 所以可以在这里比较
         // 通过跳转 return-label 的方式返回
+        printf("  # 返回咯\n");
         calcuGen(AST->LHS);
         printf("  j .L.return\n");
         return;
+    }
+
     case ND_STAMT:
+    {
         calcuGen(AST->LHS);
         return;
+    }
+
     case ND_BLOCK:
     {
         // 对 parse().CompoundStamt() 生成的语句链表执行
@@ -191,23 +208,28 @@ static void exprGen(Node* AST) {
     {
         // 条件分支语句编号     一个程序中可能有多个 if-else 需要通过编号区分 if-block 的作用范围
         int num = count();
+        printf("\n# =====分支语句 %d ==============\n", num);
 
         // cond-expr 执行开始
+        printf("  # if-condition\n");
         calcuGen(AST->Cond_Block);
         printf("  beqz a0, .L.else.%d\n", num);
 
         // true-branch  不需要 .L.if 标签直接继续执行
+        printf("  # true-branch\n");
         exprGen(AST->If_BLOCK);
 
         // if-else 代码块执行完成
         printf("  j .L.end.%d\n", num);
 
         // false-branch 跳转 .L.else 标签执行
+        printf("  # false-branch\n");
         printf(".L.else.%d:\n", num);
         if (AST->Else_BLOCK)
             exprGen(AST->Else_BLOCK);       // 只有显式声明 else-branch 存在才会执行
 
         // else-branch 顺序执行到 end-label 就不需要额外的跳转的语句了
+        printf("  # =====分支语句 %d 执行结束========\n", num);
         printf(".L.end.%d:", num);
         // Q: 为什么这里不需要后续的执行语句?
         // A: 这就要说到语法定义了最外层必须有 {} 大括号    通过大括号保证了 ND_BLOCK 的递归执行
@@ -221,6 +243,7 @@ static void exprGen(Node* AST) {
         // commit[17]: while 通过简化 for-loop 实现
         // 汇编的循环本质是通过 if-stamt + goto 实现
         int num = count();
+        printf("\n# =====循环语句 %d ===============\n", num);
 
         // Q: 下面的执行为什么有的使用 exprGen() 有的使用 calcuGen()
         // A: 要追溯到 parse() 的定义 在 parse() 中 for 的 init, conditon, operation 是一个函数分支中定义的 stamt().for
@@ -229,6 +252,7 @@ static void exprGen(Node* AST) {
         // 循环初始化
         // 在 while 中是可能不存在的
         if (AST->For_Init) {
+            printf("  # while-init\n");
             // 因为 init 在递归中定义为 ND_STAMT 所以通过递归执行 calcuGen()
             exprGen(AST->For_Init);
         }
@@ -239,6 +263,7 @@ static void exprGen(Node* AST) {
         // 判断循环是否中止
         if (AST->Cond_Block) {
             // 如果存在 condition 语句
+            printf("  # while-condition-true\n");
             calcuGen(AST->Cond_Block);
             printf("  beqz a0, .L.end.%d\n", num);
         }
@@ -247,12 +272,15 @@ static void exprGen(Node* AST) {
         exprGen(AST->If_BLOCK);
 
         // 处理循环变量 后续 goto .L.begin 判断是否继续
-        if (AST->Inc)
+        if (AST->Inc) {
+            printf("  # while-increase\n");
             calcuGen(AST->Inc);
+        }
 
         printf("  j .L.begin.%d\n", num);
 
         // 循环出口
+        printf("  # =====循环语句 %d 执行结束========\n", num);
         printf(".L.end.%d:\n", num);
         return;
     }
@@ -266,19 +294,23 @@ static void exprGen(Node* AST) {
 
 void codeGen(Function* Func) {
     printf("  .global main\n");
+    printf("\n# =====程序开始===============\n");
     printf("main:\n");
 
     // commit[11]: 预分配栈空间
     preAllocStackSpace(Func);
     
     // 根据当前的 sp 定义准备执行的函数栈帧 fp
+    printf("  # 把函数栈指针 fp 压栈\n");
     printf("  addi sp, sp, -8\n");
     printf("  sd fp, 0(sp)\n");     // 保存上一个 fp 状态用于恢复
 
     // 在准备执行的函数栈帧中定义栈顶指针
+    printf("  # 更新 sp 指向当前函数栈帧的栈空间\n");
     printf("  mv fp, sp\n");
 
     // 在 preAllocStackSpace() 中得到的是总空间 需要添加负号哦
+    printf("  # 分配当前函数所需要的栈空间\n");
     printf("  addi sp, sp, -%d\n", Func->StackSize);
 
     // 这里的 AST 实际上是链表而不是树结构
@@ -290,15 +322,18 @@ void codeGen(Function* Func) {
     // }
 
     // commit[13]: 现在的 AST-root 是单节点不是链表了
+    printf("\n# =====程序主体===============\n");
     exprGen(Func->AST);
     assert(StackDepth == 0);
 
     // 为 return 的跳转定义标签
+    printf("\n# =====程序结束===============\n");
     printf(".L.return:\n");
 
     // 目前只支持 main 函数 所以只有一个函数帧
 
     // 函数执行完成 通过 fp 恢复空间(全程使用的是 sp, fp 并没有更改)
+    printf("  # 释放函数栈帧 恢复 fp, sp 指向\n");
     printf("  mv sp, fp\n");
 
     // 恢复 fp 位置     其实就是出栈
