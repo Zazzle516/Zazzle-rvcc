@@ -3,6 +3,9 @@
 // 记录当前的栈深度 用于后续的运算合法性判断
 static int StackDepth;
 
+// 提前声明 后续会用到
+static void calcuGen(Node* AST);
+
 // Q: commit[18]: codeGen() 怎么使用 AST 用作终结符的 tok
 // A: 在 default_err() 处理的部分声明错误发生的位置
 
@@ -13,14 +16,14 @@ static int count(void) {
 }
 
 static void push_stack(void) {
-    printf("  # 压栈ing 将 a0 的值存入\n");
+    printf("  # 压栈ing 将 a0 的值存入栈顶\n");
     printf("  addi sp, sp, -8\n");
-    printf("  sd a0, 0(sp)\n");
+    printf("  sd a0, 0(sp)\n");             // 把 reg-a0 的内容写入 0(sp) 位置
     StackDepth++;
 }
 
 static void pop_stack(char* reg) {
-    printf("  # 出栈ing 将 a0 的值取出\n");
+    printf("  # 出栈ing 将原 a0 的内容写入 reg-a1 恢复栈顶\n");
     printf("  ld %s, 0(sp)\n", reg);
     printf("  addi sp, sp, 8\n");
     StackDepth--;
@@ -45,7 +48,8 @@ static void preAllocStackSpace(Function* func) {
         realTotal += 8;     // int64_t => 8B
 
         // Tip: 很巧妙!     在计算空间的时候同时顺序得到变量在栈空间(B区域)的偏移量
-        obj->offset = -realTotal;           // 记录在 Function.local 中     由于 AST 的 ND_VAR 指向 Local 所以会同时改变
+        // 由于 AST 的 ND_VAR 指向 Local 所以随着 func.local 遍历会同时改变 AST.var.offset
+        obj->offset = -realTotal;
     }
     func->StackSize = alignTo(realTotal, 16);
 }
@@ -53,20 +57,41 @@ static void preAllocStackSpace(Function* func) {
 // 在 commit[10] 中对赋值情况需要定义函数栈帧和栈空间的存储分配
 // 目前是单字符的变量 名字已知并且数量有限  a~z 26个 => 1B * 26 = 208B
 // 在栈上预分配 208B 的空间     根据名称顺序定义地址和偏移量
+// commit[11]: 根据 Local 的存储方式读取变量的存储位置
 static void getAddr(Node* nd_assign) {
-    // 根据偏移量得到存储的目标地址
-    if (nd_assign->node_kind == ND_VAR) {
+    // 
+    switch (nd_assign->node_kind) {
+    
+    // 表面上只有 ND_VAR 其实结合 ND_ADDR 在 calcuGen() 的实现
+    // 这里同时完成了对 ND_VAR 和 ND_ADDR 的支持
+    case ND_VAR:
+    {
+        // 根据偏移量得到存储的目标地址
         // int offset = (nd_assign->var_name - 'a' + 1) * 8;       // 根据名称决定偏移位置
         // 类似于内存定义好 预计在栈上使用的位置
 
         // commit[11]: 因为存储空间的改变  commit[10] 的写法不适用了
         printf("  # 获取变量 %s 的栈内地址 %d(fp)\n", nd_assign->var->var_name, nd_assign->var->offset);
-        printf("  addi a0, fp, %d\n", nd_assign->var->offset);      // parse.line_44
+        // parse.primary_class_expr().singleVarNode() + codeGen.preAllocStackSpace()
+        printf("  addi a0, fp, %d\n", nd_assign->var->offset);
         return;
     }
 
+    case ND_DEREF:
+    {
+        // 这里的递归是用于解引用的 （&*x)
+        // Q: 解引用的前提是内容必须是一个引用 在真正的 C 中 x 必须是一个指针
+        // A: 但是示例中的 x 是全局变量 所以其实目前和正规的 C 语法是不一样的
+        calcuGen(nd_assign->LHS);
+        return;
+    }
+
+    default:
+        break;
+    }
     // errorHint("wrong assign Node");
     tokenErrorAt(nd_assign->token, "invalid expr\n");
+    
 }
 
 // 生成代码有 2 类: expr stamt
@@ -74,29 +99,39 @@ static void getAddr(Node* nd_assign) {
 // 但是从代码角度   AST 的根节点是 ND_BLOCK 所以从 stamt 开始执行    同理所有的计算式都是被 ND_STAMT 包裹的 所以一定要通过 exprGen() 递归调用
 
 // 根据 AST 和目标后端 RISCV-64 生成代码
-// 计算式代码
+// 计算式代码 生成的汇编代码一定是执行得到一个确定数字的代码段
 static void calcuGen(Node* AST) {
+    // Q: 为什么要这么设计三段式处理流程   和优先级有关吗
+    // A: 提前处理后续复合运算需要用到的内容    也可以把第一个 switch 拆分出来递归调用
+
     switch (AST->node_kind)
     {
     case ND_NUM:
+    {
         printf("  # 加载立即数 %d 到 a0\n", AST->val);
         printf("  li a0, %d\n", AST->val);
         return;
+    }
+
     case ND_NEG:
+    {
         // 因为是单叉树所以某种程度上也是终结状态   递归找到最后的数字
         calcuGen(AST->LHS);
         printf("  # 对 a0 的值取反\n");
         printf("  neg a0, a0\n");
         return;
-    
+    }
+
     case ND_VAR:
+    {
         // ND_VAR 只会应用在计算语句里吗    因为 AST 结构的问题会优先递归到 ND_ASSIGN
         // 从 a0 的值(存储地址)偏移位置为 0 的位置加载 var 的值本身
         getAddr(AST);
         printf("  # 把变量从地址 0(a0) 加载到 reg(a0) 中\n");
         printf("  ld a0, 0(a0)\n");
         return;
-    
+    }
+
     case ND_ASSIGN:
     {
         // 定义表达式左侧的存储地址(把栈空间视为内存去使用)
@@ -109,26 +144,47 @@ static void calcuGen(Node* AST) {
         // 进行右侧表达式的计算
         calcuGen(AST->RHS);
 
-        // 将左侧的结果弹栈
+        // 将 *左侧* 的结果弹栈
         pop_stack("a1");
 
         // 完成赋值操作
-        printf("  # 将 a0 的值写入地址 0(a0) 中\n");
+        printf("  # 将 a0 的值写入 0(a1) 存储的地址中\n");
         printf("  sd a0, 0(a1)\n");     // 把得到的地址写入 a1 中 取相对于 (a1) 偏移量为 0 的位置赋值
         return;
     }
     
+    case ND_ADDR:
+    {
+        // case 1: &var  根据变量的名字找到栈内地址偏移量 - ND_VAR
+        // case 2: &*var 解引用直接返回 y (后续需要对 y 是否是指针进行判断)
+        getAddr(AST->LHS);
+        return;
+    }
+
+    case ND_DEREF:
+    {
+        // *(ptr) 中的 ptr 本身是地址 可能会进行计算 eg.*(ptr + 8) 所以先计算内部的具体地址写入 a0
+        // 结合 parse.third_class_expr() 构造去理解  LHS 储存了目标地址表达式
+        calcuGen(AST->LHS);
+
+        // 读取 a0 中的储存的值(地址) 访问该地址
+        printf("  # 读取 a0 储存的地址值 写入 reg(a0) 中\n");
+        printf("  ld a0, 0(a0)\n");
+        return;
+    }
+
     default:
         // +|-|*|/ 其余运算 需要继续向下判断
         break;
     }
 
+    // 递归完成对复合运算结点的预处理
     calcuGen(AST->RHS);
     push_stack();
     calcuGen(AST->LHS);
-    pop_stack("a1");        // 把 RHS 的计算结果弹出    根据根节点情况计算
+    pop_stack("a1");        // 把 RHS 的计算结果弹到 reg-a1 中
 
-    // 根据当前根节点的类型完成运算
+    // 复合运算结点 此时左右结点都已经在上面处理完成 可以直接计算
     switch (AST->node_kind)
     {
     case ND_ADD:

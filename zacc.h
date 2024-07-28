@@ -107,6 +107,10 @@ typedef enum {
     ND_IF,
     ND_FOR,         // commit[17]: 复用了 for-label
 
+    // commit[20]: 新增对 '*' 和 '&' 的支持
+    ND_ADDR,        // &: 取地址
+    ND_DEREF,       // *: 根据地址取内容
+
     // 复合代码块
     ND_BLOCK,
 } NODE_KIND;

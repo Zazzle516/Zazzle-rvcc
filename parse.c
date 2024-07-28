@@ -40,7 +40,9 @@
 // relation = first_class_expr op first_class_expr      op = (>= | > | < | <=)
 // first_class_expr = second_class_expr (+|- second_class_expr)*
 // second_class_expr = third_class_expr (*|/ third_class_expr)
-// third_class_expr = (+|-)third_class_expr | primary_class_expr        优先拆分出一个符号作为减法符号
+
+// commit[20]: 在一元运算符处理中新增对 & | * 的支持
+// third_class_expr = (+|-|&|*)third_class_expr | primary_class_expr        优先拆分出一个符号作为减法符号
 // primary_class_expr = '(' | ')' | num
 
 // commit[11]: 语法规则本身没有变化 主要是根据 Object 的修改
@@ -178,7 +180,7 @@ static Node* compoundStamt(Token** rest, Token* tok) {
     // Node* ND = createNode(ND_BLOCK);
     ND->Body = HEAD.next;
 
-    *rest = tok->next;          // 根据 stamt() 的执行更新 tok 
+    *rest = tok->next;          // 根据 stamt() 的执行更新 tok 跳过 '}'
 
     // Q: 没有更新 ND->var/Local
     // A: 目前的 parse() 不支持变量的作用域访问 全部都是全局变量的形式存在
@@ -194,7 +196,7 @@ static Node* stamt(Token** rest, Token* tok) {
         // 因为有两个值在变化 Node tok  所以没办法用一个函数调用去处理
 
         // 这里因为 tok 的原因 把 createSingle 拆分实现    在 expr_return 执行之前提前保存 tok
-        // !因为不确定 expr_return 的执行是否合法
+        // !因为不确定 expr_return 的执行是否合法   但是 'return' 这个关键字本身是没有问题的
         // Node* retNode = createSingle(ND_RETURN, expr(&tok, tok->next));
         Node* retNode = createNode(ND_RETURN, tok);
         retNode->LHS = expr(&tok, tok->next);
@@ -258,7 +260,7 @@ static Node* stamt(Token** rest, Token* tok) {
         *rest = tok;
 
         // 循环体
-        ND->If_BLOCK = stamt(&tok, tok);            // 也许是需要在这里更新 rest    不过 tok 的位置是正确的
+        ND->If_BLOCK = stamt(&tok, tok);
         *rest = tok;
         return ND;
     }
@@ -278,7 +280,7 @@ static Node* stamt(Token** rest, Token* tok) {
         return ND;
     }
 
-    // 实现 empty 的第二种方式
+    // commit[14]: 实现 empty 的第二种方式
     // if (equal(tok, ";")) {
     //     *rest = skip(tok, ";");
     //     return stamt(rest, tok->next);
@@ -287,12 +289,14 @@ static Node* stamt(Token** rest, Token* tok) {
     return exprStamt(rest, tok);
 }
 
-// commit[14]: 新增对空语句的支持
+// commit[14]: 新增对空语句的支持   同时支持两种空语句形式
 static Node* exprStamt(Token** rest, Token* tok) {
     // 如果第一个字符是 ";" 那么认为是空语句
     if (equal(tok, ";")) {
         // 作为一个空语句直接完成分析   回到 compoundStamt() 分析下一句
         *rest = tok->next;
+        // Q: 为什么是 ND_BLOCK 而不是 ND_STAMT 呢
+        // A: 为了同时满足 '{}' 这种空语句情况  结合 codeGen 的代码实现会在 exprGen.ND_Block 的循环中进行空判
         return createNode(ND_BLOCK, tok);
     }
 
@@ -438,6 +442,16 @@ static Node* third_class_expr(Token** rest, Token* tok) {
     if (equal(tok, "-")) {
         // 作为负数标志记录结点
         Node* ND = createSingle(ND_NEG, third_class_expr(rest, tok->next), tok);
+        return ND;
+    }
+
+    if (equal(tok, "&")) {
+        Node* ND = createSingle(ND_ADDR, third_class_expr(rest, tok->next), tok);
+        return ND;
+    }
+
+    if (equal(tok, "*")) {
+        Node* ND = createSingle(ND_DEREF, third_class_expr(rest, tok->next), tok);
         return ND;
     }
 
