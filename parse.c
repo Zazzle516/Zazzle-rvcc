@@ -132,6 +132,94 @@ static Node* createSingle(NODE_KIND node_kind, Node* single_side, Token* tok) {
     return rootNode;
 }
 
+
+/* 提供对指针的加减运算 */
+// Tip: 指针的加减法运算有相当大的区别  从语法角度上 指针加法被认为是非法操作 而指针减法是合法的
+// 因为指针加法的结果在内存地址上没有明确的意义 而减法作用在数组中可以计算出元素的个数
+
+// commit[21]: 新增对指针的加法运算支持
+static Node* newPtrAdd(Node* LHS, Node* RHS, Token* tok) {
+    // 在 parse.compoundStamt() 的执行过程中 可能在执行 addType(Curr) 之前就遇到 ptrAdd()
+    // 所以这里要提前完成类型赋予   相应的在 addType() 中要添加 "是否已经完成类型赋予" 的判断
+    addType(LHS);
+    addType(RHS);
+
+    // 根据 LHS 和 RHS 的类型进行不同的计算
+    // Tip: ptr + ptr 是非法运算
+    if ((!isInteger(LHS->node_type)) && (!isInteger(RHS->node_type))) {
+        tokenErrorAt(tok, "can't add two pointers");
+    }
+
+    // 如果都是整数 正常计算
+    if (isInteger(LHS->node_type) && isInteger(RHS->node_type)) {
+        return createAST(ND_ADD, LHS, RHS, tok);
+    }
+
+    // 如果有一个整数一个指针 对 LHS 和 RHS 两种情况分别讨论
+    // LHS: int  +  RHS: ptr
+    if (isInteger(LHS->node_type) && (!isInteger(RHS->node_type))) {
+        Node* newLHS = createAST(ND_MUL, numNode(8, tok), RHS, tok);
+        return createAST(ND_ADD, newLHS, RHS, tok);
+    }
+
+    // RHS: int  +  LHS: ptr
+    if (!isInteger(LHS->node_type) && (isInteger(RHS->node_type))) {
+        Node* newRHS = createAST(ND_MUL, numNode(8, tok), RHS, tok);
+        return createAST(ND_ADD, LHS, newRHS, tok);
+    }
+
+    tokenErrorAt(tok, "Unable to parse add operation\n");
+    return NULL;
+}
+
+// commit[21]: 新增对指针的减法运算支持
+// Q: 目前还不知道在 (ptr - int) 中额外进行的类型赋予的意义  unsolved 现在和视频版本保持一致
+static Node* newPtrSub(Node* LHS, Node* RHS, Token* tok) {
+    addType(LHS);
+    addType(RHS);
+
+    // Tip: ptr - ptr 是合法运算!
+    if (LHS->node_type->Base && RHS->node_type->Base) {
+        // 先得到指针相减的结果
+        Node* ND = createAST(ND_SUB, LHS, RHS, tok);
+
+        // 通过在 zacc.h 中的 extern 访问
+        // Q: 相比于直接 ND->node_type->Kind = TY_INT; 的优势是什么??
+        // A: 目前还不知道 也许后面类型多起来会体现吧
+        ND->node_type = TYINT_GLOBAL;
+
+        // 挂载到 LHS: LHS / RHS(8)
+        return createAST(ND_DIV, ND, numNode(8, tok), tok);
+    }
+
+    // num - num 正常计算
+    if (isInteger(LHS->node_type) && isInteger(RHS->node_type)) {
+        return createAST(ND_SUB, LHS, RHS, tok);
+    }
+
+    // LHS: ptr  -  RHS: int
+    // 对比加法 相反的操作顺序是非法的  (int - ptr) 没有意义
+    if (LHS->node_type->Base && isInteger(RHS->node_type)) {
+        Node* newRHS = createAST(ND_MUL, numNode(8, tok), RHS, tok);
+
+        // Q: ???   为什么加法不需要减法需要
+        addType(newRHS);
+
+        // Q: ???
+        Node* ND = createAST(ND_SUB, LHS, newRHS, tok);
+
+        // Q: 最后要声明该结点是指针类型 ???
+        // Q: 对比加法没有进行额外的声明        那加法最后的结点类型是什么呢
+        // 即使省去这一步操作   在 CompoundStamt().addType(Curr) 应该也可以设置为正确类型的
+        ND->node_type = LHS->node_type;
+        return ND;
+    }
+
+    tokenErrorAt(tok, "Unable to parse sub operation\n");
+    return NULL;
+}
+
+
 // 针对 return 结点的定义
 // 一开始想通过这个函数进行拆分 但是设计失败了 这里用下划线 _ 表示未使用
 static Node* __returnNode(Token* tok) {
@@ -173,6 +261,9 @@ static Node* compoundStamt(Token** rest, Token* tok) {
     while (!equal(tok, "}")) {
         Curr->next = stamt(&tok, tok);
         Curr = Curr->next;
+
+        // commit[21]: 为每个完成分析的语句结点赋予类型
+        addType(Curr);
     }
     // 得到 CompoundStamt 内部的语句链表
 
@@ -189,7 +280,7 @@ static Node* compoundStamt(Token** rest, Token* tok) {
 
 static Node* stamt(Token** rest, Token* tok) {
     // 新增 "return" 关键字的判断后进行修改
-    // Q: 是否要考虑提前结束 parse() 的优化     => 直接返回 不去向下递归
+    // Q: 是否要考虑提前结束 parse() 的优化  => A: 直接返回 不去向下递归
     if (equal(tok, "return")) {
         // 在 debug 的时候发现这里不能写成单纯的函数调用 因为 tok 的位置回到 stamt() 的时候并没有更新所以会报错
         // Node* retNode = returnNode(tok);
@@ -394,13 +485,13 @@ static Node* first_class_expr(Token** rest, Token* tok) {
         // 如果仍然有表达式的话
         if (equal(tok, "+")) {
             // 构建 ADD 根节点 (注意使用的是 tok->next) 并且
-            ND = createAST(ND_ADD, ND, second_class_expr(&tok, tok->next), start);
+            ND = newPtrAdd(ND, second_class_expr(&tok, tok->next), start);
             continue;
         }
 
         if (equal(tok, "-")) {
             // 同理建立 SUB 根节点
-            ND = createAST(ND_SUB, ND, second_class_expr(&tok, tok->next), start);
+            ND = newPtrSub(ND, second_class_expr(&tok, tok->next), start);
             continue;
         }
 

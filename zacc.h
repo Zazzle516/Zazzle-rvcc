@@ -1,6 +1,7 @@
 // 在 commit[8] 中修改了项目结构
 // Zazzle-rvcc:
             // zacc.h   头文件  定义结构体和函数声明
+            // type.c       变量类型定义实现
             // tokenize.c   词法解析
             // parse.c      语法解析
             // codeGen.c    后端代码生成
@@ -9,10 +10,10 @@
 // Tip: 注意里面有哪些函数需要 static 修饰
 
 // 通过定义 _POSIX_C_SOURCE 指定一个值 控制头文件对 POSIX 功能的可见性
-// 199309L: 启用POSIX.1b (实时扩展) 标准
-// 199506L: 启用POSIX.1c (线程扩展) 标准
-// 200112L: 启用POSIX.1-2001 标准
-// 200809L: 启用POSIX.1-2008 标准
+// 199309L: 启用 POSIX.1b (实时扩展) 标准
+// 199506L: 启用 POSIX.1c (线程扩展) 标准
+// 200112L: 启用 POSIX.1-2001 标准
+// 200809L: 启用 POSIX.1-2008 标准
 #define _POSIX_C_SOURCE 200809L
 
 #include <assert.h>
@@ -23,7 +24,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-// 词法解析 tokenize() 数据结构和函数声明
+/* 词法解析 tokenize() 数据结构和函数声明 */ 
 
 typedef enum {
     TOKEN_EOF,              // 终结符
@@ -54,8 +55,9 @@ Token* skip(Token* input_token, char* target);
 
 Token* tokenize(char* P);       // main() 调用声明
 
-// 语法分析 parse() 数据结构和函数声明
+/* 语法分析 parse() 数据结构和函数声明 */
 typedef struct Node Node;
+typedef struct Type Type;
 
 // commit[11]: 定义在 Function 中使用的 local 数据
 typedef struct Object Object;
@@ -138,6 +140,9 @@ struct Node {
     // COMMIT[13]: 对 CompoundStamt 的 Block 支持
     Node* Body;
 
+    // commit[21]: 对类型的支持
+    Type* node_type;
+
     // commit[15]: 对 IF-stamt 的支持
     // commit[16]: 因为在汇编中循环需要复用 if-stamt 所以定义在一起
     Node* If_BLOCK;
@@ -150,5 +155,26 @@ struct Node {
 
 Function* parse(Token* tok);
 
-// 后端生成 codeGen() 数据结构和函数声明
+/* 类型定义 */
+typedef enum {
+    TY_INT,         // 整数类型变量
+    TY_PTR,         // 指针 
+} Typekind;
+
+
+struct Type {
+    Typekind Kind;      // <int, ptr>
+    Type* Base;         // 必须声明当前指针所指向的空间大小 后续计算会涉及
+};
+
+// 使用在 type.c 中定义的全局变量 (用于对 int 类型的判断)
+extern Type* TYINT_GLOBAL;
+
+// 判断变量类型
+bool isInteger(Type* TY);
+
+// Q: 为节点内的所有节点添加类型
+void addType(Node* ND);
+
+/* 后端生成 codeGen() 数据结构和函数声明 */
 void codeGen(Function* AST);
