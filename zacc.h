@@ -52,6 +52,7 @@ void tokenErrorAt(Token* token, char* FMT, ...);
 void charErrorAt(char* place, char* FMT, ...);
 bool equal(Token* input_token, char* target);
 Token* skip(Token* input_token, char* target);
+bool consume(Token** rest, Token* tok, char* str);
 
 Token* tokenize(char* P);       // main() 调用声明
 
@@ -66,6 +67,9 @@ struct Object {
     int offset;         // 或许在当前写 'int value;' 是可行的 但考虑到后续对不同类型数据的可扩展性 直接读写存储位置会更方便
 
     Object* next;
+
+    // commit[22]: 每个值新增类型支持
+    Type* var_type;
 };
 
 // commit[11]: 用 Function 结构体包裹 AST 携带数据之类的其他内容
@@ -165,6 +169,10 @@ typedef enum {
 struct Type {
     Typekind Kind;      // <int, ptr>
     Type* Base;         // 必须声明当前指针所指向的空间大小 后续计算会涉及
+
+    // commit[22]: 在 declaration().LHS 构造中用到了
+    // 某种程度上是为了匹配 parse() 的语法位置报错才有这个属性吧
+    Token* Name;        // 存储当前类型的名称 <int> <double> 链接到 Token Stream
 };
 
 // 使用在 type.c 中定义的全局变量 (用于对 int 类型的判断)
@@ -173,7 +181,10 @@ extern Type* TYINT_GLOBAL;
 // 判断变量类型
 bool isInteger(Type* TY);
 
-// Q: 为节点内的所有节点添加类型
+// 构建一个指针类型
+Type* newPointerTo(Type* Base);
+
+// 递归性的为节点内的所有节点添加类型
 void addType(Node* ND);
 
 /* 后端生成 codeGen() 数据结构和函数声明 */

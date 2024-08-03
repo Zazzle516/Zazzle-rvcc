@@ -74,24 +74,28 @@ void addType(Node* ND) {
     case ND_LE:
     case ND_GE:
     case ND_GT:
-    case ND_VAR:
     case ND_NUM:
         ND->node_type = TYINT_GLOBAL;
         return;
-
+    case ND_VAR:
+        // commit[22]: 从原来的无脑默认 TY_INT 改为根据具体类型决定 虽然目前仍然是整形
+        ND->node_type = ND->var->var_type;
+        return;
     case ND_ADDR:
         ND->node_type = newPointerTo(ND->LHS->node_type);
         return;
 
     case ND_DEREF:
+        // Q: 是左侧吗?  在 21 里还没有显式声明指针类型     这里应该是与右侧保持一致 ?
+        // Q: 对比 commit[22]   此时是否与显式声明的类型保持一致 ??
         // 如果是 TY_PTR 那么与左侧变量类型保持一致 int* ptr = a;
         if (ND->LHS->node_type->Kind == TY_PTR) {
             ND->node_type = ND->LHS->node_type->Base;
         }
 
-        // 非指针类型目前直接设置为 整数类型
+        // commit[22]: 新增对 DEREF 右侧变量合法性的判断
         else {
-            ND->node_type = TYINT_GLOBAL;
+            tokenErrorAt(ND->token, "invalid pointer deref");
         }
         return;
 

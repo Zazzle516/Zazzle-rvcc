@@ -10,7 +10,18 @@
 // 定义程序开始
 // 解析为复合语句
 // program = "{" compoundStamt
-// compoundStamt = stamt* "}"
+
+// commit[22]: 把复合语句拆分为 声明语句 + 表达式语句 (新增声明语句的支持)
+// 可以从语句的生命周期来区分: 表达式语句的生命只有一瞬间   而声明语句会引入新的变量 导致空间分配
+// Tip: 但是在一个声明语句中的重复变量不会被纠错    {int y = 3, y = 5;}
+// compoundStamt = (declaration | stamt)* "}"
+
+// commit[22]: 声明语句的语法定义 支持连续定义
+// int a, b; | int a, *b; | int a = 3, b = expr;
+// declspec: "int" 类型声明
+// declarator: "*" 指针声明     Q: 可以支持多个 "*" 比如指针的指针??
+// declaration = declspec (declarator ("=" expr)? ("," declarator ("=" expr)?)*)? ";"
+// __compoundStamt = stamt* "}"
 
 // 在添加 exprStamt 后顶层以单叉树方式递归
 // 新增 "return" 关键字
@@ -64,18 +75,29 @@ static Object* findVar(Token* tok) {
 }
 
 // 对没有定义过的变量名 通过头插法新增到 Local 链表中
-static Object* newLocal(char* varName) {
+// commit[22]: 新增参数 Type* 支持类型
+static Object* newLocal(char* varName, Type* type) {
     Object* obj = calloc(1, sizeof(Object));
+    obj->var_type = type;
     obj->var_name = varName;
     obj->next = Local;      // 每个变量结点其实都是指向了 Local 链表
     Local = obj;
     return obj;
 }
 
+// commit[22]: 针对变量声明语句 提取变量名
+static char* getVarName(Token* tok) {
+    if (tok->token_kind != TOKEN_IDENT)
+        tokenErrorAt(tok, "expected a variable name");
+
+    // string.h: 从给定的字符串 token 中复制最多 length 个字符 并返回指针
+    return strndup(tok->place, tok->length);
+}
 
 // 定义产生式关系并完成自顶向下的递归调用
 static Node* program(Token** rest, Token* tok);
 static Node* compoundStamt(Token** rest, Token* tok);
+static Node* declaration(Token** rest, Token* tok);
 static Node* stamt(Token** rest, Token* tok);
 static Node* exprStamt(Token** rest, Token* tok);
 static Node* expr(Token** rest, Token* tok);
@@ -219,6 +241,37 @@ static Node* newPtrSub(Node* LHS, Node* RHS, Token* tok) {
     return NULL;
 }
 
+// 返回对类型 'int' 'float' 的判断
+static Type* declspec(Token** rest, Token* tok) {
+    *rest = skip(tok, "int");
+    return TYINT_GLOBAL;
+}
+
+// 判断是否是指针类型 如果是指针类型那么要声明该指针的指向
+static Type* declarator(Token** rest, Token* tok, Type* Base) {
+    // Q: 我在写的时候没有意识到会有很多个 "*" 的情况   首先为什么会出现这种情况呢
+    // A: 面对多重指针的情况 有几个 "*" 就应该有几个指针
+    
+    // Tip: 这里传入 (&tok) 方便在后面返回之后修改 tok 的指向
+    while (consume(&tok, tok, "*")) {
+        // Tip: 这里很巧妙的通过 Base 完成从基础类型到指针类型的转换
+        // 如果是很多个 "*" 的情况 "int*** a;" 只有最开始的 Base 是整形
+        Base = newPointerTo(Base);
+    }
+    // 在有很多个 "*" 的情况下 如果不使用多重解引用
+    // 是无法访问到中间的匿名指针变量的
+
+    // 把 newPointerTo() 无法更新的写进去
+    if (tok->token_kind != TOKEN_IDENT) {
+        tokenErrorAt(tok, "expected a variable name");
+    }
+    Base->Name = tok;       // Tip: 这里保留了 Token 的链接
+
+    *rest = tok->next;
+
+    return Base;
+}
+
 
 // 针对 return 结点的定义
 // 一开始想通过这个函数进行拆分 但是设计失败了 这里用下划线 _ 表示未使用
@@ -250,6 +303,7 @@ static Node* program(Token** rest, Token* tok) {
     return ND;
 }
 
+// 对 Block 中复合语句的判断
 static Node* compoundStamt(Token** rest, Token* tok) {
     // 因为 stamt() 会更新 tok 的指向 所以这里把结点的定义提前
     // 新定义一个 ND_BLOCK 指向该链表
@@ -259,7 +313,11 @@ static Node* compoundStamt(Token** rest, Token* tok) {
     Node* Curr = &HEAD;
 
     while (!equal(tok, "}")) {
-        Curr->next = stamt(&tok, tok);
+        // commit[22]: 对声明语句和表达式语句分别处理
+        if (equal(tok, "int")) 
+            Curr->next = declaration(&tok, tok);
+        else
+            Curr->next = stamt(&tok, tok);
         Curr = Curr->next;
 
         // commit[21]: 为每个完成分析的语句结点赋予类型
@@ -278,6 +336,59 @@ static Node* compoundStamt(Token** rest, Token* tok) {
     return ND;
 }
 
+// 对声明语句的解析
+// declaration = declspec (declarator ("=" expr)? ("," declarator ("=" expr)?)*)? ";"
+static Node* declaration(Token** rest, Token* tok) {
+    // 1. 解析 declspec 类型语法
+    // 由于连续定义的语法 放在循环外面应用于所有的声明变量
+    Type* nd_base_type = declspec(&tok, tok);
+
+    // Tip: 因为声明语句通过 "," 的可传递性 所以声明语句是很多子语句的集合 用链表进行表示
+    Node HEAD = {};
+    Node* Curr = &HEAD;
+
+    // Tip: 计数
+    // Q: 这个计数的意义是什么  只是为了合法性判断吗
+    int variable_count = 0;
+
+    // 2. 如果存在连续声明  需要通过 for-loop 完成
+    while(!equal(tok, ";")) {
+        // 判断循环是否能合法的继续下去  同时排除掉第一个变量声明子语句
+        if ((variable_count ++) > 0)
+            tok = skip(tok, ",");
+
+        // 针对第一个变量的声明
+        // 如果在 declarator() 中认为是指针 通过 declspec() 可以确定指针类型
+        Type* isPtr = declarator(&tok, tok, nd_base_type);
+        Object* var = newLocal(getVarName(isPtr->Name), isPtr);     // 通过 Name 链接的 Token 保留上一个解析位置 进行传递
+
+        // 3. 如果存在赋值那么解析赋值部分
+        if (!equal(tok, "=")) {
+            // 如果没有后续的 LHS 和 RHS 可以直接跳过了
+            continue;
+        }
+
+        // 通过递归下降的方式构造
+        Node* LHS = singleVarNode(var, isPtr->Name);    // 利用到 Name 到 Token 的链接
+        Node* RHS = assign(&tok, tok->next);
+
+        Node* ND_ROOT = createAST(ND_ASSIGN, LHS, RHS, tok);
+
+        // 即使是通过 "," 并行声明的语句也会被记为 ND_STAMT 所以后面用 ND_BLOCK
+        Curr->next = createSingle(ND_STAMT, ND_ROOT, tok);
+
+        // 更新链表指向下一个声明语句
+        Curr = Curr->next;
+    }
+
+    // 4. 构造 Block 返回结果
+    Node* multi_declara = createNode(ND_BLOCK, tok);
+    multi_declara->Body = HEAD.next;
+    *rest = tok->next;                  // 更新指向下一条声明语句
+    return multi_declara;
+}
+
+// 对表达式语句的解析
 static Node* stamt(Token** rest, Token* tok) {
     // 新增 "return" 关键字的判断后进行修改
     // Q: 是否要考虑提前结束 parse() 的优化  => A: 直接返回 不去向下递归
@@ -572,8 +683,12 @@ static Node* primary_class_expr(Token** rest, Token* tok) {
             // 已经定义过 => 已经在 Local 链表中添加过 => slip 直接声明结点就可以
             // 没有定义过 => 先添加到 Local 链表中
 
-            // strndup() 复制指定长度的字符
-            varObj = newLocal(strndup(tok->place, tok->length));
+            // strndup() 复制指定长度的字符 返回 char* 指针
+            // varObj = newLocal(strndup(tok->place, tok->length));
+
+            // commit[22]: 有声明语句之后 在 declaration() 完成对变量的重复声明判断
+            // 在 primary_class_expr() 中如果出现了未声明的变量直接报错就可以 避免重复声明
+            tokenErrorAt(tok, "undefined variable");
         }
         // 初始化变量结点
         Node* ND = singleVarNode(varObj, tok);       // Tip: 变量结点指向的是链表 Local 对应结点的位置
