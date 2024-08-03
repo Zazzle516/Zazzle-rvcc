@@ -110,7 +110,7 @@ Token* skip(Token* input_token, char* target) {
 
 // commit[22]: 
 // Q: 消耗掉指定 Token  目前是用在 DEREF 中 不能用 skip 代替的区别是什么
-// skip() 用在准确跳过一个目标 tok 而 comsume 面对的是数量不确定的 tok*
+// A: skip() 用在准确跳过一个目标 tok 而 comsume 面对的是数量不确定的 tok*
 bool consume(Token** rest, Token* tok, char* str) {
     // 可能没有目标 tok 可能有 1 个
     if (equal(tok, str)) {
