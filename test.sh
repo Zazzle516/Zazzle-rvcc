@@ -1,5 +1,13 @@
 #!/bin/bash
 
+# Q: 为什么这里要用到 bash 脚本的 Here Document 功能
+# A: 因为目前 commit[23] 还不支持真正的函数调用
+# 所以通过内联的方式手动实现函数 方便后续的测试完成
+cat <<EOF | riscv64-unknown-linux-gnu-gcc -xc -c -o tmp2.o -
+int ret3() {return 3;}
+int ret5() {return 5;}
+EOF
+
 # 编写测试函数
 assert() {
     # !注意有引号
@@ -15,7 +23,7 @@ assert() {
     # 在生成文件的时候注意写明路径
 
     # 生成 RISCV64 架构下的可执行文件
-    riscv64-unknown-linux-gnu-gcc -static tmp.s -o ./tmp
+    riscv64-unknown-linux-gnu-gcc -static tmp.s tmp2.o -o ./tmp
 
     # 在 qemu-riscv64 架构下模拟运行
     qemu-riscv64 -L $RISCV/sysroot tmp
@@ -162,5 +170,12 @@ echo -------------------commit-21-pass-----------------------
 # [22] 支持int关键字
 assert 8 '{ int x, y; x=3; y=5; return x+y; }'
 assert 8 '{ int x=3, y=5; return x+y; }'
+echo -------------------commit-22-pass-----------------------
+
+# [23] 支持零参函数调用
+assert 3 '{ return ret3(); }'
+assert 5 '{ return ret5(); }'
+assert 8 '{ return ret3()+ret5(); }'
+echo -------------------commit-23-pass-----------------------
 
 echo all-test-passed

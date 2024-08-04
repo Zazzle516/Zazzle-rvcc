@@ -173,6 +173,14 @@ static void calcuGen(Node* AST) {
         return;
     }
 
+    case ND_FUNCALL:
+    {
+        // commit[23]: 汇编代码通过函数名完成 function call
+        printf("  # 调用 %s 函数\n", AST->FuncName);
+        printf("  call %s\n", AST->FuncName);
+        return;
+    }
+
     default:
         // +|-|*|/ 其余运算 需要继续向下判断
         break;
@@ -362,10 +370,17 @@ void codeGen(Function* Func) {
 
     // commit[11]: 预分配栈空间
     preAllocStackSpace(Func);
+
+    // commit[23]: 零参函数调用 新增对 reg-ra 的保存
+    // Tip: 目前栈上有 2 个 reg 要保存 注意对 (sp) 偏移量的更改
+    printf("  # 把返回地址寄存器 ra 压栈\n");
+    printf("  addi sp, sp, -16\n");
+    printf("  sd ra, 8(sp)\n");
     
     // 根据当前的 sp 定义准备执行的函数栈帧 fp
     printf("  # 把函数栈指针 fp 压栈\n");
-    printf("  addi sp, sp, -8\n");
+    // 因为 ra 的保存提前分配了 16 个字节 这里就不用额外分配了
+    // printf("  addi sp, sp, -8\n");
     printf("  sd fp, 0(sp)\n");     // 保存上一个 fp 状态用于恢复
 
     // 在准备执行的函数栈帧中定义栈顶指针
@@ -395,14 +410,22 @@ void codeGen(Function* Func) {
 
     // 目前只支持 main 函数 所以只有一个函数帧
 
+    // commit[23]: 执行结束 从 fp -> ra 逆序出栈
+
     // 函数执行完成 通过 fp 恢复空间(全程使用的是 sp, fp 并没有更改)
     printf("  # 释放函数栈帧 恢复 fp, sp 指向\n");
     printf("  mv sp, fp\n");
 
-    // 恢复 fp 位置     其实就是出栈
+    printf("  # 恢复 fp 内容\n");
     printf("  ld fp, 0(sp)\n");
-    printf("  addi sp, sp, 8\n");
 
+    printf("  # 恢复 ra 内容\n");
+    printf("  ld ra, 8(sp)\n");
+
+    // 恢复栈顶指针
+    printf("  addi sp, sp, 16\n");
+
+    printf("  # 返回 reg-a0 给系统调用\n");
     printf("  ret\n");
     
 }

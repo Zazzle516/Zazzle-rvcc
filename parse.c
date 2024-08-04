@@ -27,7 +27,10 @@
 // second_class_expr = third_class_expr (*|/ third_class_expr)
 
 // third_class_expr = (+|-|&|*)third_class_expr | primary_class_expr        优先拆分出一个符号作为减法符号
-// primary_class_expr = '(' | ')' | num
+
+// commit[23]: 添加对零参函数名声明的支持
+// primary_class_expr = '(' expr ')' | num | ident args?
+// args = "()"
 
 Object* Local;
 
@@ -550,6 +553,7 @@ static Node* third_class_expr(Token** rest, Token* tok) {
 }
 
 // 判断子表达式或者数字
+// commit[23]: 支持对零参函数的声明
 static Node* primary_class_expr(Token** rest, Token* tok) {
     if (equal(tok, "(")) {
         // 递归调用顶层表达式处理
@@ -564,8 +568,21 @@ static Node* primary_class_expr(Token** rest, Token* tok) {
         return ND;
     }
 
+    // indet args?  args = "()"
     if ((tok->token_kind) == TOKEN_IDENT) {
-        // 先检查是否已经定义过 根据结果执行
+        // 提前一个 token 判断是否是函数声明
+        if (equal(tok->next, "(")) {
+            // 零参函数声明
+            Node* ND = createNode(ND_FUNCALL, tok);
+
+            // 函数名记录   后续在汇编中的 call funcname 用到
+            ND->FuncName = strndup(tok->place, tok->length);
+
+            *rest = skip(tok->next->next, ")");
+            return ND;
+        }
+
+        // 先检查变量是否已经定义过 根据结果执行
         Object* varObj = findVar(tok);
         if (!varObj) {
             tokenErrorAt(tok, "undefined variable");

@@ -119,6 +119,9 @@ typedef enum {
 
     // 复合代码块
     ND_BLOCK,
+
+    // COMMIT[23]: 支持函数声明
+    ND_FUNCALL,
 } NODE_KIND;
 
 // 定义 AST 的结点结构
@@ -154,6 +157,9 @@ struct Node {
     Node* Cond_Block;
     Node* For_Init;     // for-init
     Node* Inc;          // for-increase
+
+    // commit[23]: 支持函数名声明
+    char* FuncName;
 };
 // 视频有提到 因为不同的 ND_KIND 不一定使用到全部的属性 可以用 struct union 进行优化
 

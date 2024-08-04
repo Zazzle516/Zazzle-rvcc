@@ -75,6 +75,10 @@ void addType(Node* ND) {
     case ND_GE:
     case ND_GT:
     case ND_NUM:
+    // Q: 为什么这里把函数调用的类型设置为 TYINT
+    // Q: 这里说的 "函数调用的类型" 是什么
+    // Q: 而且不是所有结点都需要一个类型 比如 ND_STAMT 的类型就空置了 那 FUNCALL 为什么一定需要一个类型
+    case ND_FUNCALL:
         ND->node_type = TYINT_GLOBAL;
         return;
     case ND_VAR:
