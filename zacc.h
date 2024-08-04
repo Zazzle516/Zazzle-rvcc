@@ -120,7 +120,7 @@ typedef enum {
     // 复合代码块
     ND_BLOCK,
 
-    // COMMIT[23]: 支持函数声明
+    // commit[23]: 支持无参函数声明
     ND_FUNCALL,
 } NODE_KIND;
 
@@ -160,6 +160,12 @@ struct Node {
 
     // commit[23]: 支持函数名声明
     char* FuncName;
+
+    // commit[24]: 支持参数结点声明
+    Node* Func_Args;    // 在 parse.c 中会递归解析参数 为参数结点赋予正确的 NODE_KIND
+
+    // Tip: 因为一开始我把 Func_Args 的定义写到 NODE_KIND 里面了
+    // 参数本身是需要内存去存储的 而且根据传参的方式不同 可能是 ND_VAR ND_STAMT... 之类的多种类型
 };
 // 视频有提到 因为不同的 ND_KIND 不一定使用到全部的属性 可以用 struct union 进行优化
 

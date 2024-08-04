@@ -29,8 +29,12 @@
 // third_class_expr = (+|-|&|*)third_class_expr | primary_class_expr        优先拆分出一个符号作为减法符号
 
 // commit[23]: 添加对零参函数名声明的支持
-// primary_class_expr = '(' expr ')' | num | ident args?
-// args = "()"
+// commit[24]: 添加对有参函数签名的支持
+// Tip: 这里处理参数的语法规则有 ident 重叠 因为不确定是函数声明还是变量 所以要往前看一个字符
+// primary_class_expr = '(' expr ')' | num | ident fun_args?
+
+// 这里的处理是在 primary_class_expr 前看一个字符确认是函数声明后的定义
+// funcall = ident "(" (expr ("," expr)*)? ")"
 
 Object* Local;
 
@@ -80,6 +84,7 @@ static Node* first_class_expr(Token** rest, Token* tok);
 static Node* second_class_expr(Token** rest, Token* tok);
 static Node* third_class_expr(Token** rest, Token* tok);
 static Node* primary_class_expr(Token** rest, Token* tok);
+static Node* funcall(Token** rest, Token* tok);
 
 // 定义 AST 结点  (注意因为 ND_NUM 的定义不同要分开处理)
 
@@ -552,6 +557,37 @@ static Node* third_class_expr(Token** rest, Token* tok) {
     return primary_class_expr(rest, tok);
 }
 
+// commit[24]: 处理含参函数调用
+static Node* funcall(Token** rest, Token* tok) {
+    // funcall = ident "(" (expr ("," expr)*)? ")"
+
+    // 1. 处理 ident
+    Node* ND = createNode(ND_FUNCALL, tok);
+    ND->FuncName = getVarName(tok);
+
+    // 将至多 6 个参数表达式通过链表存储
+    Node HEAD = {};
+    Node* Curr = &HEAD;
+
+    // Tip: 上面的 getVarName() 并不会更改 tok 的位置 需要跳过 'ident('
+    tok = tok->next->next;
+
+    // 2. 通过循环读取全部链表表达式
+    while (!equal(tok, ")"))
+    {
+        // 针对多个参数的情况 跳过分割符 其中第一个参数没有 "," 分割
+        if (Curr != &HEAD)
+            tok = skip(tok, ",");
+        Curr->next = expr(&tok, tok);
+        Curr = Curr->next;
+    }
+
+    *rest = skip(tok, ")");
+
+    ND->Func_Args = HEAD.next;
+    return ND;
+}
+
 // 判断子表达式或者数字
 // commit[23]: 支持对零参函数的声明
 static Node* primary_class_expr(Token** rest, Token* tok) {
@@ -572,14 +608,8 @@ static Node* primary_class_expr(Token** rest, Token* tok) {
     if ((tok->token_kind) == TOKEN_IDENT) {
         // 提前一个 token 判断是否是函数声明
         if (equal(tok->next, "(")) {
-            // 零参函数声明
-            Node* ND = createNode(ND_FUNCALL, tok);
-
-            // 函数名记录   后续在汇编中的 call funcname 用到
-            ND->FuncName = strndup(tok->place, tok->length);
-
-            *rest = skip(tok->next->next, ")");
-            return ND;
+            // 本质上是在内部执行 不需要更新 tok 位置
+            return funcall(rest, tok);
         }
 
         // 先检查变量是否已经定义过 根据结果执行

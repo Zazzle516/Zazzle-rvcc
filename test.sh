@@ -6,6 +6,11 @@
 cat <<EOF | riscv64-unknown-linux-gnu-gcc -xc -c -o tmp2.o -
 int ret3() {return 3;}
 int ret5() {return 5;}
+int add(int x, int y) { return x+y; }
+int sub(int x, int y) { return x-y; }
+int add6(int a, int b, int c, int d, int e, int f) {
+  return a+b+c+d+e+f;
+}
 EOF
 
 # 编写测试函数
@@ -177,5 +182,13 @@ assert 3 '{ return ret3(); }'
 assert 5 '{ return ret5(); }'
 assert 8 '{ return ret3()+ret5(); }'
 echo -------------------commit-23-pass-----------------------
+
+# [24] 支持最多6个参数的函数调用
+assert 8 '{ return add(3, 5); }'
+assert 2 '{ return sub(5, 3); }'
+assert 21 '{ return add6(1,2,3,4,5,6); }'
+assert 66 '{ return add6(1,2,add6(3,4,5,6,7,8),9,10,11); }'
+assert 136 '{ return add6(1,2,add6(3,add6(4,5,6,7,8,9),10,11,12,13),14,15,16); }'
+echo -------------------commit-24-pass-----------------------
 
 echo all-test-passed

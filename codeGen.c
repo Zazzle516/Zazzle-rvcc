@@ -3,8 +3,12 @@
 // 记录当前的栈深度 用于后续的运算合法性判断
 static int StackDepth;
 
+// 全局变量定义传参用到的至多 6 个寄存器
+static char* ArgReg[] = {"a0", "a1", "a2", "a3", "a4", "a5"};
+
 // 提前声明 后续会用到
 static void calcuGen(Node* AST);
+static void exprGen(Node* AST);
 
 // Q: commit[18]: codeGen() 怎么使用 AST 用作终结符的 tok
 // A: 在 default_err() 处理的部分声明错误发生的位置
@@ -176,6 +180,27 @@ static void calcuGen(Node* AST) {
     case ND_FUNCALL:
     {
         // commit[23]: 汇编代码通过函数名完成 function call
+        // commit[24]: 完成对至多 6 个参数的函数调用
+
+        // 此时在执行 codeGen() 的时候 参数的个数是未知的 (这点很重要)
+        // 所以先通过正向压栈(也就是遍历) 得到函数传参的个数
+        // 而因为栈的 FILO 的特性 必然会逆序出栈 这样可以保证传参的完整性
+
+        // 初始化参数的个数
+        int argNum = 0;
+
+        for (Node* Arg = AST->Func_Args; Arg; Arg = Arg->next) {
+            // 计算每个传参的表达式
+            calcuGen(Arg);
+            push_stack();
+            argNum++;
+        }
+
+        // 把参数出栈放在对应的寄存器中
+        for (int i = argNum - 1; i >= 0; i--) {
+            pop_stack(ArgReg[i]);
+        }
+
         printf("  # 调用 %s 函数\n", AST->FuncName);
         printf("  call %s\n", AST->FuncName);
         return;
