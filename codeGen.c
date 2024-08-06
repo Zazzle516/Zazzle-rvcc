@@ -282,8 +282,7 @@ static void exprGen(Node* AST) {
     {
         // 因为在 parse.c 中的 stamt() 是同级定义 所以可以在这里比较
         // 通过跳转 return-label 的方式返回
-        // commit[25]: 返回到 reg-ra 存储的位置
-        printf("  # 返回到指定的 Q: ??\n");
+        printf("  # 返回到当前执行函数的 return 标签\n");
         calcuGen(AST->LHS);
         // commit[25]: 返回当前执行函数的 return label
         printf("  j .L.return.%s\n", currFuncFrame->FuncName);

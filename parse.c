@@ -2,11 +2,11 @@
 
 // commit[1] - commit[22] 注释备份在 annotation-bak 中
 
-// commit[25]: 最顶层语法规则更新为函数定义
+// commit[25]: 最顶层语法规则更新为函数定义 注释掉 program 重新修改为两层结构
 // parse() = functionDefinition*
 // __program = "{" compoundStamt
 
-// commit[25]: 函数签名定义 目前只支持 'int' 并且无参  eg. int* funcName() {...}
+// commit[25]: 函数定义 目前只支持 'int' 并且无参  eg. int* funcName() {...}
 // functionDefinition = declspec declarator "{" compoundStamt*
 // declspec = "int"
 // declarator = "*"* ident typeSuffix
@@ -38,11 +38,10 @@
 // third_class_expr = (+|-|&|*)third_class_expr | primary_class_expr        优先拆分出一个符号作为减法符号
 
 // commit[23]: 添加对零参函数名声明的支持
-// commit[24]: 添加对有参函数签名的支持
 // Tip: 这里处理参数的语法规则有 ident 重叠 因为不确定是函数声明还是变量 所以要往前看一个字符
 // primary_class_expr = '(' expr ')' | num | ident fun_args?
 
-// 这里的处理是在 primary_class_expr 前看一个字符确认是函数声明后的定义
+// commit[24]: 函数调用 在 primary_class_expr 前看一个字符确认是函数声明后的定义
 // funcall = ident "(" (expr ("," expr)*)? ")"
 
 Object* Local;
@@ -78,7 +77,7 @@ static char* getVarName(Token* tok) {
 }
 
 // 定义产生式关系并完成自顶向下的递归调用
-static Node* program(Token** rest, Token* tok);
+// static Node* __program(Token** rest, Token* tok);
 static Function* functionDefinition(Token** rest, Token* tok);
 
 static Type* declarator(Token** rest, Token* tok, Type* Base);
@@ -210,7 +209,6 @@ static Node* newPtrSub(Node* LHS, Node* RHS, Token* tok) {
         // Q: ???   为什么加法不需要减法需要
         addType(newRHS);
 
-        // Q: ???
         Node* ND = createAST(ND_SUB, LHS, newRHS, tok);
 
         // Q: 最后要声明该结点是指针类型 ???
@@ -224,8 +222,10 @@ static Node* newPtrSub(Node* LHS, Node* RHS, Token* tok) {
     return NULL;
 }
 
+/* 下面的三个辅助函数只可能发生函数定义与变量定义的混用(因为 funcall 不会有 int 前缀) */
 // 函数定义: int* funcName() {...}
-// 函数调用: int a = funcName();
+// 变量定义: int a, *b = xx;
+// 因为混用导致函数嵌套定义的报错发生在 declaration() 的变量解析中
 
 // 返回对类型 'int' 的判断
 static Type* declspec(Token** rest, Token* tok) {
@@ -233,13 +233,11 @@ static Type* declspec(Token** rest, Token* tok) {
     return TYINT_GLOBAL;
 }
 
-// commit[25]: 目前只支持零参函数定义 或者 变量定义     但是没有办法对函数嵌套进行语法报错
-// 如果是函数定义的话 一定会提前进入 functionDefinition() 执行
-// 并且 C 不支持函数嵌套定义 所以 declaration() 只处理 funcall()
+// commit[25]: 目前只支持零参函数定义 或者 变量定义
 static Type* typeSuffix(Token** rest, Token* tok, Type* returnType) {
-    // Q: 为什么没有在这里声明函数返回值属于哪个函数
-    // A: 在 declarator() 中的 {Base->Name = tok;} 声明
     if (equal(tok, "(")) {
+        // Q: 为什么没有在这里声明函数返回值属于哪个函数
+        // A: 返回值本身是已经确定的 这里在新建一个函数结点 反向声明该函数拥有什么返回类型
         // 前看一个字符 判断是变量还是函数调用
         *rest = skip(tok->next, ")");
         return funcType(returnType);
@@ -255,7 +253,7 @@ static Type* declarator(Token** rest, Token* tok, Type* Base) {
     while (consume(&tok, tok, "*")) {
         Base = newPointerTo(Base);
     }
-    // 此时的 Base 已经是最终的返回值类型 因为全部的 (int**...) 已经解析完成了
+    // 此时的 Base 已经是最终的返回值类型 或 变量类型 因为全部的 (int**...) 已经解析完成了
 
     // 接下来要读取 funcName | identName 实际上根据 zacc.h 会写入 Type Base 中
     if (tok->token_kind != TOKEN_IDENT) {
@@ -266,7 +264,7 @@ static Type* declarator(Token** rest, Token* tok, Type* Base) {
     //*rest = tok->next;
     Base = typeSuffix(rest, tok->next, Base);
 
-    // 这个时候的 Base 已经表示函数结点了
+    // 如果是函数结点   因为调用 typeSuffix() 传递的是 rest 所以这里 tok 没有更新
     Base->Name = tok;       // Tip: 这里保留了 Token 的链接
 
     return Base;
@@ -275,11 +273,10 @@ static Type* declarator(Token** rest, Token* tok, Type* Base) {
 
 /* 语法规则的递归解析 */
 
-// Q: 能不能修改为返回 Node* 类型
 // commit[25]: 解析零参函数定义     int* funcName() {...}
 static Function* functionDefinition(Token** rest, Token* tok) {
     Type* returnBaseType = declspec(&tok, tok);
-    Type* isPtr = declarator(&tok, tok, returnBaseType);
+    Type* funcType = declarator(&tok, tok, returnBaseType);
 
     // 初始化函数帧变量
     Local = NULL;
@@ -287,29 +284,30 @@ static Function* functionDefinition(Token** rest, Token* tok) {
     // 初始化函数定义结点
     Function* func = calloc(1, sizeof(Function));
     
-    // Q: 这里一定要用 isPtr->Name 吗   因为这个时候 tok 的位置应该正好指向 funcName
-    // 因为在 typeSuffix 中更新了 *rest 所以这个时候 tok 位置在函数体
-    func->FuncName = getVarName(isPtr->Name);
-    func->AST = program(&tok, tok);
+    // Q: 这里一定要用 funcType->Name 吗   因为这个时候 tok 的位置应该正好指向 funcName
+    // A: 因为在 declarator 中更新了 &tok 所以这个时候 tok 位置指向函数体
+    func->FuncName = getVarName(funcType->Name);
+    tok = skip(tok, "{");
+    func->AST = compoundStamt(rest, tok);
     func->local = Local;
 
     return func;
 }
 
+// commit[25]: 弃用 修改为两层的结构
+// static Node* program(Token** rest, Token* tok) {
+//     // 新增语法规则: 要求最外层语句必须有 "{}" 包裹
+//     tok = skip(tok, "{");
+//     Node* ND = compoundStamt(&tok, tok);
 
-static Node* program(Token** rest, Token* tok) {
-    // 新增语法规则: 要求最外层语句必须有 "{}" 包裹
-    tok = skip(tok, "{");
-    Node* ND = compoundStamt(&tok, tok);
-
-    // commit[25]: 无效
-    // 注意这里是在语法分析结束后再检查词法的结束正确性
-    // if (tok->token_kind != TOKEN_EOF) {
-    //     tokenErrorAt(tok, "extra Token");
-    // }
-    *rest = tok;
-    return ND;
-}
+//     // commit[25]: 无效
+//     // 注意这里是在语法分析结束后再检查词法的结束正确性
+//     // if (tok->token_kind != TOKEN_EOF) {
+//     //     tokenErrorAt(tok, "extra Token");
+//     // }
+//     *rest = tok;
+//     return ND;
+// }
 
 // 对 Block 中复合语句的判断
 static Node* compoundStamt(Token** rest, Token* tok) {
@@ -320,7 +318,8 @@ static Node* compoundStamt(Token** rest, Token* tok) {
 
     while (!equal(tok, "}")) {
         // commit[22]: 对声明语句和表达式语句分别处理
-        if (equal(tok, "int")) 
+        // commit[25]: 函数调用是没有返回值的前缀! 所以目前 compoundStamt.declaration 只用于变量定义
+        if (equal(tok, "int"))
             Curr->next = declaration(&tok, tok);
         else
             Curr->next = stamt(&tok, tok);
@@ -336,7 +335,7 @@ static Node* compoundStamt(Token** rest, Token* tok) {
     return ND;
 }
 
-// 对声明语句的解析
+// 对变量定义语句的解析
 // declaration = declspec (declarator ("=" expr)? ("," declarator ("=" expr)?)*)? ";"
 static Node* declaration(Token** rest, Token* tok) {
     // 1. 解析 declspec 类型语法  放在循环外面应用于所有的声明变量
@@ -353,6 +352,7 @@ static Node* declaration(Token** rest, Token* tok) {
     while(!equal(tok, ";")) {
         // 判断循环是否能合法的继续下去  同时排除掉第一个变量声明子语句
         if ((variable_count ++) > 0)
+            // Tip: 函数嵌套定义报错位置
             tok = skip(tok, ",");
 
         Type* isPtr = declarator(&tok, tok, nd_base_type);
@@ -623,36 +623,6 @@ static Node* third_class_expr(Token** rest, Token* tok) {
     return primary_class_expr(rest, tok);
 }
 
-// commit[24]: 处理含参函数调用
-static Node* funcall(Token** rest, Token* tok) {
-    // funcall = ident "(" (expr ("," expr)*)? ")"
-
-    // 1. 处理 ident
-    Node* ND = createNode(ND_FUNCALL, tok);
-    ND->FuncName = getVarName(tok);
-
-    // 将至多 6 个参数表达式通过链表存储
-    Node HEAD = {};
-    Node* Curr = &HEAD;
-
-    // Tip: 上面的 getVarName() 并不会更改 tok 的位置 需要跳过 'ident('
-    tok = tok->next->next;
-
-    // 2. 通过循环读取全部链表表达式
-    while (!equal(tok, ")"))
-    {
-        // 针对多个参数的情况 跳过分割符 其中第一个参数没有 "," 分割
-        if (Curr != &HEAD)
-            tok = skip(tok, ",");
-        Curr->next = expr(&tok, tok);
-        Curr = Curr->next;
-    }
-
-    *rest = skip(tok, ")");
-
-    ND->Func_Args = HEAD.next;
-    return ND;
-}
 
 // 判断子表达式或者数字
 // commit[23]: 支持对零参函数的声明
@@ -694,12 +664,46 @@ static Node* primary_class_expr(Token** rest, Token* tok) {
     return NULL;
 }
 
+// commit[24]: 处理含参函数调用
+static Node* funcall(Token** rest, Token* tok) {
+    // funcall = ident "(" (expr ("," expr)*)? ")"
+
+    // 1. 处理 ident
+    Node* ND = createNode(ND_FUNCALL, tok);
+    ND->FuncName = getVarName(tok);
+
+    // 将至多 6 个参数表达式通过链表存储
+    Node HEAD = {};
+    Node* Curr = &HEAD;
+
+    // Tip: 上面的 getVarName() 并不会更改 tok 的位置 需要跳过 'ident('
+    tok = tok->next->next;
+
+    // 2. 通过循环读取全部链表表达式
+    while (!equal(tok, ")"))
+    {
+        // 针对多个参数的情况 跳过分割符 其中第一个参数没有 "," 分割
+        if (Curr != &HEAD)
+            tok = skip(tok, ",");
+        Curr->next = expr(&tok, tok);
+        Curr = Curr->next;
+    }
+
+    *rest = skip(tok, ")");
+
+    ND->Func_Args = HEAD.next;
+    return ND;
+}
+
 // 读入 token stream 在每个 stamt 中处理一部分 token 结点
 Function* parse(Token* tok) {
     // 生成的 AST 只有一个根节点 而不是像前面的 commit 一样的单链表
 
     // commit[25]: 顶层结构从 program 变成 functionDefinition*
     //Node* AST = program(&tok, tok);
+
+    // commit[25]: 解析层次修改之后 从 parse->program 的两层结构变成 parse->funcDefin->program 三层结构
+    // 三层结构会导致 *rest tok 错误    除非换成两层
 
     Function HEAD = {};
     Function* Curr = &HEAD;
