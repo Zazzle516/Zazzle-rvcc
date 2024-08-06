@@ -6,6 +6,9 @@ static int StackDepth;
 // 全局变量定义传参用到的至多 6 个寄存器
 static char* ArgReg[] = {"a0", "a1", "a2", "a3", "a4", "a5"};
 
+// commit[25]: 记录当前正在执行的函数帧
+static Function* currFuncFrame;
+
 // 提前声明 后续会用到
 static void calcuGen(Node* AST);
 static void exprGen(Node* AST);
@@ -43,19 +46,22 @@ static int alignTo(int realTotal, int aimAlign) {
 }
 
 // commit[11]: 根据 parse() 的结果计算栈空间的预分配
+// commit[25]: 根据每个函数中的变量 Local 情况分配空间  二重循环
 static void preAllocStackSpace(Function* func) {
-    // 初始化分配空间为 0
-    int realTotal = 0;
+    for (Function* currFunc = func; currFunc; currFunc = currFunc->next) {
+        // 初始化分配空间为 0
+        int realTotal = 0;
+        
+        // 遍历链表计算出总空间
+        for(Object* obj = currFunc->local; obj; obj = obj->next) {
+            realTotal += 8;     // int64_t => 8B
 
-    // 遍历链表计算出总空间
-    for(Object* obj = func->local; obj; obj = obj->next) {
-        realTotal += 8;     // int64_t => 8B
-
-        // Tip: 很巧妙!     在计算空间的时候同时顺序得到变量在栈空间(B区域)的偏移量
-        // 由于 AST 的 ND_VAR 指向 Local 所以随着 func.local 遍历会同时改变 AST.var.offset
-        obj->offset = -realTotal;
+            // Tip: 很巧妙!     在计算空间的时候同时顺序得到变量在栈空间(B区域)的偏移量
+            // 由于 AST 的 ND_VAR 指向 Local 所以随着 func.local 遍历会同时改变 AST.var.offset
+            obj->offset = -realTotal;
+        }
+        currFunc->StackSize = alignTo(realTotal, 16);
     }
-    func->StackSize = alignTo(realTotal, 16);
 }
 
 // 在 commit[10] 中对赋值情况需要定义函数栈帧和栈空间的存储分配
@@ -276,9 +282,11 @@ static void exprGen(Node* AST) {
     {
         // 因为在 parse.c 中的 stamt() 是同级定义 所以可以在这里比较
         // 通过跳转 return-label 的方式返回
-        printf("  # 返回咯\n");
+        // commit[25]: 返回到 reg-ra 存储的位置
+        printf("  # 返回到指定的 Q: ??\n");
         calcuGen(AST->LHS);
-        printf("  j .L.return\n");
+        // commit[25]: 返回当前执行函数的 return label
+        printf("  j .L.return.%s\n", currFuncFrame->FuncName);
         return;
     }
 
@@ -388,69 +396,73 @@ static void exprGen(Node* AST) {
     tokenErrorAt(AST->token, "invalid expr\n");
 }
 
+// commit[25]: 为每个函数单独分配栈空间
 void codeGen(Function* Func) {
-    printf("  .global main\n");
-    printf("\n# =====程序开始===============\n");
-    printf("main:\n");
-
     // commit[11]: 预分配栈空间
     preAllocStackSpace(Func);
 
-    // commit[23]: 零参函数调用 新增对 reg-ra 的保存
-    // Tip: 目前栈上有 2 个 reg 要保存 注意对 (sp) 偏移量的更改
-    printf("  # 把返回地址寄存器 ra 压栈\n");
-    printf("  addi sp, sp, -16\n");
-    printf("  sd ra, 8(sp)\n");
+    for (Function* currFunc = Func; currFunc; currFunc = currFunc->next) {
+        printf("  .global %s\n", currFunc->FuncName);
+        printf("\n# ========当前函数 %s 开始============\n", currFunc->FuncName);
+        printf("%s:\n", currFunc->FuncName);
+        // 更新全局变量的指向
+        currFuncFrame = currFunc;
     
-    // 根据当前的 sp 定义准备执行的函数栈帧 fp
-    printf("  # 把函数栈指针 fp 压栈\n");
-    // 因为 ra 的保存提前分配了 16 个字节 这里就不用额外分配了
-    // printf("  addi sp, sp, -8\n");
-    printf("  sd fp, 0(sp)\n");     // 保存上一个 fp 状态用于恢复
+        // commit[23]: 零参函数调用 新增对 reg-ra 的保存
+        // Tip: 目前栈上有 2 个 reg 要保存 注意对 (sp) 偏移量的更改
+        printf("  # 把返回地址寄存器 ra 压栈\n");
+        printf("  addi sp, sp, -16\n");
+        printf("  sd ra, 8(sp)\n");
+        
+        // 根据当前的 sp 定义准备执行的函数栈帧 fp
+        printf("  # 把函数栈指针 fp 压栈\n");
+        // 因为 ra 的保存提前分配了 16 个字节 这里就不用额外分配了
+        // printf("  addi sp, sp, -8\n");
+        printf("  sd fp, 0(sp)\n");     // 保存上一个 fp 状态用于恢复
 
-    // 在准备执行的函数栈帧中定义栈顶指针
-    printf("  # 更新 sp 指向当前函数栈帧的栈空间\n");
-    printf("  mv fp, sp\n");
+        // 在准备执行的函数栈帧中定义栈顶指针
+        printf("  # 更新 sp 指向当前函数栈帧的栈空间\n");
+        printf("  mv fp, sp\n");
 
-    // 在 preAllocStackSpace() 中得到的是总空间 需要添加负号哦
-    printf("  # 分配当前函数所需要的栈空间\n");
-    printf("  addi sp, sp, -%d\n", Func->StackSize);
+        // 在 preAllocStackSpace() 中得到的是总空间 需要添加负号哦
+        printf("  # 分配当前函数所需要的栈空间\n");
+        printf("  addi sp, sp, -%d\n", currFunc->StackSize);
 
-    // 这里的 AST 实际上是链表而不是树结构
-    // for (Node* ND = Func->AST; ND != NULL; ND = ND->next) {
-    //     exprGen(ND);
-    //     // Q: 每行语句都能保证 stack 为空吗
-    //     // 目前是的 因为每个完整的语句都是个运算式 虽然不一定有赋值(即使有赋值 因为没有定义寄存器结构会被后面的结果直接覆盖 a0)
-    //     assert(StackDepth==0);
-    // }
+        // 这里的 AST 实际上是链表而不是树结构
+        // for (Node* ND = Func->AST; ND != NULL; ND = ND->next) {
+        //     exprGen(ND);
+        //     // Q: 每行语句都能保证 stack 为空吗
+        //     // 目前是的 因为每个完整的语句都是个运算式 虽然不一定有赋值(即使有赋值 因为没有定义寄存器结构会被后面的结果直接覆盖 a0)
+        //     assert(StackDepth==0);
+        // }
 
-    // commit[13]: 现在的 AST-root 是单节点不是链表了
-    printf("\n# =====程序主体===============\n");
-    exprGen(Func->AST);
-    assert(StackDepth == 0);
+        // commit[13]: 现在的 AST-root 是单节点不是链表了
+        printf("\n# =====程序主体===============\n");
+        exprGen(currFunc->AST);
+        assert(StackDepth == 0);
 
-    // 为 return 的跳转定义标签
-    printf("\n# =====程序结束===============\n");
-    printf(".L.return:\n");
+        // 为 return 的跳转定义标签
+        printf("\n# =====程序结束===============\n");
+        printf(".L.return.%s:\n", currFunc->FuncName);
 
-    // 目前只支持 main 函数 所以只有一个函数帧
+        // 目前只支持 main 函数 所以只有一个函数帧
 
-    // commit[23]: 执行结束 从 fp -> ra 逆序出栈
+        // commit[23]: 执行结束 从 fp -> ra 逆序出栈
 
-    // 函数执行完成 通过 fp 恢复空间(全程使用的是 sp, fp 并没有更改)
-    printf("  # 释放函数栈帧 恢复 fp, sp 指向\n");
-    printf("  mv sp, fp\n");
+        // 函数执行完成 通过 fp 恢复空间(全程使用的是 sp, fp 并没有更改)
+        printf("  # 释放函数栈帧 恢复 fp, sp 指向\n");
+        printf("  mv sp, fp\n");
 
-    printf("  # 恢复 fp 内容\n");
-    printf("  ld fp, 0(sp)\n");
+        printf("  # 恢复 fp 内容\n");
+        printf("  ld fp, 0(sp)\n");
 
-    printf("  # 恢复 ra 内容\n");
-    printf("  ld ra, 8(sp)\n");
+        printf("  # 恢复 ra 内容\n");
+        printf("  ld ra, 8(sp)\n");
 
-    // 恢复栈顶指针
-    printf("  addi sp, sp, 16\n");
+        // 恢复栈顶指针
+        printf("  addi sp, sp, 16\n");
 
-    printf("  # 返回 reg-a0 给系统调用\n");
-    printf("  ret\n");
-    
+        printf("  # 返回 reg-a0 给系统调用\n");
+        printf("  ret\n");
+    }
 }

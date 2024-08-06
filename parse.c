@@ -2,7 +2,16 @@
 
 // commit[1] - commit[22] 注释备份在 annotation-bak 中
 
-// program = "{" compoundStamt
+// commit[25]: 最顶层语法规则更新为函数定义
+// parse() = functionDefinition*
+// __program = "{" compoundStamt
+
+// commit[25]: 函数签名定义 目前只支持 'int' 并且无参  eg. int* funcName() {...}
+// functionDefinition = declspec declarator "{" compoundStamt*
+// declspec = "int"
+// declarator = "*"* ident typeSuffix
+// typeSuffix = ("(" ")")?
+
 // compoundStamt = (declaration | stamt)* "}"
 
 // commit[22]: 声明语句的语法定义 支持连续定义
@@ -70,8 +79,13 @@ static char* getVarName(Token* tok) {
 
 // 定义产生式关系并完成自顶向下的递归调用
 static Node* program(Token** rest, Token* tok);
-static Node* compoundStamt(Token** rest, Token* tok);
+static Function* functionDefinition(Token** rest, Token* tok);
+
+static Type* declarator(Token** rest, Token* tok, Type* Base);
+static Type* declspec(Token** rest, Token* tok);
 static Node* declaration(Token** rest, Token* tok);
+
+static Node* compoundStamt(Token** rest, Token* tok);
 static Node* stamt(Token** rest, Token* tok);
 static Node* exprStamt(Token** rest, Token* tok);
 static Node* expr(Token** rest, Token* tok);
@@ -210,10 +224,30 @@ static Node* newPtrSub(Node* LHS, Node* RHS, Token* tok) {
     return NULL;
 }
 
-// 返回对类型 'int' 'float' 的判断
+// 函数定义: int* funcName() {...}
+// 函数调用: int a = funcName();
+
+// 返回对类型 'int' 的判断
 static Type* declspec(Token** rest, Token* tok) {
     *rest = skip(tok, "int");
     return TYINT_GLOBAL;
+}
+
+// commit[25]: 目前只支持零参函数定义 或者 变量定义     但是没有办法对函数嵌套进行语法报错
+// 如果是函数定义的话 一定会提前进入 functionDefinition() 执行
+// 并且 C 不支持函数嵌套定义 所以 declaration() 只处理 funcall()
+static Type* typeSuffix(Token** rest, Token* tok, Type* returnType) {
+    // Q: 为什么没有在这里声明函数返回值属于哪个函数
+    // A: 在 declarator() 中的 {Base->Name = tok;} 声明
+    if (equal(tok, "(")) {
+        // 前看一个字符 判断是变量还是函数调用
+        *rest = skip(tok->next, ")");
+        return funcType(returnType);
+    }
+
+    // 变量声明
+    *rest = tok;
+    return returnType;
 }
 
 // 判断是否是指针类型 如果是指针类型那么要声明该指针的指向
@@ -221,27 +255,59 @@ static Type* declarator(Token** rest, Token* tok, Type* Base) {
     while (consume(&tok, tok, "*")) {
         Base = newPointerTo(Base);
     }
+    // 此时的 Base 已经是最终的返回值类型 因为全部的 (int**...) 已经解析完成了
 
+    // 接下来要读取 funcName | identName 实际上根据 zacc.h 会写入 Type Base 中
     if (tok->token_kind != TOKEN_IDENT) {
-        tokenErrorAt(tok, "expected a variable name");
+        tokenErrorAt(tok, "expected a variable name or a function name");
     }
-    Base->Name = tok;       // Tip: 这里保留了 Token 的链接
 
-    *rest = tok->next;
+    // commit[25]: 这里同时有变量声明 | 函数定义两个可能性 所以后续交给 typeSuffix 判断
+    //*rest = tok->next;
+    Base = typeSuffix(rest, tok->next, Base);
+
+    // 这个时候的 Base 已经表示函数结点了
+    Base->Name = tok;       // Tip: 这里保留了 Token 的链接
 
     return Base;
 }
+
+
+/* 语法规则的递归解析 */
+
+// Q: 能不能修改为返回 Node* 类型
+// commit[25]: 解析零参函数定义     int* funcName() {...}
+static Function* functionDefinition(Token** rest, Token* tok) {
+    Type* returnBaseType = declspec(&tok, tok);
+    Type* isPtr = declarator(&tok, tok, returnBaseType);
+
+    // 初始化函数帧变量
+    Local = NULL;
+
+    // 初始化函数定义结点
+    Function* func = calloc(1, sizeof(Function));
+    
+    // Q: 这里一定要用 isPtr->Name 吗   因为这个时候 tok 的位置应该正好指向 funcName
+    // 因为在 typeSuffix 中更新了 *rest 所以这个时候 tok 位置在函数体
+    func->FuncName = getVarName(isPtr->Name);
+    func->AST = program(&tok, tok);
+    func->local = Local;
+
+    return func;
+}
+
 
 static Node* program(Token** rest, Token* tok) {
     // 新增语法规则: 要求最外层语句必须有 "{}" 包裹
     tok = skip(tok, "{");
     Node* ND = compoundStamt(&tok, tok);
 
+    // commit[25]: 无效
     // 注意这里是在语法分析结束后再检查词法的结束正确性
-    if (tok->token_kind != TOKEN_EOF) {
-        tokenErrorAt(tok, "extra Token");
-    }
-
+    // if (tok->token_kind != TOKEN_EOF) {
+    //     tokenErrorAt(tok, "extra Token");
+    // }
+    *rest = tok;
     return ND;
 }
 
@@ -631,12 +697,21 @@ static Node* primary_class_expr(Token** rest, Token* tok) {
 // 读入 token stream 在每个 stamt 中处理一部分 token 结点
 Function* parse(Token* tok) {
     // 生成的 AST 只有一个根节点 而不是像前面的 commit 一样的单链表
-    Node* AST = program(&tok, tok);
 
-    Function* Func = calloc(1, sizeof(Function));
-    Func->AST = AST;
-    Func->local = Local;
+    // commit[25]: 顶层结构从 program 变成 functionDefinition*
+    //Node* AST = program(&tok, tok);
+
+    Function HEAD = {};
+    Function* Curr = &HEAD;
+
+    while (tok->token_kind !=TOKEN_EOF) {
+        Curr->next = functionDefinition(&tok, tok);
+        Curr = Curr->next;
+    }
+    
+    // commit[25]: 在 functionDefinition() 中进行空间分配
+    // Function* Func = calloc(1, sizeof(Function));
 
     // 对 Func->StackSize 的处理在 codeGen() 实现
-    return Func;
+    return HEAD.next;
 }

@@ -72,18 +72,6 @@ struct Object {
     Type* var_type;
 };
 
-// commit[11]: 用 Function 结构体包裹 AST 携带数据之类的其他内容
-typedef struct Function Function;
-struct Function {
-    Node* AST;
-    Object* local;
-
-    // 目前只在栈上分配函数帧的空间需求(如果需要的空间非常大 要考虑从堆上动态分配空间)
-    // 现在只会报 Stack Overflow 的错误
-    int StackSize;
-};
-
-
 // 声明 AST 的节点类型
 typedef enum {
     ND_NUM,
@@ -120,12 +108,15 @@ typedef enum {
     // 复合代码块
     ND_BLOCK,
 
-    // commit[23]: 支持无参函数声明
+    // commit[23]: 支持无参函数调用(函数内部可以调用函数)
     ND_FUNCALL,
 } NODE_KIND;
 
 // 定义 AST 的结点结构
-
+// commit[25]: 因为 C 语言不支持函数嵌套 所以函数本身一定是作为最顶层语法结构出现
+// 下面的 struct Node 是针对 Func 内部语句的定义 它只需要知道自己属于哪个 Func 就 ok 了
+// Q: 为什么没有给函数返回值一个 Node 结点
+// A: 因为 struct Node 从定义上只能处理函数内部的结点 而返回值定义在函数签名中 无法处理
 struct Node {
     NODE_KIND node_kind;
     int val;                // 针对 ND_NUM 记录大小
@@ -159,9 +150,11 @@ struct Node {
     Node* Inc;          // for-increase
 
     // commit[23]: 支持函数名声明
+    // commit[25]: 表明该结点属于哪个函数定义
     char* FuncName;
 
     // commit[24]: 支持参数结点声明
+    // commit[25]: 支持当前函数中*内部*函数调用的参数存储 函数返回会通过 ND_ASSIGN 完成
     Node* Func_Args;    // 在 parse.c 中会递归解析参数 为参数结点赋予正确的 NODE_KIND
 
     // Tip: 因为一开始我把 Func_Args 的定义写到 NODE_KIND 里面了
@@ -169,15 +162,36 @@ struct Node {
 };
 // 视频有提到 因为不同的 ND_KIND 不一定使用到全部的属性 可以用 struct union 进行优化
 
+// commit[11]: 用 Function 结构体包裹 AST 携带数据之类的其他内容
+typedef struct Function Function;
+struct Function {
+    Node* AST;
+    Object* local;
+
+    // 目前只在栈上分配函数帧的空间需求(如果需要的空间非常大 要考虑从堆上动态分配空间)
+    // 现在只会报 Stack Overflow 的错误
+    int StackSize;
+
+    // commit[25]: 定义函数名 每个函数目前作为独立语句处理
+    char* FuncName;
+
+    // commit[25]: 对应在 codeGen() 中也是独立拥有函数栈帧 通过循环处理每一个 FuncNode
+    Function* next;
+};
+
 Function* parse(Token* tok);
 
 /* 类型定义 */
 typedef enum {
     TY_INT,         // 整数类型变量
-    TY_PTR,         // 指针 
+    TY_PTR,         // 指针
+
+    // commit[25]: 声明函数签名
+    TY_FUNC,
 } Typekind;
 
-
+// Q: 为什么把函数返回值定义在 Type 中
+// A: 因为 Node 处理的是函数本身 所以 Type 需要在 Node 外部 链接到 Token 读取函数的返回值类型
 struct Type {
     Typekind Kind;      // <int, ptr>
     Type* Base;         // 必须声明当前指针所指向的空间大小 后续计算会涉及
@@ -185,6 +199,9 @@ struct Type {
     // commit[22]: 在 declaration().LHS 构造中用到了
     // 某种程度上是为了匹配 parse() 的语法位置报错才有这个属性吧
     Token* Name;        // 存储当前类型的名称 <int> <double> 链接到 Token Stream
+
+    // commit[25]: 根据 Token 保存返回值类型  作用在函数定义中
+    Type* ReturnType;
 };
 
 // 使用在 type.c 中定义的全局变量 (用于对 int 类型的判断)
@@ -198,6 +215,9 @@ Type* newPointerTo(Type* Base);
 
 // 递归性的为节点内的所有节点添加类型
 void addType(Node* ND);
+
+// 定义函数签名
+Type* funcType(Type* ReturnType);
 
 /* 后端生成 codeGen() 数据结构和函数声明 */
 void codeGen(Function* AST);

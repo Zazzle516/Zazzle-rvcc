@@ -26,6 +26,18 @@ Type* newPointerTo(Type* Base) {
     return ty;
 }
 
+// 根据函数签名定义相关结构
+Type* funcType(Type* ReturnType) {
+    // Q: 为什么要在这里重新分配空间
+    // A: 传递的只是返回值的类型 而新建的是函数结点
+    // Tip: 函数调用因为没有 'int' 之类的类型开头 在 compoundStamt() 中会被导向 stamt() 执行
+    // 所以不用担心 ReturnType 因为根本不会被函数调用使用
+    Type* type = calloc(1, sizeof(Type));
+    type->Kind = TY_FUNC;
+    type->ReturnType = ReturnType;
+    return type;
+}
+
 // 通过递归为该结点的所有子节点添加类型
 void addType(Node* ND) {
     // 
