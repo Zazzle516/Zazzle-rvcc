@@ -435,6 +435,13 @@ void codeGen(Function* Func) {
         //     assert(StackDepth==0);
         // }
 
+        // commot[26]: 支持函数传参
+        int I = 0;
+        for (Object* obj = currFunc->formalParam; obj; obj = obj->next) {
+            printf("  # 将 %s 寄存器存入 %s 栈地址\n", ArgReg[I], obj->var_name);
+            printf("  sd %s, %d(fp)\n", ArgReg[I++], obj->offset);
+        }
+
         // commit[13]: 现在的 AST-root 是单节点不是链表了
         printf("\n# =====程序主体===============\n");
         exprGen(currFunc->AST);

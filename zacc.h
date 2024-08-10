@@ -16,6 +16,8 @@
 // 200809L: 启用 POSIX.1-2008 标准
 #define _POSIX_C_SOURCE 200809L
 
+// Q: 在函数帧中 形参的 Local 更新和函数内部变量的 local 更新的过程
+
 #include <assert.h>
 #include <ctype.h>
 #include <stdarg.h>
@@ -64,8 +66,9 @@ typedef struct Type Type;
 typedef struct Object Object;
 struct Object {
     char* var_name;
-    int offset;         // 或许在当前写 'int value;' 是可行的 但考虑到后续对不同类型数据的可扩展性 直接读写存储位置会更方便
 
+    // codeGen() 构造当前函数帧的 local 链表
+    int offset;
     Object* next;
 
     // commit[22]: 每个值新增类型支持
@@ -177,6 +180,11 @@ struct Function {
 
     // commit[25]: 对应在 codeGen() 中也是独立拥有函数栈帧 通过循环处理每一个 FuncNode
     Function* next;
+
+    // commit[26]: 当前函数的形参链表
+    // Q: 链表结构是 Type 提供的但是为什么这里写 Object 呢
+    // A: 但是最终会挂载到 Object 中    因为 Local 是 Object 类型
+    Object* formalParam;
 };
 
 Function* parse(Token* tok);
@@ -194,7 +202,7 @@ typedef enum {
 // A: 因为 Node 处理的是函数本身 所以 Type 需要在 Node 外部 链接到 Token 读取函数的返回值类型
 struct Type {
     Typekind Kind;      // <int, ptr>
-    Type* Base;         // 必须声明当前指针所指向的空间大小 后续计算会涉及
+    Type* Base;         // 如果当前类型是指针 必须声明指针基类 后续涉及空间计算
 
     // commit[22]: 在 declaration().LHS 构造中用到了
     // 某种程度上是为了匹配 parse() 的语法位置报错才有这个属性吧
@@ -202,6 +210,11 @@ struct Type {
 
     // commit[25]: 根据 Token 保存返回值类型  作用在函数定义中
     Type* ReturnType;
+
+    // commit[26]: 支持 Function.formalParam 定义
+    // Q: 形参链表结构 Object.next 和 Type.formalParamNext 都有   具体是哪个在生效
+    Type* formalParamLink;
+    Type* formalParamNext;
 };
 
 // 使用在 type.c 中定义的全局变量 (用于对 int 类型的判断)
@@ -218,6 +231,9 @@ void addType(Node* ND);
 
 // 定义函数签名
 Type* funcType(Type* ReturnType);
+
+// commit[26]: 复制 Type 属性
+Type* copyType(Type* origin);
 
 /* 后端生成 codeGen() 数据结构和函数声明 */
 void codeGen(Function* AST);

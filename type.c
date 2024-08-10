@@ -38,6 +38,14 @@ Type* funcType(Type* ReturnType) {
     return type;
 }
 
+// commit[26]: Q: 目前没看出有什么意义  关于评论区说的 TYINT 类型 next 指针不能更改的问题 还需要再确认
+Type *copyType(Type *origin) {
+    Type* newType = calloc(1, sizeof(Type));
+    // 浅拷贝: 只是重新分配了一份 Type 空间来存储相同的内容
+    *newType = *origin;
+    return newType;
+}
+
 // 通过递归为该结点的所有子节点添加类型
 void addType(Node* ND) {
     // 
@@ -63,6 +71,12 @@ void addType(Node* ND) {
     // 遍历访问所有子结点
     for (Node* Nd = ND->Body; Nd != NULL; Nd = Nd->next) {
         addType(Nd);
+    }
+
+    // commit[26]: 针对函数形参链表进行遍历
+    // Q: 但是 Node.Func_Args 这个参数是用来支持函数调用的啊  为什么会在含参函数定义中写这段
+    for (Node* paraType = ND->Func_Args; paraType; paraType = paraType->next) {
+        addType(paraType);
     }
 
     // commit[21]: 目前只是单纯的把叶子节点操作数的类型传递到上层 后续应该会再改的

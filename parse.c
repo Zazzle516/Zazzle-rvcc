@@ -10,7 +10,12 @@
 // functionDefinition = declspec declarator "{" compoundStamt*
 // declspec = "int"
 // declarator = "*"* ident typeSuffix
-// typeSuffix = ("(" ")")?
+
+// commit[26]: 含参的函数定义
+// typeSuffix = ("(" funcFormalParams? ")")
+// funcFormalParams = formalParam ("," formalParam)*
+// formalParam = declspec declarator
+// __typeSuffix = ("(" ")")?
 
 // compoundStamt = (declaration | stamt)* "}"
 
@@ -236,11 +241,36 @@ static Type* declspec(Token** rest, Token* tok) {
 // commit[25]: 目前只支持零参函数定义 或者 变量定义
 static Type* typeSuffix(Token** rest, Token* tok, Type* returnType) {
     if (equal(tok, "(")) {
+        tok = tok->next;
+
+        // commit[26]: 利用 Type 结构定义存储形参的链表
+        Type HEAD = {};
+        Type* Curr = &HEAD;
+
+        while (!equal(tok, ")")) {
+            // 多参跳过分隔符
+            if (Curr != &HEAD)
+                tok = skip(tok, ",");
+            // 如果存在函数传参的话
+            Type* formalBaseType = declspec(&tok, tok);
+            Type* isPtr = declarator(&tok, tok, formalBaseType);
+            
+            // Q: 这里的 copyType() 到底干什么了
+            Curr->formalParamNext = copyType(isPtr);
+            Curr = Curr->formalParamNext;
+        }
+
+
         // Q: 为什么没有在这里声明函数返回值属于哪个函数
         // A: 返回值本身是已经确定的 这里在新建一个函数结点 反向声明该函数拥有什么返回类型
         // 前看一个字符 判断是变量还是函数调用
-        *rest = skip(tok->next, ")");
-        return funcType(returnType);
+        *rest = skip(tok, ")");
+
+        // 封装函数结点类型
+        Type* funcNode = funcType(returnType);
+        funcNode->formalParamLink = HEAD.formalParamNext;
+
+        return funcNode;
     }
 
     // 变量声明
@@ -270,6 +300,21 @@ static Type* declarator(Token** rest, Token* tok, Type* Base) {
     return Base;
 }
 
+// commit[26]: 对多参函数的传参顺序进行构造 添加到 Local 链表
+static void createParamVar(Type* param) {
+    // Tip: Local 构造是头插法 所以要先递归到最后一个参数插入
+    // Q: 如果 param 本身是 NULL 那么会在这里出现 segment fault
+    // A: 所以这里不能使用这样的递归    (说起来这类错误我犯了好几次了但是一点意识都没有...
+    
+    // if (param->formalParamNext)
+    //     createParamVar(param->formalParamNext);
+    // newLocal(getVarName(param->Name), param);
+
+    if (param) {
+        createParamVar(param->formalParamNext);
+        newLocal(getVarName(param->Name), param);
+    }
+}
 
 /* 语法规则的递归解析 */
 
@@ -287,27 +332,21 @@ static Function* functionDefinition(Token** rest, Token* tok) {
     // Q: 这里一定要用 funcType->Name 吗   因为这个时候 tok 的位置应该正好指向 funcName
     // A: 因为在 declarator 中更新了 &tok 所以这个时候 tok 位置指向函数体
     func->FuncName = getVarName(funcType->Name);
+
+    // commit[26]: 形参变量和函数内部变量需要两次不同的更新
+    
+    // 第一次更新 Local: 函数形参
+    createParamVar(funcType->formalParamLink);
+    func->formalParam = Local;
+
     tok = skip(tok, "{");
     func->AST = compoundStamt(rest, tok);
+
+    // 第二次更新 Local: 更新函数内部定义变量
     func->local = Local;
 
     return func;
 }
-
-// commit[25]: 弃用 修改为两层的结构
-// static Node* program(Token** rest, Token* tok) {
-//     // 新增语法规则: 要求最外层语句必须有 "{}" 包裹
-//     tok = skip(tok, "{");
-//     Node* ND = compoundStamt(&tok, tok);
-
-//     // commit[25]: 无效
-//     // 注意这里是在语法分析结束后再检查词法的结束正确性
-//     // if (tok->token_kind != TOKEN_EOF) {
-//     //     tokenErrorAt(tok, "extra Token");
-//     // }
-//     *rest = tok;
-//     return ND;
-// }
 
 // 对 Block 中复合语句的判断
 static Node* compoundStamt(Token** rest, Token* tok) {
