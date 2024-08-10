@@ -158,7 +158,7 @@ struct Node {
 
     // commit[24]: 支持参数结点声明
     // commit[25]: 支持当前函数中*内部*函数调用的参数存储 函数返回会通过 ND_ASSIGN 完成
-    Node* Func_Args;    // 在 parse.c 中会递归解析参数 为参数结点赋予正确的 NODE_KIND
+    Node* Func_Args;    // 因为参数本身可能是计算式 比如 ND_ADD 之类的 所以用 Node 类型
 
     // Tip: 因为一开始我把 Func_Args 的定义写到 NODE_KIND 里面了
     // 参数本身是需要内存去存储的 而且根据传参的方式不同 可能是 ND_VAR ND_STAMT... 之类的多种类型

@@ -251,11 +251,12 @@ static Type* typeSuffix(Token** rest, Token* tok, Type* returnType) {
             // 多参跳过分隔符
             if (Curr != &HEAD)
                 tok = skip(tok, ",");
-            // 如果存在函数传参的话
+            // commit[26]: 复用函数定义的规则(因为不可能存在 "=" 所以 != 变量定义)
             Type* formalBaseType = declspec(&tok, tok);
             Type* isPtr = declarator(&tok, tok, formalBaseType);
             
             // Q: 这里的 copyType() 到底干什么了
+            // A: 实现 C 的值传递规则 任何变量都会换一个新地址保存
             Curr->formalParamNext = copyType(isPtr);
             Curr = Curr->formalParamNext;
         }
@@ -274,6 +275,7 @@ static Type* typeSuffix(Token** rest, Token* tok, Type* returnType) {
     }
 
     // 变量声明
+    // Q: 这里没有把形参的名字读进去??     A: 在后面的 Base->Name 中更新
     *rest = tok;
     return returnType;
 }
@@ -292,9 +294,12 @@ static Type* declarator(Token** rest, Token* tok, Type* Base) {
 
     // commit[25]: 这里同时有变量声明 | 函数定义两个可能性 所以后续交给 typeSuffix 判断
     //*rest = tok->next;
+    // commit[26]: 使用 typeSuffix() 完成对传参的处理
     Base = typeSuffix(rest, tok->next, Base);
-
     // 如果是函数结点   因为调用 typeSuffix() 传递的是 rest 所以这里 tok 没有更新
+
+    // 情况1: 函数定义  读取函数名
+    // 情况2: 传参解析  读取传参变量名
     Base->Name = tok;       // Tip: 这里保留了 Token 的链接
 
     return Base;
@@ -329,7 +334,7 @@ static Function* functionDefinition(Token** rest, Token* tok) {
     // 初始化函数定义结点
     Function* func = calloc(1, sizeof(Function));
     
-    // Q: 这里一定要用 funcType->Name 吗   因为这个时候 tok 的位置应该正好指向 funcName
+    // Q: 这里一定要用 funcType->Name 吗   Base->Name = tok;
     // A: 因为在 declarator 中更新了 &tok 所以这个时候 tok 位置指向函数体
     func->FuncName = getVarName(funcType->Name);
 
@@ -340,9 +345,11 @@ static Function* functionDefinition(Token** rest, Token* tok) {
     func->formalParam = Local;
 
     tok = skip(tok, "{");
+    // 第二次更新 Local: 更新函数内部定义变量
     func->AST = compoundStamt(rest, tok);
 
-    // 第二次更新 Local: 更新函数内部定义变量
+    // 因为更新的 local 是不同区域的 Local 比如参数和函数内变量
+    // 虽然它们最后都在同一个链表 Local 里面    但是赋值的变量 (formalParam, local) 是不同的
     func->local = Local;
 
     return func;
@@ -363,7 +370,7 @@ static Node* compoundStamt(Token** rest, Token* tok) {
         else
             Curr->next = stamt(&tok, tok);
         Curr = Curr->next;
-
+        // 在 commit[25] 和 commot[26] 更新之后 Curr 实际上只指向函数体内部的语句
         addType(Curr);
     }
     // 得到 CompoundStamt 内部的语句链表

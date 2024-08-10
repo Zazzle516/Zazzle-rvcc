@@ -436,6 +436,7 @@ void codeGen(Function* Func) {
         // }
 
         // commot[26]: 支持函数传参
+        // Tip: 这里 Local 的顺序在 createParamVar() 处理后已经正序了
         int I = 0;
         for (Object* obj = currFunc->formalParam; obj; obj = obj->next) {
             printf("  # 将 %s 寄存器存入 %s 栈地址\n", ArgReg[I], obj->var_name);
