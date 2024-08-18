@@ -196,6 +196,9 @@ typedef enum {
 
     // commit[25]: 声明函数签名
     TY_FUNC,
+
+    // commit[27]: 定义数组变量类型 一维数组
+    TY_ARRAY_LINER,
 } Typekind;
 
 // Q: 为什么把函数返回值定义在 Type 中
@@ -203,6 +206,9 @@ typedef enum {
 struct Type {
     Typekind Kind;      // <int, ptr>
     Type* Base;         // 如果当前类型是指针 必须声明指针基类 后续涉及空间计算
+
+    // commit[27]: 对任何类型的空间计算 等于 sizeof() 的返回值
+    int BaseSize;
 
     // commit[22]: 在 declaration().LHS 构造中用到了
     // 某种程度上是为了匹配 parse() 的语法位置报错才有这个属性吧
@@ -215,6 +221,9 @@ struct Type {
     // Q: 形参链表结构 Object.next 和 Type.formalParamNext 都有   具体是哪个在生效
     Type* formalParamLink;
     Type* formalParamNext;
+
+    // commit[27]: 记录数组的元素个数(在 newSubPtr() 有具体使用)
+    int arrayElemCount;
 };
 
 // 使用在 type.c 中定义的全局变量 (用于对 int 类型的判断)
@@ -234,6 +243,9 @@ Type* funcType(Type* ReturnType);
 
 // commit[26]: 复制 Type 属性
 Type* copyType(Type* origin);
+
+// commit[27]: 根据数组基类和元素个数构造数组空间
+Type* linerArrayType(Type* arrayBaseType, int arrayElemCount);
 
 /* 后端生成 codeGen() 数据结构和函数声明 */
 void codeGen(Function* AST);

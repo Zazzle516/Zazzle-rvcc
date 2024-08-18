@@ -8,7 +8,8 @@
 // Type *TyInt = &temp;
 
 // 换个角度 {} 是对象声明 而前面的 () 可以视为强制类型转换 转换后取地址赋给 TYINT_GLOBAL
-Type* TYINT_GLOBAL = &(Type){TY_INT};
+// commit[27]: 在开始处理类型大小之后 能体现出这个全局变量的作用 就是对类型和大小的全局映射
+Type* TYINT_GLOBAL = &(Type){.Kind = TY_INT, .BaseSize = 8};
 
 // 判断变量类型
 bool isInteger(Type* TY) {
@@ -22,6 +23,9 @@ Type* newPointerTo(Type* Base) {
 
     ty->Kind = TY_PTR;
     ty->Base = Base;
+
+    // commit[27]: 统一指针的空间都是 8B
+    ty->BaseSize = 8;
 
     return ty;
 }
@@ -45,6 +49,19 @@ Type *copyType(Type *origin) {
     *newType = *origin;
     return newType;
 }
+
+// commit[27]: 根据数组基类和个数构造数组类型
+Type* linerArrayType(Type* arrayBaseType, int arrayElemCount) {
+    Type* linerArray = calloc(1, sizeof(Type));
+
+    linerArray->Kind = TY_ARRAY_LINER;
+    linerArray->arrayElemCount = arrayElemCount;
+    linerArray->Base = arrayBaseType;
+    linerArray->BaseSize = arrayBaseType->BaseSize * arrayElemCount;
+
+    return linerArray;
+}
+
 
 // 通过递归为该结点的所有子节点添加类型
 void addType(Node* ND) {
@@ -89,7 +106,14 @@ void addType(Node* ND) {
     case ND_MUL:
     case ND_DIV:
     case ND_NEG:
+        // commit[27]: 
+
     case ND_ASSIGN:
+        // commit[27]: 数组的某个元素空间 表示一个存储地址  作为左值传递是 ok 的
+        // 同时   整个数组 表示一个数据的值(指针)   不能进行修改   所以不能作为左值传递
+        if (ND->LHS->node_type->Kind == TY_ARRAY_LINER) {
+            tokenErrorAt(ND->token, "Q: question unsolved??\n");
+        }
         ND->node_type = ND->LHS->node_type;
         return;
     
@@ -112,6 +136,8 @@ void addType(Node* ND) {
         ND->node_type = ND->var->var_type;
         return;
     case ND_ADDR:
+        // commit[27]: 针对数组的取值需要根据数据基类的大小决定
+        
         ND->node_type = newPointerTo(ND->LHS->node_type);
         return;
 
