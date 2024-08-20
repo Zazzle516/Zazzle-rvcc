@@ -12,8 +12,9 @@
 // declarator = "*"* ident typeSuffix
 
 // commit[26]: 含参的函数定义
-// typeSuffix = ("(" funcFormalParams? ")")
-// funcFormalParams = formalParam ("," formalParam)*
+// commit[27]: 新增对数组变量定义的支持(修改了 typeSuffix 的语法 把结束位置移动到下一层)
+// typeSuffix = ("(" funcFormalParams | "[" num "]" | ε
+// funcFormalParams = (formalParam ("," formalParam)*)? ")"
 // formalParam = declspec declarator
 // __typeSuffix = ("(" ")")?
 
@@ -80,6 +81,15 @@ static char* getVarName(Token* tok) {
     // string.h: 从给定的字符串 token 中复制最多 length 个字符 并返回指针
     return strndup(tok->place, tok->length);
 }
+
+// commit[27]: 获取数组定义中括号中的数字
+static int getArrayNumber(Token* tok) {
+    // Q: 为什么需要这样的获取数字的方式
+    if (tok->token_kind != TOKEN_NUM)
+        tokenErrorAt(tok, "need a number for array declaration");
+    return tok->value;
+}
+
 
 // 定义产生式关系并完成自顶向下的递归调用
 // static Node* __program(Token** rest, Token* tok);
@@ -165,15 +175,17 @@ static Node* newPtrAdd(Node* LHS, Node* RHS, Token* tok) {
     }
 
     // 如果有一个整数一个指针 对 LHS 和 RHS 两种情况分别讨论
+    // commit[27]: 优化了直接写数字 8 的情况 改为变量 为后续不同类型大小的指针运算准备
+    
     // LHS: int  +  RHS: ptr
     if (isInteger(LHS->node_type) && (!isInteger(RHS->node_type))) {
-        Node* newLHS = createAST(ND_MUL, numNode(8, tok), RHS, tok);
+        Node* newLHS = createAST(ND_MUL, numNode(RHS->node_type->Base->BaseSize, tok), RHS, tok);
         return createAST(ND_ADD, newLHS, RHS, tok);
     }
 
     // RHS: int  +  LHS: ptr
     if (!isInteger(LHS->node_type) && (isInteger(RHS->node_type))) {
-        Node* newRHS = createAST(ND_MUL, numNode(8, tok), RHS, tok);
+        Node* newRHS = createAST(ND_MUL, numNode(LHS->node_type->Base->BaseSize, tok), RHS, tok);
         return createAST(ND_ADD, LHS, newRHS, tok);
     }
 
@@ -198,7 +210,8 @@ static Node* newPtrSub(Node* LHS, Node* RHS, Token* tok) {
         ND->node_type = TYINT_GLOBAL;
 
         // 挂载到 LHS: LHS / RHS(8)
-        return createAST(ND_DIV, ND, numNode(8, tok), tok);
+        // 注意除法需要区分左子树和右子树(小心~)
+        return createAST(ND_DIV, ND, numNode(LHS->node_type->Base->BaseSize, tok), tok);
     }
 
     // num - num 正常计算
@@ -209,7 +222,7 @@ static Node* newPtrSub(Node* LHS, Node* RHS, Token* tok) {
     // LHS: ptr  -  RHS: int
     // 对比加法 相反的操作顺序是非法的  (int - ptr) 没有意义
     if (LHS->node_type->Base && isInteger(RHS->node_type)) {
-        Node* newRHS = createAST(ND_MUL, numNode(8, tok), RHS, tok);
+        Node* newRHS = createAST(ND_MUL, numNode(LHS->node_type->Base->BaseSize, tok), RHS, tok);
 
         // Q: ???   为什么加法不需要减法需要
         addType(newRHS);
@@ -238,46 +251,68 @@ static Type* declspec(Token** rest, Token* tok) {
     return TYINT_GLOBAL;
 }
 
-// commit[25]: 目前只支持零参函数定义 或者 变量定义
-static Type* typeSuffix(Token** rest, Token* tok, Type* returnType) {
-    if (equal(tok, "(")) {
-        tok = tok->next;
+// commit[27]: 拆分 typeSuffix 到 funcFormalParams 和 typeSuffix 两个语法函数
+// Q: 为什么要去进行一个拆分    A: 出于对 TypeSuffix 的结构清晰性
 
-        // commit[26]: 利用 Type 结构定义存储形参的链表
-        Type HEAD = {};
-        Type* Curr = &HEAD;
+static Type* funcFormalParams(Token** rest, Token* tok, Type* returnType) {
+    // commit[27]: 在 typeSuffix() 拆分后 该函数只处理函数定义括号内部变量
+    // if (equal(tok, "(")) {
+    //     tok = tok->next;
 
-        while (!equal(tok, ")")) {
-            // 多参跳过分隔符
-            if (Curr != &HEAD)
-                tok = skip(tok, ",");
-            // commit[26]: 复用函数定义的规则(因为不可能存在 "=" 所以 != 变量定义)
-            Type* formalBaseType = declspec(&tok, tok);
-            Type* isPtr = declarator(&tok, tok, formalBaseType);
-            
-            // Q: 这里的 copyType() 到底干什么了
-            // A: 实现 C 的值传递规则 任何变量都会换一个新地址保存
-            Curr->formalParamNext = copyType(isPtr);
-            Curr = Curr->formalParamNext;
-        }
+    // commit[26]: 利用 Type 结构定义存储形参的链表
+    Type HEAD = {};
+    Type* Curr = &HEAD;
 
-
-        // Q: 为什么没有在这里声明函数返回值属于哪个函数
-        // A: 返回值本身是已经确定的 这里在新建一个函数结点 反向声明该函数拥有什么返回类型
-        // 前看一个字符 判断是变量还是函数调用
-        *rest = skip(tok, ")");
-
-        // 封装函数结点类型
-        Type* funcNode = funcType(returnType);
-        funcNode->formalParamLink = HEAD.formalParamNext;
-
-        return funcNode;
+    while (!equal(tok, ")")) {
+        // 多参跳过分隔符
+        if (Curr != &HEAD)
+            tok = skip(tok, ",");
+        // commit[26]: 复用函数定义的规则(因为不可能存在 "=" 所以 != 变量定义)
+        Type* formalBaseType = declspec(&tok, tok);
+        Type* isPtr = declarator(&tok, tok, formalBaseType);
+        
+        // Q: 这里的 copyType() 到底干什么了
+        // A: 实现 C 的值传递规则 任何变量都会换一个新地址保存
+        Curr->formalParamNext = copyType(isPtr);
+        Curr = Curr->formalParamNext;
     }
 
-    // 变量声明
-    // Q: 这里没有把形参的名字读进去??     A: 在后面的 Base->Name 中更新
+    // Q: 为什么没有在这里声明函数返回值属于哪个函数
+    // A: 返回值本身是已经确定的 这里在新建一个函数结点 反向声明该函数拥有什么返回类型
+    *rest = skip(tok, ")");
+
+    // 封装函数结点类型
+    Type* funcNode = funcType(returnType);
+    funcNode->formalParamLink = HEAD.formalParamNext;
+
+    return funcNode;
+}
+
+// commit[27]: 原本写在 typeSuffix() 中 解析变量定义的部分 在拆分后不需要了
+//     // 变量声明
+//     // Q: 这里没有把形参的名字读进去??     A: 在后面的 Base->Name 中更新
+//     *rest = tok;
+//     return returnType;
+// }
+
+// commit[25]: 目前只支持零参函数定义 或者 变量定义
+// commit[27]: 拆分两个功能分开处理 更清晰
+static Type* typeSuffix(Token** rest, Token* tok, Type* BaseType) {
+    if (equal(tok, "(")) {
+        // 函数定义处理    BaseType: 函数返回值类型
+        return funcFormalParams(rest, tok->next, BaseType);
+    }
+
+    if (equal(tok, "[")) {
+        // 数组定义处理    BaseType: 数组基类
+        int arraySize = getArrayNumber(tok->next);
+        *rest = skip(tok->next->next, "]");
+        return linerArrayType(BaseType, arraySize);
+    }
+
+    // 变量定义处理    BaseType: 变量类型
     *rest = tok;
-    return returnType;
+    return BaseType;
 }
 
 // 判断是否是指针类型 如果是指针类型那么要声明该指针的指向

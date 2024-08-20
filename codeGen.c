@@ -36,6 +36,24 @@ static void pop_stack(char* reg) {
     StackDepth--;
 }
 
+// commit[27]: 把 exprGen() 中的 ld 和 sd 提取出来(提高代码可读性吧
+static void Load(Type* type) {
+    // Q: 为什么这里遇到数组选择返回了
+    if (type->Kind == TY_ARRAY_LINER)
+        return;
+    
+    printf("  # 读取 a0 储存的地址内容 并存入 a0\n");
+    printf("  ld a0, 0(a0)\n");
+}
+
+// Q: 为什么这里一定是 a1 和 pop_stack() 有什么关系
+// A: 把 ND_ASSIGN 的部分抽象出来
+static void Store(void) {
+    pop_stack("a1");
+    printf("  # 将 a0 的值写入 a1 存储的地址\n");
+    printf("  sd a0, 0(a1)\n");
+}
+
 // 一般编译器的对齐发生在 8B, 4B, 1B 空间混用的情况   但是目前都是固定的    这里就是先写出来方便后续扩展
 static int alignTo(int realTotal, int aimAlign) {
     // 在真实使用的空间 readTotal 上加上 (+ Align - 1) 不足以形成一次对齐倍数的空间 防止对齐后导致的空间不足
@@ -47,6 +65,7 @@ static int alignTo(int realTotal, int aimAlign) {
 
 // commit[11]: 根据 parse() 的结果计算栈空间的预分配
 // commit[25]: 根据每个函数中的变量 Local 情况分配空间  二重循环
+// commit[27]: 同样的把 8 优化掉
 static void preAllocStackSpace(Function* func) {
     for (Function* currFunc = func; currFunc; currFunc = currFunc->next) {
         // 初始化分配空间为 0
@@ -54,7 +73,8 @@ static void preAllocStackSpace(Function* func) {
         
         // 遍历链表计算出总空间
         for(Object* obj = currFunc->local; obj; obj = obj->next) {
-            realTotal += 8;     // int64_t => 8B
+            // realTotal += 8;     // int64_t => 8B
+            realTotal += obj->var_type->BaseSize;
 
             // Tip: 很巧妙!     在计算空间的时候同时顺序得到变量在栈空间(B区域)的偏移量
             // 由于 AST 的 ND_VAR 指向 Local 所以随着 func.local 遍历会同时改变 AST.var.offset
@@ -134,11 +154,10 @@ static void calcuGen(Node* AST) {
 
     case ND_VAR:
     {
-        // ND_VAR 只会应用在计算语句里吗    因为 AST 结构的问题会优先递归到 ND_ASSIGN
+        // Q: ND_VAR 只会应用在计算语句里吗    因为 AST 结构的问题会优先递归到 ND_ASSIGN  等操作结点
         // 从 a0 的值(存储地址)偏移位置为 0 的位置加载 var 的值本身
         getAddr(AST);
-        printf("  # 把变量从地址 0(a0) 加载到 reg(a0) 中\n");
-        printf("  ld a0, 0(a0)\n");
+        Load(AST->node_type);
         return;
     }
 
@@ -154,12 +173,14 @@ static void calcuGen(Node* AST) {
         // 进行右侧表达式的计算
         calcuGen(AST->RHS);
 
-        // 将 *左侧* 的结果弹栈
-        pop_stack("a1");
+        Store();
 
+        // 将 *左侧* 的结果弹栈
+        // pop_stack("a1");
         // 完成赋值操作
-        printf("  # 将 a0 的值写入 0(a1) 存储的地址中\n");
-        printf("  sd a0, 0(a1)\n");     // 把得到的地址写入 a1 中 取相对于 (a1) 偏移量为 0 的位置赋值
+        // printf("  # 将 a0 的值写入 0(a1) 存储的地址中\n");
+        // printf("  sd a0, 0(a1)\n");     // 把得到的地址写入 a1 中 取相对于 (a1) 偏移量为 0 的位置赋值
+        
         return;
     }
     
@@ -178,8 +199,9 @@ static void calcuGen(Node* AST) {
         calcuGen(AST->LHS);
 
         // 读取 a0 中的储存的值(地址) 访问该地址
-        printf("  # 读取 a0 储存的地址值 写入 reg(a0) 中\n");
-        printf("  ld a0, 0(a0)\n");
+        // printf("  # 读取 a0 储存的地址值 写入 reg(a0) 中\n");
+        // printf("  ld a0, 0(a0)\n");
+        Load(AST->node_type);
         return;
     }
 

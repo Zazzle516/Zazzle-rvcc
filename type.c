@@ -17,7 +17,7 @@ bool isInteger(Type* TY) {
     return TY->Kind == TY_INT;
 }
 
-// 新建指针变量类型 根据 Base 定义指向
+// 新建指针变量结点 根据 Base 定义指向
 Type* newPointerTo(Type* Base) {
     Type* ty = calloc(1, sizeof(Type));
 
@@ -30,12 +30,12 @@ Type* newPointerTo(Type* Base) {
     return ty;
 }
 
-// 根据函数签名定义相关结构
+// 构造函数结点
 Type* funcType(Type* ReturnType) {
     // Q: 为什么要在这里重新分配空间
-    // A: 传递的只是返回值的类型 而新建的是函数结点
+    // A: 在 parser() 解析的时候 先读取到 ReturnType 再访问到函数名进行构造
     // Tip: 函数调用因为没有 'int' 之类的类型开头 在 compoundStamt() 中会被导向 stamt() 执行
-    // 所以不用担心 ReturnType 因为根本不会被函数调用使用
+    // 所以不用担心 ReturnType 因为根本不会出现在函数调用语法
     Type* type = calloc(1, sizeof(Type));
     type->Kind = TY_FUNC;
     type->ReturnType = ReturnType;
@@ -43,15 +43,16 @@ Type* funcType(Type* ReturnType) {
 }
 
 // commit[26]: Q: 目前没看出有什么意义  关于评论区说的 TYINT 类型 next 指针不能更改的问题 还需要再确认
-Type *copyType(Type *origin) {
+Type* copyType(Type *origin) {
     Type* newType = calloc(1, sizeof(Type));
     // 浅拷贝: 只是重新分配了一份 Type 空间来存储相同的内容
     *newType = *origin;
     return newType;
 }
 
-// commit[27]: 根据数组基类和个数构造数组类型
+// commit[27]: 定义了数组相关的元数据(长度，基础类型，个数) 而不是真的分配了数组空间
 Type* linerArrayType(Type* arrayBaseType, int arrayElemCount) {
+    // Q: 数组真正的空间分配发生在哪里
     Type* linerArray = calloc(1, sizeof(Type));
 
     linerArray->Kind = TY_ARRAY_LINER;
@@ -106,11 +107,12 @@ void addType(Node* ND) {
     case ND_MUL:
     case ND_DIV:
     case ND_NEG:
-        // commit[27]: 
-
+        // commit[27]: 无论类型都可以依赖于左值的类型的操作节点
+        ND->node_type = ND->LHS->node_type;
+        return;
     case ND_ASSIGN:
         // commit[27]: 数组的某个元素空间 表示一个存储地址  作为左值传递是 ok 的
-        // 同时   整个数组 表示一个数据的值(指针)   不能进行修改   所以不能作为左值传递
+        // 同时  整个数组  表示一个数据的值(指针)   不能进行修改   所以不能作为左值传递
         if (ND->LHS->node_type->Kind == TY_ARRAY_LINER) {
             tokenErrorAt(ND->token, "Q: question unsolved??\n");
         }
@@ -136,16 +138,28 @@ void addType(Node* ND) {
         ND->node_type = ND->var->var_type;
         return;
     case ND_ADDR:
-        // commit[27]: 针对数组的取值需要根据数据基类的大小决定
-        
-        ND->node_type = newPointerTo(ND->LHS->node_type);
+        // commit[27]: 针对数组的取址需要根据数据基类决定   运算符 & 所以运算对象必须是指针
+        {
+            // 先把左值类型取出来 对数组类型进行判断 进行取地址操作
+            Type* type = ND->LHS->node_type;
+            if (type->Kind == TY_ARRAY_LINER)
+                // 左值如果是数组 那么指向数组类型的基类
+                ND->node_type = newPointerTo(type->Base);
+            else
+                // 否则类型直接取左值即可
+                ND->node_type = newPointerTo(type);
+        }
+        // ND->node_type = newPointerTo(ND->LHS->node_type);
         return;
 
     case ND_DEREF:
-        // Q: 是左侧吗?  在 21 里还没有显式声明指针类型     这里应该是与右侧保持一致 ?
-        // Q: 对比 commit[22]   此时是否与显式声明的类型保持一致 ??
-        // 如果是 TY_PTR 那么与左侧变量类型保持一致 int* ptr = a;
+        // 在 parser() 中 {int* ptr;} 的构造 指针的基类会被存在 LHS->node_type->Base 中 
         if (ND->LHS->node_type->Kind == TY_PTR) {
+            ND->node_type = ND->LHS->node_type->Base;
+        }
+
+        // commit[27]: 对数组的合法性进行额外判断
+        if (ND->LHS->node_type->Base) {
             ND->node_type = ND->LHS->node_type->Base;
         }
 

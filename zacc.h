@@ -207,7 +207,7 @@ struct Type {
     Typekind Kind;      // <int, ptr>
     Type* Base;         // 如果当前类型是指针 必须声明指针基类 后续涉及空间计算
 
-    // commit[27]: 对任何类型的空间计算 等于 sizeof() 的返回值
+    // commit[27]: 对 *任何类型* 的空间计算 等于 sizeof() 的返回值
     int BaseSize;
 
     // commit[22]: 在 declaration().LHS 构造中用到了
