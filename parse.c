@@ -49,7 +49,11 @@
 
 // commit[23]: 添加对零参函数名声明的支持
 // Tip: 这里处理参数的语法规则有 ident 重叠 因为不确定是函数声明还是变量 所以要往前看一个字符
-// primary_class_expr = '(' expr ')' | num | ident fun_args?
+
+// commit[30]: 新增对 "sizeof" 的支持
+// Q: 为什么这里的递归解析是 third_expr 而不是 expr 有什么好处吗 或者说必要性
+// primary_class_expr = '(' expr ')' | num | ident fun_args? | "sizeof" third_class_expr
+// __primary_class_expr = '(' expr ')' | num | ident fun_args?
 
 // commit[24]: 函数调用 在 primary_class_expr 前看一个字符确认是函数声明后的定义
 // funcall = ident "(" (expr ("," expr)*)? ")"
@@ -183,8 +187,8 @@ static Node* newPtrAdd(Node* LHS, Node* RHS, Token* tok) {
     // 如果有一个整数一个指针 对 LHS 和 RHS 两种情况分别讨论 核心是对整数结点处理
     // commit[27]: 优化了直接写数字 8 的情况 改为变量 为后续不同类型大小的指针运算准备
 
-    // commit[28]: 在这次的 commit 里面发现了一个隐藏 bug 关于 LHS 和 RHS 左右位置的问题
-    // 示例代码通过调换左右子树的顺序让这个问题不是很明显 但是我是分开处理的 所以在处理  2[x]  这个表达式的时候出错
+    // commit[29]: 在这次的 commit 里面发现了一个隐藏 bug 关于 LHS 和 RHS 左右位置的问题
+    // 示例代码通过调换左右子树的顺序让这个问题不是很明显 但是我是分开处理的 所以在处理 (2[x] = 5;) 这个表达式的时候出错
     // 指针部分永远放在左边! 要结合 addType() 来理解   所有的赋值都通过 LHS 来进行
     // 否则叶子结点的类型无法向上传递导致出错
     
@@ -749,6 +753,15 @@ static Node* primary_class_expr(Token** rest, Token* tok) {
         Node* ND = expr(&tok, tok->next);
         *rest = skip(tok, ")");
         return ND;
+    }
+
+    // commit[30]: 支持 sizeof
+    if (equal(tok, "sizeof")) {
+        // 如果使用 expr() 会在某个测试用例失败
+        Node* ND = third_class_expr(rest, tok->next);
+        // Q: 为什么这里需要调用 addType() 如果注释掉会完全错误
+        addType(ND);
+        return numNode(ND->node_type->BaseSize, tok);
     }
 
     if ((tok->token_kind) == TOKEN_NUM) {

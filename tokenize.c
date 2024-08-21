@@ -68,8 +68,9 @@ void charErrorAt(char* place, char* FMT, ...) {
 
 // 判断是否是 keywords
 // 如果写在一起的话是一个二重循环了 不太好理解
+// commit[30]: 新增对 sizeof 的支持
 static bool isKeyWords(Token* input) {
-    static char* keywords[] = {"if", "else", "return", "for", "while"};
+    static char* keywords[] = {"if", "else", "return", "for", "while", "sizeof"};
 
     // Tip: 注意这里的下标      sizeof() 得到的是该对象的总空间
     for (int i = 0; i < sizeof(keywords) / sizeof(*keywords); i ++) {
