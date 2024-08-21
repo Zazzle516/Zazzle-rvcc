@@ -24,7 +24,7 @@ Type* newPointerTo(Type* Base) {
     ty->Kind = TY_PTR;
     ty->Base = Base;
 
-    // commit[27]: 统一指针的空间都是 8B
+    // commit[27]: 任何指针的空间都是 8B
     ty->BaseSize = 8;
 
     return ty;
@@ -33,7 +33,7 @@ Type* newPointerTo(Type* Base) {
 // 构造函数结点
 Type* funcType(Type* ReturnType) {
     // Q: 为什么要在这里重新分配空间
-    // A: 在 parser() 解析的时候 先读取到 ReturnType 再访问到函数名进行构造
+    // A: 在 parser() 解析的时候 先读取到 ReturnType 再访问到函数名  重点是*函数结点*
     // Tip: 函数调用因为没有 'int' 之类的类型开头 在 compoundStamt() 中会被导向 stamt() 执行
     // 所以不用担心 ReturnType 因为根本不会出现在函数调用语法
     Type* type = calloc(1, sizeof(Type));
@@ -46,6 +46,7 @@ Type* funcType(Type* ReturnType) {
 Type* copyType(Type *origin) {
     Type* newType = calloc(1, sizeof(Type));
     // 浅拷贝: 只是重新分配了一份 Type 空间来存储相同的内容
+    // 目前的猜测是模仿 C 语言的值传递
     *newType = *origin;
     return newType;
 }
@@ -53,6 +54,7 @@ Type* copyType(Type *origin) {
 // commit[27]: 定义了数组相关的元数据(长度，基础类型，个数) 而不是真的分配了数组空间
 Type* linerArrayType(Type* arrayBaseType, int arrayElemCount) {
     // Q: 数组真正的空间分配发生在哪里
+    // A: 在 codeGen().preAllocStackSpace() 中 根据数组的 BaseSize 总大小进行空间分配
     Type* linerArray = calloc(1, sizeof(Type));
 
     linerArray->Kind = TY_ARRAY_LINER;
@@ -66,8 +68,6 @@ Type* linerArrayType(Type* arrayBaseType, int arrayElemCount) {
 
 // 通过递归为该结点的所有子节点添加类型
 void addType(Node* ND) {
-    // 
-    // 
     if (ND == NULL || ND->node_type != NULL) {
         // 如果结点为空 或者 该结点类型已经被定义过
         return;
@@ -77,7 +77,6 @@ void addType(Node* ND) {
 
     // GPT: 结点确实会有类型的概念 体现在它们可以接收什么类型的数据
     // 但是结点的类型与它们子树中保存的操作数的类型是独立的 在后续的 合法判断 类型推导 用到
-    // Q: 等待后续结点类型的更新
     addType(ND->LHS);
     addType(ND->RHS);
     addType(ND->Cond_Block);
@@ -92,7 +91,9 @@ void addType(Node* ND) {
     }
 
     // commit[26]: 针对函数形参链表进行遍历
-    // Q: 但是 Node.Func_Args 这个参数是用来支持函数调用的啊  为什么会在含参函数定义中写这段
+    // Q: 但是 Node.Func_Args 这个参数是用来支持函数调用的啊  没有类型显式声明但是需要赋予类型
+    // A: 因为当前无法对函数参数调用和定义的类型进行判断  目前看就是图省事的方法
+    // 即使在函数定义中写了变量类型也没有用 函数参数的具体定义只根据传参的类型定义
     for (Node* paraType = ND->Func_Args; paraType; paraType = paraType->next) {
         addType(paraType);
     }
@@ -101,7 +102,7 @@ void addType(Node* ND) {
     // 目前大体分成三类: 1.根据 LHS 确定类型   2.默认 TYPE_INT    3.指针
     switch (ND->node_kind) {
         // Q: 这个设置为结点左部的类型和单纯的设为 int 有什么区别
-        // 左部: 未来不固定为 int
+        // A: 左部未来不固定为 int 可能是 float 之类的
     case ND_ADD:
     case ND_SUB:
     case ND_MUL:
@@ -112,14 +113,14 @@ void addType(Node* ND) {
         return;
     case ND_ASSIGN:
         // commit[27]: 数组的某个元素空间 表示一个存储地址  作为左值传递是 ok 的
-        // 同时  整个数组  表示一个数据的值(指针)   不能进行修改   所以不能作为左值传递
+        // 但是  整个数组  表示一个数据的值/数组的起始位置(指针)  不能进行修改  所以不能作为左值传递
         if (ND->LHS->node_type->Kind == TY_ARRAY_LINER) {
-            tokenErrorAt(ND->token, "Q: question unsolved??\n");
+            tokenErrorAt(ND->token, "array itself can not be set as left value\n");
         }
         ND->node_type = ND->LHS->node_type;
         return;
     
-    // 目前是直接设为 TYPE_INT 类型    或者说这些
+    // 目前是直接设为 TYPE_INT 类型
     case ND_EQ:
     case ND_NEQ:
     case ND_LT:

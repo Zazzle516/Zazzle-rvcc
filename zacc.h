@@ -183,7 +183,7 @@ struct Function {
 
     // commit[26]: 当前函数的形参链表
     // Q: 链表结构是 Type 提供的但是为什么这里写 Object 呢
-    // A: 但是最终会挂载到 Object 中    因为 Local 是 Object 类型
+    // A: 参数列表最终会挂载到 Object 中    因为 Local 是 Object 类型
     Object* formalParam;
 };
 
@@ -244,7 +244,7 @@ Type* funcType(Type* ReturnType);
 // commit[26]: 复制 Type 属性
 Type* copyType(Type* origin);
 
-// commit[27]: 根据数组基类和元素个数构造数组空间
+// commit[27]: 根据数组基类和元素个数定义该数组的元数据
 Type* linerArrayType(Type* arrayBaseType, int arrayElemCount);
 
 /* 后端生成 codeGen() 数据结构和函数声明 */

@@ -85,6 +85,7 @@ static char* getVarName(Token* tok) {
 // commit[27]: 获取数组定义中括号中的数字
 static int getArrayNumber(Token* tok) {
     // Q: 为什么需要这样的获取数字的方式
+    // A: 就是数组的结构比较特殊 没什么原因
     if (tok->token_kind != TOKEN_NUM)
         tokenErrorAt(tok, "need a number for array declaration");
     return tok->value;
@@ -255,7 +256,7 @@ static Type* declspec(Token** rest, Token* tok) {
 // Q: 为什么要去进行一个拆分    A: 出于对 TypeSuffix 的结构清晰性
 
 static Type* funcFormalParams(Token** rest, Token* tok, Type* returnType) {
-    // commit[27]: 在 typeSuffix() 拆分后 该函数只处理函数定义括号内部变量
+    // commit[27]: 在 typeSuffix() 功能拆分后 该函数只处理函数定义括号内部变量
     // if (equal(tok, "(")) {
     //     tok = tok->next;
 
@@ -328,13 +329,13 @@ static Type* declarator(Token** rest, Token* tok, Type* Base) {
     }
 
     // commit[25]: 这里同时有变量声明 | 函数定义两个可能性 所以后续交给 typeSuffix 判断
-    //*rest = tok->next;
+    // *rest = tok->next;
     // commit[26]: 使用 typeSuffix() 完成对传参的处理
     Base = typeSuffix(rest, tok->next, Base);
     // 如果是函数结点   因为调用 typeSuffix() 传递的是 rest 所以这里 tok 没有更新
 
-    // 情况1: 函数定义  读取函数名
-    // 情况2: 传参解析  读取传参变量名
+    // case1: 函数定义         读取函数名
+    // case2: 变量或者传参解析  读取传参变量名
     Base->Name = tok;       // Tip: 这里保留了 Token 的链接
 
     return Base;
@@ -401,6 +402,7 @@ static Node* compoundStamt(Token** rest, Token* tok) {
         // commit[22]: 对声明语句和表达式语句分别处理
         // commit[25]: 函数调用是没有返回值的前缀! 所以目前 compoundStamt.declaration 只用于变量定义
         if (equal(tok, "int"))
+            // Tip: 如果只是变量声明没有赋值 不会新建任何结点 只是更新了 Local
             Curr->next = declaration(&tok, tok);
         else
             Curr->next = stamt(&tok, tok);
@@ -425,7 +427,7 @@ static Node* declaration(Token** rest, Token* tok) {
     Node HEAD = {};
     Node* Curr = &HEAD;
 
-    // Tip: 计数
+    // Tip: 计数 至少有一个变量被定义
     // Q: 这个计数的意义是什么  只是为了合法性判断吗
     int variable_count = 0;
 
