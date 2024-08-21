@@ -42,7 +42,10 @@
 // first_class_expr = second_class_expr (+|- second_class_expr)*
 // second_class_expr = third_class_expr (*|/ third_class_expr)
 
-// third_class_expr = (+|-|&|*)third_class_expr | primary_class_expr        优先拆分出一个符号作为减法符号
+// commit[29]: 新增对 [] 的语法支持  本质上就是对 *(x + y) 的一个语法糖 => x[y]
+// __third_class_expr = (+|-|&|*)third_class_expr | primary_class_expr        优先拆分出一个符号作为减法符号
+// third_class_expr = (+|-|&|*)third_class_expr | postFix
+// postFix = primary_class_expr ("[" expr "]")*
 
 // commit[23]: 添加对零参函数名声明的支持
 // Tip: 这里处理参数的语法规则有 ident 重叠 因为不确定是函数声明还是变量 所以要往前看一个字符
@@ -113,6 +116,7 @@ static Node* relation_expr(Token** rest, Token* tok);
 static Node* first_class_expr(Token** rest, Token* tok);
 static Node* second_class_expr(Token** rest, Token* tok);
 static Node* third_class_expr(Token** rest, Token* tok);
+static Node* preFix(Token** rest, Token* tok);
 static Node* primary_class_expr(Token** rest, Token* tok);
 static Node* funcall(Token** rest, Token* tok);
 
@@ -176,19 +180,25 @@ static Node* newPtrAdd(Node* LHS, Node* RHS, Token* tok) {
         return createAST(ND_ADD, LHS, RHS, tok);
     }
 
-    // 如果有一个整数一个指针 对 LHS 和 RHS 两种情况分别讨论
+    // 如果有一个整数一个指针 对 LHS 和 RHS 两种情况分别讨论 核心是对整数结点处理
     // commit[27]: 优化了直接写数字 8 的情况 改为变量 为后续不同类型大小的指针运算准备
+
+    // commit[28]: 在这次的 commit 里面发现了一个隐藏 bug 关于 LHS 和 RHS 左右位置的问题
+    // 示例代码通过调换左右子树的顺序让这个问题不是很明显 但是我是分开处理的 所以在处理  2[x]  这个表达式的时候出错
+    // 指针部分永远放在左边! 要结合 addType() 来理解   所有的赋值都通过 LHS 来进行
+    // 否则叶子结点的类型无法向上传递导致出错
     
     // LHS: int  +  RHS: ptr
     if (isInteger(LHS->node_type) && (!isInteger(RHS->node_type))) {
-        Node* newLHS = createAST(ND_MUL, numNode(RHS->node_type->Base->BaseSize, tok), RHS, tok);
-        return createAST(ND_ADD, newLHS, RHS, tok);
+        Node* newLHS = createAST(ND_MUL, numNode(RHS->node_type->Base->BaseSize, tok), LHS, tok);
+        // return createAST(ND_ADD, newLHS，RHS, tok);
+        return createAST(ND_ADD, RHS, newLHS, tok);
     }
 
-    // RHS: int  +  LHS: ptr
+    // LHS: ptr  +  RHS: int
     if (!isInteger(LHS->node_type) && (isInteger(RHS->node_type))) {
         // commit[28]: 使用 (n - 1) 维数组的大小作为 1 运算
-        Node* newRHS = createAST(ND_MUL, numNode(LHS->node_type->Base->BaseSize, tok), RHS, tok);
+        Node* newRHS = createAST(ND_MUL, RHS, numNode(LHS->node_type->Base->BaseSize, tok), tok);
         return createAST(ND_ADD, LHS, newRHS, tok);
     }
 
@@ -710,9 +720,26 @@ static Node* third_class_expr(Token** rest, Token* tok) {
     }
 
     // 直到找到一个非运算符
-    return primary_class_expr(rest, tok);
+    // return primary_class_expr(rest, tok);
+    return preFix(rest, tok);
 }
 
+// commit[28]: preFix = primary_class_expr ("[" expr "]")*  eg. x[y] 先解析 x 再是 y
+static Node* preFix(Token** rest, Token* tok) {
+    Node* ND = primary_class_expr(&tok, tok);
+
+    while (equal(tok, "[")) {
+        // 需要考虑到多维数组的情况   x[y] | y[x] => *(x + y)
+        // Tip: 针对 x[y] 和 y[x] 两种情况  对应 primary 中的 NUM 和 IDENT 判断
+        // 但是从执行效率上讲 更推荐 x[y] 的方式
+        Token* idxStart = tok;
+        Node* idxExpr = expr(&tok, tok->next);  // y 本身也可能是表达式     Q: 可能出 bug
+        tok = skip(tok, "]");
+        ND = createSingle(ND_DEREF, newPtrAdd(ND, idxExpr, idxStart), idxStart);   
+    }
+    *rest = tok;
+    return ND;
+}
 
 // 判断子表达式或者数字
 // commit[23]: 支持对零参函数的声明
