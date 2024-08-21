@@ -59,7 +59,9 @@ Type* linerArrayType(Type* arrayBaseType, int arrayElemCount) {
 
     linerArray->Kind = TY_ARRAY_LINER;
     linerArray->arrayElemCount = arrayElemCount;
+    // commit[28]: 多维数组的每一层都是 linerArray
     linerArray->Base = arrayBaseType;
+    // commit[28]: 如果是多维数组定义 这里会用 (n - 1) 维数组的大小 * 第 n 维数组的个数
     linerArray->BaseSize = arrayBaseType->BaseSize * arrayElemCount;
 
     return linerArray;

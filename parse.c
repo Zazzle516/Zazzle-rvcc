@@ -13,7 +13,8 @@
 
 // commit[26]: 含参的函数定义
 // commit[27]: 新增对数组变量定义的支持(修改了 typeSuffix 的语法 把结束位置移动到下一层)
-// typeSuffix = ("(" funcFormalParams | "[" num "]" | ε
+// commit[28]: 多维数组 通过递归解析 "[]" 实现  所以需要把语法判断提前
+// typeSuffix = ("(" funcFormalParams | "[" num "]" typeSuffix | ε
 // funcFormalParams = (formalParam ("," formalParam)*)? ")"
 // formalParam = declspec declarator
 // __typeSuffix = ("(" ")")?
@@ -186,6 +187,7 @@ static Node* newPtrAdd(Node* LHS, Node* RHS, Token* tok) {
 
     // RHS: int  +  LHS: ptr
     if (!isInteger(LHS->node_type) && (isInteger(RHS->node_type))) {
+        // commit[28]: 使用 (n - 1) 维数组的大小作为 1 运算
         Node* newRHS = createAST(ND_MUL, numNode(LHS->node_type->Base->BaseSize, tok), RHS, tok);
         return createAST(ND_ADD, LHS, newRHS, tok);
     }
@@ -307,7 +309,12 @@ static Type* typeSuffix(Token** rest, Token* tok, Type* BaseType) {
     if (equal(tok, "[")) {
         // 数组定义处理    BaseType: 数组基类
         int arraySize = getArrayNumber(tok->next);
-        *rest = skip(tok->next->next, "]");
+        // *rest = skip(tok->next->next, "]");
+
+        // commit[28]: 多维数组 递归解析语法
+        tok = skip(tok->next->next, "]");
+        // 通过递归不断重置 BaseType 保存 (n - 1) 维数组的信息  最终返回 n 维数组信息
+        BaseType = typeSuffix(rest, tok, BaseType);
         return linerArrayType(BaseType, arraySize);
     }
 
