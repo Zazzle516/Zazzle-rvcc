@@ -240,7 +240,7 @@ assert 32 'int main() { int x[4]; return sizeof(x); }'
 assert 96 'int main() { int x[3][4]; return sizeof(x); }'
 assert 32 'int main() { int x[3][4]; return sizeof(*x); }'
 assert 8 'int main() { int x[3][4]; return sizeof(**x); }'
-assert 9 'int main() { int x[3][4]; return sizeof(**x) + 1; }'      # error
+assert 9 'int main() { int x[3][4]; return sizeof(**x) + 1; }'
 assert 9 'int main() { int x[3][4]; return sizeof **x + 1; }'
 assert 8 'int main() { int x[3][4]; return sizeof(**x + 1); }'
 assert 8 'int main() { int x=1; return sizeof(x=2); }'

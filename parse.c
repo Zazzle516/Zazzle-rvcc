@@ -757,9 +757,13 @@ static Node* primary_class_expr(Token** rest, Token* tok) {
 
     // commit[30]: 支持 sizeof
     if (equal(tok, "sizeof")) {
-        // 如果使用 expr() 会在某个测试用例失败
+        // Q: 为什么这里调用的是 third_class_expr 而不能用最顶层的 expr()
+        // A: 是 sizeof() 语法结构的问题 这个关键字本身就只能处理单边表达式  如果使用双边 expr 会导致 AST 结构问题
+        // 比如 {sizeof(**x) + 1} ND_ADD 结点本身在顶层 如果使用 expr 加法结点会被转换为 ND_NUM 进入叶子层
         Node* ND = third_class_expr(rest, tok->next);
+        
         // Q: 为什么这里需要调用 addType() 如果注释掉会完全错误
+        // A: 如果不去赋予类型的话 在后面的 numNode 使用 node_type 时会发生访问空指针的问题
         addType(ND);
         return numNode(ND->node_type->BaseSize, tok);
     }
