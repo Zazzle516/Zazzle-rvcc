@@ -107,9 +107,19 @@ static void getAddr(Node* nd_assign) {
         // 类似于内存定义好 预计在栈上使用的位置
 
         // commit[11]: 因为存储空间的改变  commit[10] 的写法不适用了
-        printf("  # 获取变量 %s 的栈内地址 %d(fp)\n", nd_assign->var->var_name, nd_assign->var->offset);
-        // parse.primary_class_expr().singleVarNode() + codeGen.preAllocStackSpace()
-        printf("  addi a0, fp, %d\n", nd_assign->var->offset);
+
+        // commit[32]: 全局变量单独存储在内存中 需要获取地址
+        if (nd_assign->var->IsLocal) {
+            printf("  # 获取变量 %s 的栈内地址 %d(fp)\n", nd_assign->var->var_name, nd_assign->var->offset);
+            // parse.primary_class_expr().singleVarNode() + codeGen.preAllocStackSpace()
+            printf("  addi a0, fp, %d\n", nd_assign->var->offset);
+        }
+
+        else {
+            printf("  # 获取全局变量 %s 的地址\n", nd_assign->var->var_name);
+            // 伪指令 la: load address 用于加载大数
+            printf("  la a0, %s\n", nd_assign->var->var_name);
+        }
         return;
     }
 
@@ -424,9 +434,10 @@ static void exprGen(Node* AST) {
 }
 
 // commit[25]: 为每个函数单独分配栈空间
-void codeGen(Object* Global) {
+// commit[32]: 完成汇编的 .text 段
+void emitText(Object* Global) {
     // commit[11]: 预分配栈空间
-    preAllocStackSpace(Global);
+    // __preAllocStackSpace(Global);
 
     for (Object* currFunc = Global; currFunc; currFunc = currFunc->next) {
         if (!currFunc->IsFunction)
@@ -506,4 +517,34 @@ void codeGen(Object* Global) {
         printf("  # 返回 reg-a0 给系统调用\n");
         printf("  ret\n");
     }
+}
+
+// commit[32]: 全局变量在定义的时候隐含了初始化为 0 的状态
+void emitGlobalData(Object* Global) {
+    for (Object* globalVar = Global; globalVar != NULL; globalVar = globalVar->next) {
+        if (globalVar->IsFunction == true)
+            continue;
+        
+        // 关于 .data 段的汇编生成参考 
+
+        printf("  # 数据段\n");     // 这里针对每一个 GlobalVar 都声明了 .data
+        printf("  .data\n");
+        printf("  .global %s\n", globalVar->var_name);
+        printf("%s:\n", globalVar->var_name);
+        printf("  # 零填充 %d 比特\n", globalVar->var_type->BaseSize);
+        printf("  .zero %d\n", globalVar->var_type->BaseSize);
+    }
+}
+
+// commit[32]: 结构清晰点
+void codeGen(Object* Prog) {
+    // 在栈上预分配局部变量空间
+    // Q: 为什么这里单独处理局部变量    我觉得只是为了结构更清晰 放在 emitText() 执行没差
+    preAllocStackSpace(Prog);
+
+    // 处理全局变量
+    emitGlobalData(Prog);
+
+    // 对函数内的执行语句进行代码生成
+    emitText(Prog);
 }

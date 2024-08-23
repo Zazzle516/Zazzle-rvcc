@@ -64,11 +64,20 @@ Object* Global;     // 全局变量 + 函数定义(因为 C 不能发生函数�
 
 // 当前只有一个匿名 main 函数帧 一旦扫描到一个 var 就检查一下是否已经定义过 如果没有定义过就在链表中新增定义
 static Object* findVar(Token* tok) {
+    // 查找局部变量
     for (Object* obj = Local; obj != NULL; obj = obj->next) {
         if ((strlen(obj->var_name) == tok->length) &&
             !strncmp(obj->var_name, tok->place, tok->length)) {
                 return obj;
             }
+    }
+
+    // commit[32]: 真正支持全局变量的查找
+    for (Object* obj = Global; obj != NULL; obj = obj->next) {
+        if ((strlen(obj->var_name) == tok->length) &&
+            !strncmp(obj->var_name, tok->place, tok->length)) {
+                return obj;
+            } 
     }
     return NULL;
 }
@@ -91,6 +100,9 @@ static Object* newLocal(char* varName, Type* localVarType) {
 
     obj->next = Local;      // 每个变量结点其实都是指向了 Local 链表
     Local = obj;
+
+    // commit[31]: 针对局部变量需要特殊声明
+    obj->IsLocal = true;
     return obj;
 }
 
@@ -123,7 +135,10 @@ static int getArrayNumber(Token* tok) {
 
 // 定义产生式关系并完成自顶向下的递归调用
 // static Node* __program(Token** rest, Token* tok);
+
+// commit[32]: 全局变量和函数定义作为 rank 1 级进行解析
 static Token* functionDefinition(Token* tok, Type* funcReturnBaseType);
+static Token* gloablDefinition(Token* tok, Type* globalBaseType);
 
 static Type* declarator(Token** rest, Token* tok, Type* Base);
 static Type* declspec(Token** rest, Token* tok);
@@ -399,10 +414,31 @@ static void createParamVar(Type* param) {
     }
 }
 
+// commit[32]: 判断当前的语法是函数还是全局变量    区别就是 ";"
+static bool GlobalOrFunction(Token* tok) {
+    bool Global = true;
+    bool Function = false;      // 可以删了
+
+    if (equal(tok, ";"))
+        return Global;
+
+    // Q: 为什么的虚设变量 Dummy 意义是
+    // A: 全局变量的声明方式很多 比如数组或者赋值 无法简单的通过 equal(tok, ";") 判定
+    // 所以这里进一步针对其他形式的全局声明进行解析 也有可能是函数  但总之后续会二次判断
+    Type Dummy = {};
+    Type* ty = declarator(&tok, tok, &Dummy);
+    if (ty->Kind == TY_FUNC)
+        return Function;
+    
+    // __tokenErrorAt(tok, "Not a Global Variable nor a Function define\n");
+    return Global;
+}
+
 /* 语法规则的递归解析 */
 
 // commit[25]: 解析零参函数定义     int* funcName() {...}
-// commit[31]： Q: 为什么传递 Token 回去    因为函数已经作为一种特殊的变量被写入 Global 了
+// Q: commit[31] 的修改为什么传递 Token 回去
+// A: 因为函数已经作为一种特殊的变量被写入 Global 了
 static Token* functionDefinition(Token* tok, Type* funcReturnBaseType) {
     Type* funcType = declarator(&tok, tok, funcReturnBaseType);
 
@@ -435,6 +471,27 @@ static Token* functionDefinition(Token* tok, Type* funcReturnBaseType) {
     function->local = Local;
 
     // Q: 为什么这里是返回 tok 呢   可能是函数作为一个变量已经存入 Object 中了
+    return tok;
+}
+
+// commit[32]: 正式在 AST 中加入全局变量的处理
+static Token* gloablDefinition(Token* tok, Type* globalBaseType) {
+    // Q: 为什么需要 First 这种东西
+    // A: 因为全局变量也可能是连续定义的语法结构 初始化默认为只有一个变量定义
+    // 同时保证了如果连续的变量定义 第一个变量不会从 ", var" 开始判断
+    bool isLast = true;
+
+    while (!consume(&tok, tok, ";")) {
+        // 判断为连续的全局变量的定义   通过 skip 进行语法检查
+        if (!isLast)
+            // 为了正确解析第一个变量
+            tok = skip(tok, ",");
+        isLast = false;
+
+        // 解析全局变量的类型并写入 Global 链表
+        Type* globalType = declarator(&tok, tok, globalBaseType);
+        newGlobal(getVarName(globalType->Name), globalType);
+    }
     return tok;
 }
 
@@ -763,9 +820,9 @@ static Node* preFix(Token** rest, Token* tok) {
         // Tip: 针对 x[y] 和 y[x] 两种情况  对应 primary 中的 NUM 和 IDENT 判断
         // 但是从执行效率上讲 更推荐 x[y] 的方式
         Token* idxStart = tok;
-        Node* idxExpr = expr(&tok, tok->next);  // y 本身也可能是表达式     Q: 可能出 bug
+        Node* idxExpr = expr(&tok, tok->next);
         tok = skip(tok, "]");
-        ND = createSingle(ND_DEREF, newPtrAdd(ND, idxExpr, idxStart), idxStart);   
+        ND = createSingle(ND_DEREF, newPtrAdd(ND, idxExpr, idxStart), idxStart);
     }
     *rest = tok;
     return ND;
@@ -872,8 +929,19 @@ Object* parse(Token* tok) {
     Global = NULL;
 
     while (tok->token_kind !=TOKEN_EOF) {
-        Type* funcReturnBaseType = declspec(&tok, tok);
-        tok = functionDefinition(tok, funcReturnBaseType);
+        Type* BaseType = declspec(&tok, tok);
+
+        // commit[32]: 判断全局变量或者函数 进行不同的处理
+        if (!GlobalOrFunction(tok)) {
+            Type* funcReturnBaseType = copyType(BaseType);
+            tok = functionDefinition(tok, funcReturnBaseType);
+            continue;
+        }
+
+        else {
+            Type* globalBaseType = copyType(BaseType);
+            tok = gloablDefinition(tok, globalBaseType);
+        }
     }
     
     // commit[25]: 在 functionDefinition() 中进行空间分配
