@@ -63,16 +63,25 @@ typedef struct Node Node;
 typedef struct Type Type;
 
 // commit[11]: 定义在 Function 中使用的 local 数据
+// commit[31]: 融合 Function 和 Object
+// Q: 目前没有明白融合的意义
 typedef struct Object Object;
 struct Object {
-    char* var_name;
+    // commit[31]: 新增对函数和变量的判断
+    bool IsLocal;
+    bool IsFunction;
 
-    // codeGen() 构造当前函数帧的 local 链表
+    /* 针对变量的部分 */
+    char* var_name;
     int offset;
     Object* next;
-
-    // commit[22]: 每个值新增类型支持
     Type* var_type;
+
+    /* 针对函数的部分 */
+    Node* AST;
+    Object* local;
+    int StackSize;
+    Object* formalParam;
 };
 
 // 声明 AST 的节点类型
@@ -166,6 +175,7 @@ struct Node {
 // 视频有提到 因为不同的 ND_KIND 不一定使用到全部的属性 可以用 struct union 进行优化
 
 // commit[11]: 用 Function 结构体包裹 AST 携带数据之类的其他内容
+// commit[31]: 弃用 但暂时保留记录
 typedef struct Function Function;
 struct Function {
     Node* AST;
@@ -187,7 +197,7 @@ struct Function {
     Object* formalParam;
 };
 
-Function* parse(Token* tok);
+Object* parse(Token* tok);
 
 /* 类型定义 */
 typedef enum {
@@ -248,4 +258,4 @@ Type* copyType(Type* origin);
 Type* linerArrayType(Type* arrayBaseType, int arrayElemCount);
 
 /* 后端生成 codeGen() 数据结构和函数声明 */
-void codeGen(Function* AST);
+void codeGen(Object* Global);

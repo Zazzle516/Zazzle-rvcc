@@ -14,7 +14,7 @@ int main(int argc, char* argv[]) {
     Token* input_token = tokenize(input_ptr);
 
     // 调用语法分析
-    Function* wrapper = parse(input_token);
+    Object* wrapper = parse(input_token);
 
     // 后端生成代码
     codeGen(wrapper);

@@ -7,7 +7,8 @@ static int StackDepth;
 static char* ArgReg[] = {"a0", "a1", "a2", "a3", "a4", "a5"};
 
 // commit[25]: 记录当前正在执行的函数帧
-static Function* currFuncFrame;
+// commit[31]: 修改类型
+static Object* currFuncFrame;
 
 // 提前声明 后续会用到
 static void calcuGen(Node* AST);
@@ -66,8 +67,13 @@ static int alignTo(int realTotal, int aimAlign) {
 // commit[11]: 根据 parse() 的结果计算栈空间的预分配
 // commit[25]: 根据每个函数中的变量 Local 情况分配空间  二重循环
 // commit[27]: 同样的把 8 优化掉
-static void preAllocStackSpace(Function* func) {
-    for (Function* currFunc = func; currFunc; currFunc = currFunc->next) {
+// commit[31]: 全局变量一般存储在 .data 段或者 .bss 段中    局部变量存储在栈上
+static void preAllocStackSpace(Object* func) {
+    // 在栈上分配空间只处理局部变量 如果不是 IsFunction 那么一定是 IsGlobal 跳过
+    for (Object* currFunc = func; currFunc; currFunc = currFunc->next) {
+        if (!currFunc->IsFunction)
+            continue;
+
         // 初始化分配空间为 0
         int realTotal = 0;
         
@@ -307,7 +313,7 @@ static void exprGen(Node* AST) {
         printf("  # 返回到当前执行函数的 return 标签\n");
         calcuGen(AST->LHS);
         // commit[25]: 返回当前执行函数的 return label
-        printf("  j .L.return.%s\n", currFuncFrame->FuncName);
+        printf("  j .L.return.%s\n", currFuncFrame->var_name);
         return;
     }
 
@@ -418,14 +424,20 @@ static void exprGen(Node* AST) {
 }
 
 // commit[25]: 为每个函数单独分配栈空间
-void codeGen(Function* Func) {
+void codeGen(Object* Global) {
     // commit[11]: 预分配栈空间
-    preAllocStackSpace(Func);
+    preAllocStackSpace(Global);
 
-    for (Function* currFunc = Func; currFunc; currFunc = currFunc->next) {
-        printf("  .global %s\n", currFunc->FuncName);
-        printf("\n# ========当前函数 %s 开始============\n", currFunc->FuncName);
-        printf("%s:\n", currFunc->FuncName);
+    for (Object* currFunc = Global; currFunc; currFunc = currFunc->next) {
+        if (!currFunc->IsFunction)
+            // commit[31]: 目前没有对全局变量进行任何汇编代码层面的处理
+            continue;
+
+        printf("  .global %s\n", currFunc->var_name);
+
+        printf("  .text\n");
+        printf("\n# ========当前函数 %s 开始============\n", currFunc->var_name);
+        printf("%s:\n", currFunc->var_name);
         // 更新全局变量的指向
         currFuncFrame = currFunc;
     
@@ -472,7 +484,7 @@ void codeGen(Function* Func) {
 
         // 为 return 的跳转定义标签
         printf("\n# =====程序结束===============\n");
-        printf(".L.return.%s:\n", currFunc->FuncName);
+        printf(".L.return.%s:\n", currFunc->var_name);
 
         // 目前只支持 main 函数 所以只有一个函数帧
 

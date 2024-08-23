@@ -3,7 +3,8 @@
 // commit[1] - commit[22] 注释备份在 annotation-bak 中
 
 // commit[25]: 最顶层语法规则更新为函数定义 注释掉 program 重新修改为两层结构
-// parse() = functionDefinition*
+// commit[31]: 把函数作为 Global Object 进行处理
+// parse() = (functionDefinition | globalVariable)*
 // __program = "{" compoundStamt
 
 // commit[25]: 函数定义 目前只支持 'int' 并且无参  eg. int* funcName() {...}
@@ -58,7 +59,8 @@
 // commit[24]: 函数调用 在 primary_class_expr 前看一个字符确认是函数声明后的定义
 // funcall = ident "(" (expr ("," expr)*)? ")"
 
-Object* Local;
+Object* Local;      // 函数内部变量
+Object* Global;     // 全局变量 + 函数定义(因为 C 不能发生函数嵌套 所以一定是全局的层面)
 
 // 当前只有一个匿名 main 函数帧 一旦扫描到一个 var 就检查一下是否已经定义过 如果没有定义过就在链表中新增定义
 static Object* findVar(Token* tok) {
@@ -71,13 +73,32 @@ static Object* findVar(Token* tok) {
     return NULL;
 }
 
-// 对没有定义过的变量名 通过头插法新增到 Local 链表中
-static Object* newLocal(char* varName, Type* type) {
+// commit[31]: 针对局部变量和全局变量的共同行为，给出一个函数用来复用
+static Object* newVariable(char* varName, Type* varType) {
     Object* obj = calloc(1, sizeof(Object));
-    obj->var_type = type;
+    obj->var_type = varType;
     obj->var_name = varName;
+    return obj;
+}
+
+// 对没有定义过的变量名 通过头插法新增到 Local 链表中
+static Object* newLocal(char* varName, Type* localVarType) {
+    Object* obj = newVariable(varName, localVarType);
+
+    // Object* obj = calloc(1, sizeof(Object));
+    // obj->var_type = type;
+    // obj->var_name = varName;
+
     obj->next = Local;      // 每个变量结点其实都是指向了 Local 链表
     Local = obj;
+    return obj;
+}
+
+// commit[31]: 完全参考 Local 的实现方式
+static Object* newGlobal(char* varName, Type* globalVarType) {
+    Object* obj = newVariable(varName, globalVarType);
+    obj->next = Global;
+    Global = obj;
     return obj;
 }
 
@@ -102,7 +123,7 @@ static int getArrayNumber(Token* tok) {
 
 // 定义产生式关系并完成自顶向下的递归调用
 // static Node* __program(Token** rest, Token* tok);
-static Function* functionDefinition(Token** rest, Token* tok);
+static Token* functionDefinition(Token* tok, Type* funcReturnBaseType);
 
 static Type* declarator(Token** rest, Token* tok, Type* Base);
 static Type* declspec(Token** rest, Token* tok);
@@ -381,35 +402,40 @@ static void createParamVar(Type* param) {
 /* 语法规则的递归解析 */
 
 // commit[25]: 解析零参函数定义     int* funcName() {...}
-static Function* functionDefinition(Token** rest, Token* tok) {
-    Type* returnBaseType = declspec(&tok, tok);
-    Type* funcType = declarator(&tok, tok, returnBaseType);
+// commit[31]： Q: 为什么传递 Token 回去    因为函数已经作为一种特殊的变量被写入 Global 了
+static Token* functionDefinition(Token* tok, Type* funcReturnBaseType) {
+    Type* funcType = declarator(&tok, tok, funcReturnBaseType);
 
-    // 初始化函数帧变量
+    // commit[31]: 构造函数结点
+    Object* function = newGlobal(getVarName(funcType->Name), funcType);
+    function->IsFunction = true;
+
+    // 初始化函数帧内部变量
     Local = NULL;
 
     // 初始化函数定义结点
-    Function* func = calloc(1, sizeof(Function));
+    // __Function* func = calloc(1, sizeof(Function));
     
     // Q: 这里一定要用 funcType->Name 吗   Base->Name = tok;
     // A: 因为在 declarator 中更新了 &tok 所以这个时候 tok 位置指向函数体
-    func->FuncName = getVarName(funcType->Name);
+    // __func->FuncName = getVarName(funcType->Name);
 
     // commit[26]: 形参变量和函数内部变量需要两次不同的更新
     
     // 第一次更新 Local: 函数形参
     createParamVar(funcType->formalParamLink);
-    func->formalParam = Local;
+    function->formalParam = Local;
 
     tok = skip(tok, "{");
     // 第二次更新 Local: 更新函数内部定义变量
-    func->AST = compoundStamt(rest, tok);
+    function->AST = compoundStamt(&tok, tok);
 
     // 因为更新的 local 是不同区域的 Local 比如参数和函数内变量
     // 虽然它们最后都在同一个链表 Local 里面    但是赋值的变量 (formalParam, local) 是不同的
-    func->local = Local;
+    function->local = Local;
 
-    return func;
+    // Q: 为什么这里是返回 tok 呢   可能是函数作为一个变量已经存入 Object 中了
+    return tok;
 }
 
 // 对 Block 中复合语句的判断
@@ -830,7 +856,7 @@ static Node* funcall(Token** rest, Token* tok) {
 }
 
 // 读入 token stream 在每个 stamt 中处理一部分 token 结点
-Function* parse(Token* tok) {
+Object* parse(Token* tok) {
     // 生成的 AST 只有一个根节点 而不是像前面的 commit 一样的单链表
 
     // commit[25]: 顶层结构从 program 变成 functionDefinition*
@@ -839,17 +865,22 @@ Function* parse(Token* tok) {
     // commit[25]: 解析层次修改之后 从 parse->program 的两层结构变成 parse->funcDefin->program 三层结构
     // 三层结构会导致 *rest tok 错误    除非换成两层
 
-    Function HEAD = {};
-    Function* Curr = &HEAD;
+    // __Function HEAD = {};
+    // __Function* Curr = &HEAD;
+
+    // commit[31]: 使用全局变量 Global 来记录函数定义
+    Global = NULL;
 
     while (tok->token_kind !=TOKEN_EOF) {
-        Curr->next = functionDefinition(&tok, tok);
-        Curr = Curr->next;
+        Type* funcReturnBaseType = declspec(&tok, tok);
+        tok = functionDefinition(tok, funcReturnBaseType);
     }
     
     // commit[25]: 在 functionDefinition() 中进行空间分配
     // Function* Func = calloc(1, sizeof(Function));
 
     // 对 Func->StackSize 的处理在 codeGen() 实现
-    return HEAD.next;
+    // __return HEAD.next;
+
+    return Global;
 }
