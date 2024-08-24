@@ -9,7 +9,7 @@
 
 // commit[25]: 函数定义 目前只支持 'int' 并且无参  eg. int* funcName() {...}
 // functionDefinition = declspec declarator "{" compoundStamt*
-// declspec = "int"
+// declspec = "int" | "char"
 // declarator = "*"* ident typeSuffix
 
 // commit[26]: 含参的函数定义
@@ -132,6 +132,10 @@ static int getArrayNumber(Token* tok) {
     return tok->value;
 }
 
+// commit[33]: 判断当前读取的类型是否符合变量声明的类型
+static bool isTypeName(Token* tok) {
+    return (equal(tok, "int") || equal(tok, "char"));
+}
 
 // 定义产生式关系并完成自顶向下的递归调用
 // static Node* __program(Token** rest, Token* tok);
@@ -300,7 +304,15 @@ static Node* newPtrSub(Node* LHS, Node* RHS, Token* tok) {
 
 // 返回对类型 'int' 的判断
 static Type* declspec(Token** rest, Token* tok) {
-    *rest = skip(tok, "int");
+    // commit[33]: 对类型分别进行处理
+    if (equal(tok, "int")) {
+        *rest = skip(tok, "int");
+        return TYINT_GLOBAL;
+    }
+    if (equal(tok, "char")) {
+        *rest = skip(tok, "char");
+        return TYCHAR_GLOBAL;
+    }
     return TYINT_GLOBAL;
 }
 
@@ -505,7 +517,8 @@ static Node* compoundStamt(Token** rest, Token* tok) {
     while (!equal(tok, "}")) {
         // commit[22]: 对声明语句和表达式语句分别处理
         // commit[25]: 函数调用是没有返回值的前缀! 所以目前 compoundStamt.declaration 只用于变量定义
-        if (equal(tok, "int"))
+        // commit[33]: 在加入新的类型判断之后 Q: ???
+        if (isTypeName(tok))
             // Tip: 如果只是变量声明没有赋值 不会新建任何结点 只是更新了 Local
             Curr->next = declaration(&tok, tok);
         else

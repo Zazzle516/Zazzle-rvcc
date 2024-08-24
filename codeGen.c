@@ -37,22 +37,38 @@ static void pop_stack(char* reg) {
     StackDepth--;
 }
 
+// commit[33]: 在新增 char 类型后 不同类型读写的字节数量不同 需要进行判断 byte word ddouble
+
 // commit[27]: 把 exprGen() 中的 ld 和 sd 提取出来(提高代码可读性吧
 static void Load(Type* type) {
     // Q: 为什么这里遇到数组选择返回了
+    // A: 数组和变量都是存储在栈上的 但是区别在数组存储的是值 而变量存储的是地址 所以数组不需要额外的 DEREF 的操作
+    // getAddr().ND_VAR 会加载数组的首地址(同时就是第一个值的地址)到 a0
     if (type->Kind == TY_ARRAY_LINER)
         return;
     
     printf("  # 读取 a0 储存的地址内容 并存入 a0\n");
-    printf("  ld a0, 0(a0)\n");
+    
+    if (type->BaseSize == 1)
+        // Q: 这里使用 BaseSize 进行判断而不是 type->Kind 有什么特殊的考虑吗
+        // A: 一开始在 else-branch 考虑用 type->Kind == TY_INT 判断但是在 commit20 报错
+        // 因为没有考虑到现在还有 PTR ARRAY 之类的其他类型
+        // Tip: 实际上在汇编代码部分 类型只能体现在大小 本身存储的什么已经没有意义了
+        printf("  lb a0, 0(a0)\n");
+    else
+        printf("  ld a0, 0(a0)\n");
 }
 
 // Q: 为什么这里一定是 a1 和 pop_stack() 有什么关系
 // A: 把 ND_ASSIGN 的部分抽象出来
-static void Store(void) {
+static void Store(Type* type) {
     pop_stack("a1");
     printf("  # 将 a0 的值写入 a1 存储的地址\n");
-    printf("  sd a0, 0(a1)\n");
+
+    if (type->BaseSize == 1)
+        printf("  sb a0, 0(a1)\n");
+    else
+        printf("  sd a0, 0(a1)\n");
 }
 
 // 一般编译器的对齐发生在 8B, 4B, 1B 空间混用的情况   但是目前都是固定的    这里就是先写出来方便后续扩展
@@ -189,7 +205,7 @@ static void calcuGen(Node* AST) {
         // 进行右侧表达式的计算
         calcuGen(AST->RHS);
 
-        Store();
+        Store(AST->node_type);
 
         // 将 *左侧* 的结果弹栈
         // pop_stack("a1");
@@ -485,7 +501,10 @@ void emitText(Object* Global) {
         int I = 0;
         for (Object* obj = currFunc->formalParam; obj; obj = obj->next) {
             printf("  # 将 %s 寄存器存入 %s 栈地址\n", ArgReg[I], obj->var_name);
-            printf("  sd %s, %d(fp)\n", ArgReg[I++], obj->offset);
+            if (obj->var_type->BaseSize == 1)
+                printf("  sb %s, %d(fp)\n", ArgReg[I++], obj->offset);
+            else
+                printf("  sd %s, %d(fp)\n", ArgReg[I++], obj->offset);
         }
 
         // commit[13]: 现在的 AST-root 是单节点不是链表了
@@ -539,7 +558,8 @@ void emitGlobalData(Object* Global) {
 // commit[32]: 结构清晰点
 void codeGen(Object* Prog) {
     // 在栈上预分配局部变量空间
-    // Q: 为什么这里单独处理局部变量    我觉得只是为了结构更清晰 放在 emitText() 执行没差
+    // Q: 为什么这里单独处理局部变量
+    // A: 我觉得只是为了结构更清晰 放在 emitText() 执行没差
     preAllocStackSpace(Prog);
 
     // 处理全局变量

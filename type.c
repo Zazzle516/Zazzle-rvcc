@@ -11,10 +11,14 @@
 // commit[27]: 在开始处理类型大小之后 能体现出这个全局变量的作用 就是对类型和大小的全局映射
 Type* TYINT_GLOBAL = &(Type){.Kind = TY_INT, .BaseSize = 8};
 
+// commit[33]: 定义全局需要的 char 属性
+Type* TYCHAR_GLOBAL = &(Type){.Kind = TY_CHAR, .BaseSize = 1};
+
 // 判断变量类型
 bool isInteger(Type* TY) {
     // 不需要进行空判操作 因为如果是空 自然是 false
-    return TY->Kind == TY_INT;
+    // commit[33]: char 也被算为 TY_INT 的一种特殊情况
+    return (TY->Kind == TY_INT || TY->Kind == TY_CHAR);
 }
 
 // 新建指针变量结点 根据 Base 定义指向

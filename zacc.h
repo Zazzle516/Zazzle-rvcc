@@ -209,6 +209,9 @@ typedef enum {
 
     // commit[27]: 定义数组变量类型 一维数组
     TY_ARRAY_LINER,
+
+    // commit[33]: 支持 char 类型
+    TY_CHAR,
 } Typekind;
 
 // Q: 为什么把函数返回值定义在 Type 中
@@ -238,6 +241,7 @@ struct Type {
 
 // 使用在 type.c 中定义的全局变量 (用于对 int 类型的判断)
 extern Type* TYINT_GLOBAL;
+extern Type* TYCHAR_GLOBAL;
 
 // 判断变量类型
 bool isInteger(Type* TY);
