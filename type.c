@@ -12,6 +12,7 @@
 Type* TYINT_GLOBAL = &(Type){.Kind = TY_INT, .BaseSize = 8};
 
 // commit[33]: 定义全局需要的 char 属性
+// 到这个时候体会到了另一个用处就是作为万能的 BaseType 直接使用
 Type* TYCHAR_GLOBAL = &(Type){.Kind = TY_CHAR, .BaseSize = 1};
 
 // 判断变量类型

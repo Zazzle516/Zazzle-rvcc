@@ -26,16 +26,23 @@
 #include <stdlib.h>
 #include <string.h>
 
+// 提前声明
+typedef struct Node Node;
+typedef struct Type Type;
+typedef struct Object Object;
+
 /* 词法解析 tokenize() 数据结构和函数声明 */ 
 
 typedef enum {
-    TOKEN_EOF,              // 终结符
-    TOKEN_NUM,              // 数字
-    TOKEN_OP,               // 运算符       在 commit[7] 中新增的比较符也计入 TOKEN_OP 中
+    TOKEN_EOF,          // 终结符
+    TOKEN_NUM,          // 数字
+    TOKEN_OP,           // 运算符       在 commit[7] 中新增的比较符也计入 TOKEN_OP 中
 
-    TOKEN_IDENT,            // 标识     变量名 | 函数名  commit[10]
+    TOKEN_IDENT,        // 标识     变量名 | 函数名  commit[10]
 
     TOKEN_KEYWORD,
+
+    TOKEN_STR,           // 字符串字面量  Tip: 相比字符串变量 可以匿名定义不允许修改 一般存储在只读内存区
 } TokenKind;
 
 typedef struct Token Token;
@@ -46,6 +53,16 @@ struct Token {
 
     char* place;                // 在 input_ptr 中的位置    从 equal() 层面看 存储的是具体内容
     unsigned int length;        // 该符号在 input_ptr 中所占长度
+
+    // commit[34]: 字符串字面量通过定义 char 数组实现 包括 '\0'  类似于 int value 的属性针对数值
+    // 实际上 Token 类型只保存了 TOKEN_NUM 和 TOKEN_STR 的具体内容  可以用在两个类型上
+    // Q: 必须在 token 的时候判断为 str 否则在解析的时候分不清 IDENT 和 STR
+    Type* tokenType;
+
+    // Q: 为什么需要拷贝字符串内容 直接定位到同一个地址不就好了
+    // Q: 目前猜测仍然是因为 token 解析的问题 解析的依据是空格 而字符串的内容是不能控制的 所以要提前存起来
+    // 需要有空格的字符串测试
+    char* strContent;
 };
 
 void errorHint(char* errorInfo, ...);
@@ -59,24 +76,30 @@ bool consume(Token** rest, Token* tok, char* str);
 Token* tokenize(char* P);       // main() 调用声明
 
 /* 语法分析 parse() 数据结构和函数声明 */
-typedef struct Node Node;
-typedef struct Type Type;
 
 // commit[11]: 定义在 Function 中使用的 local 数据
 // commit[31]: 融合 Function 和 Object
 // Q: 目前没有明白融合的意义
-typedef struct Object Object;
+// A: 因为处理全局变量 所以必须要把函数考虑进来
 struct Object {
     // commit[31]: 新增对函数和变量的判断
     bool IsLocal;
     bool IsFunction;
 
-    /* 针对变量的部分 */
+    /* 针对全局 包括变量和函数 */
     char* var_name;
-    int offset;
     Object* next;
     Type* var_type;
 
+    /* 针对全局变量的部分 */
+    // Q: 这里是因为和 str 的实现绑定所以一定是 char* 类型吗  有没有可能代表其他的全局类型
+    // A: 在 commit[34] 之前的全局变量都是声明 没有存储具体的内容 从这里开始有了实际内容需要存储
+    // 结合 chibicc 的实现来看 是可以储存任意类型的     Q: char* 是怎么实现任意类型的
+    char* InitData;
+
+    /* 针对局部变量的部分 */
+    int offset;
+    
     /* 针对函数的部分 */
     Node* AST;
     Object* local;

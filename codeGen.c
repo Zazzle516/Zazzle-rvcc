@@ -548,10 +548,25 @@ void emitGlobalData(Object* Global) {
 
         printf("  # 数据段\n");     // 这里针对每一个 GlobalVar 都声明了 .data
         printf("  .data\n");
-        printf("  .global %s\n", globalVar->var_name);
-        printf("%s:\n", globalVar->var_name);
-        printf("  # 零填充 %d 比特\n", globalVar->var_type->BaseSize);
-        printf("  .zero %d\n", globalVar->var_type->BaseSize);
+
+        // commit[34]: 针对有初始值的全局变量进行特殊处理
+        if (globalVar->InitData) {
+            printf("%s:\n", globalVar->var_name);
+            // Q: 这里为什么是小于 BaseSize
+            for (int I = 0; I < globalVar->var_type->BaseSize; ++I) {
+                char C = globalVar->InitData[I];
+                if (isprint(C))
+                    printf("  .byte %d\t# 字符: %c\n", C, C);
+                else
+                    printf("  .byte %d\n", C);
+            }
+        }
+        else {
+            printf("  .global %s\n", globalVar->var_name);
+            printf("%s:\n", globalVar->var_name);
+            printf("  # 零填充 %d 比特\n", globalVar->var_type->BaseSize);
+            printf("  .zero %d\n", globalVar->var_type->BaseSize);
+        }
     }
 }
 

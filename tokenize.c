@@ -158,6 +158,23 @@ static bool isIdentIndex(char input) {
     return (isIdentIndex1(input) || (input >= '0' && input <= '9'));
 }
 
+// commit[34]: 读取字符字面量 目前不支持 "" 的转义
+static Token* readStringLiteral(char* start) {
+    char* input_ptr = start + 1;
+
+    // 语法检查并且找到字符串结束的位置  此时 input_ptr 指向 <">
+    for (; *input_ptr != '"'; ++input_ptr) 
+        if (*input_ptr == '\n' || *input_ptr == '\0')
+            charErrorAt(input_ptr, "unclosed string literal\n");
+
+    // 读取字符串内容
+    Token* strToken = newToken(TOKEN_STR, start, input_ptr + 1);
+    strToken->tokenType = linerArrayType(TYCHAR_GLOBAL, input_ptr - start);
+    strToken->strContent = strndup(start + 1, input_ptr - start - 1);
+    return strToken;
+}
+
+
 // 引入比较符后修改 isdigit() 的判断
 
 // 比较字符串是否相等   和 equal() 中的 memcmp() 区分
@@ -211,8 +228,7 @@ Token* tokenize(char* P) {
         // commit[11] 通过循环完成对变量名的获取
         if (isIdentIndex1(*P)) {
             char* start = P;
-            do
-            {
+            do {
                 P++;
             } while (isIdentIndex(*P));
             
@@ -220,6 +236,14 @@ Token* tokenize(char* P) {
             currToken->next = newToken(TOKEN_IDENT, start, P);
             // P += length;            目前是单个字符 长度已知为 1 直接 ++ 就好
             currToken = currToken->next;
+            continue;
+        }
+
+        if (*P == '"') {
+            // commit[34]: 单独处理字符串 否则会作为变量进行处理
+            currToken->next = readStringLiteral(P);
+            currToken = currToken->next;
+            P += currToken->length;
             continue;
         }
 

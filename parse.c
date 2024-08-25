@@ -53,7 +53,7 @@
 
 // commit[30]: 新增对 "sizeof" 的支持
 // Q: 为什么这里的递归解析是 third_expr 而不是 expr 有什么好处吗 或者说必要性
-// primary_class_expr = '(' expr ')' | num | ident fun_args? | "sizeof" third_class_expr
+// primary_class_expr = '(' expr ')' | num | ident fun_args? | "sizeof" third_class_expr | str
 // __primary_class_expr = '(' expr ')' | num | ident fun_args?
 
 // commit[24]: 函数调用 在 primary_class_expr 前看一个字符确认是函数声明后的定义
@@ -444,6 +444,24 @@ static bool GlobalOrFunction(Token* tok) {
     
     // __tokenErrorAt(tok, "Not a Global Variable nor a Function define\n");
     return Global;
+}
+
+static char* newUniqueName(void) {
+    static int I = 0;
+    char* buffer = calloc(1, 20);
+    sprintf(buffer, ".L..%d", I++);
+    return buffer;
+}
+
+static Object* newAnonyGlobalVar(Type* globalType) {
+    return newGlobal(newUniqueName(), globalType);
+}
+
+// commit[34]: 以全局变量的方式处理字符字面量
+static Object* newStringLiteral(char* strContent, Type* strType) {
+    Object* strObj = newAnonyGlobalVar(strType);
+    strObj->InitData = strContent;
+    return strObj;
 }
 
 /* 语法规则的递归解析 */
@@ -868,6 +886,13 @@ static Node* primary_class_expr(Token** rest, Token* tok) {
         Node* ND = numNode(tok->value, tok);
         *rest = tok->next;
         return ND;
+    }
+
+    if ((tok->token_kind) == TOKEN_STR) {
+        Object* strObj = newStringLiteral(tok->strContent, tok->tokenType);
+        // Q: 这里为什么是 next
+        *rest = tok->next;
+        return singleVarNode(strObj, tok);
     }
 
     // indet args?  args = "()"
