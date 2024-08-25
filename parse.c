@@ -429,7 +429,7 @@ static void createParamVar(Type* param) {
 // commit[32]: 判断当前的语法是函数还是全局变量    区别就是 ";"
 static bool GlobalOrFunction(Token* tok) {
     bool Global = true;
-    bool Function = false;      // 可以删了
+    bool Function = false;
 
     if (equal(tok, ";"))
         return Global;
@@ -968,7 +968,7 @@ Object* parse(Token* tok) {
 
     while (tok->token_kind !=TOKEN_EOF) {
         Type* BaseType = declspec(&tok, tok);
-
+        // Q: 即使是判断函数还是变量 为什么不在这里把 BaseType 传进去呢
         // commit[32]: 判断全局变量或者函数 进行不同的处理
         if (!GlobalOrFunction(tok)) {
             Type* funcReturnBaseType = copyType(BaseType);

@@ -158,7 +158,7 @@ static bool isIdentIndex(char input) {
     return (isIdentIndex1(input) || (input >= '0' && input <= '9'));
 }
 
-// commit[34]: 读取字符字面量 目前不支持 "" 的转义
+// commit[34]: 读取字符字面量 目前不支持 "" 的转义 以全局的方式处理
 static Token* readStringLiteral(char* start) {
     char* input_ptr = start + 1;
 
@@ -168,8 +168,11 @@ static Token* readStringLiteral(char* start) {
             charErrorAt(input_ptr, "unclosed string literal\n");
 
     // 读取字符串内容
+    // 这里的 + 1 要结合 newToken 确定 因为函数里面直接是 (end - start)
+    // 计算的长度是针对 tokenize 而言的 从 prase 的角度是不需要双引号的
     Token* strToken = newToken(TOKEN_STR, start, input_ptr + 1);
     strToken->tokenType = linerArrayType(TYCHAR_GLOBAL, input_ptr - start);
+    // 因为全局处理 所以需要通过 token 传递内容到 object 不然 token 的判断逻辑无法处理 str 和 ident
     strToken->strContent = strndup(start + 1, input_ptr - start - 1);
     return strToken;
 }
@@ -239,8 +242,8 @@ Token* tokenize(char* P) {
             continue;
         }
 
+        // commit[34]: 单独处理字符串 否则会作为变量进行处理
         if (*P == '"') {
-            // commit[34]: 单独处理字符串 否则会作为变量进行处理
             currToken->next = readStringLiteral(P);
             currToken = currToken->next;
             P += currToken->length;

@@ -6,9 +6,11 @@ int main(int argc, char* argv[]) {
         fprintf(stderr, "%s need two arguments\n", argv[0]);
         return 1;
     }
+
+    char code[] = "int main() { return sizeof(\"abc\"); }";
     
     // 得到指向输入流的指针
-    char* input_ptr = argv[1];
+    char* input_ptr = code;
     
     // 把输入流进行标签化 得到 TokenStream 链表     此时没有空格
     Token* input_token = tokenize(input_ptr);
