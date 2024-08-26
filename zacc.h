@@ -31,6 +31,9 @@ typedef struct Node Node;
 typedef struct Type Type;
 typedef struct Object Object;
 
+// 字符串
+char* format(char* Fmt, ...);
+
 /* 词法解析 tokenize() 数据结构和函数声明 */ 
 
 typedef enum {

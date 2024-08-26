@@ -453,9 +453,11 @@ static bool GlobalOrFunction(Token* tok) {
 
 static char* newUniqueName(void) {
     static int I = 0;
-    char* buffer = calloc(1, 20);
-    sprintf(buffer, ".L..%d", I++);
-    return buffer;
+
+    return format(".L..%d", I++);
+    // char* buffer = calloc(1, 20);
+    // sprintf(buffer, ".L..%d", I++);
+    // return buffer;
 }
 
 static Object* newAnonyGlobalVar(Type* globalType) {
@@ -898,6 +900,7 @@ static Node* primary_class_expr(Token** rest, Token* tok) {
     if ((tok->token_kind) == TOKEN_STR) {
         Object* strObj = newStringLiteral(tok->strContent, tok->tokenType);
         *rest = tok->next;
+        // 利用人为定义的名称 + 字符串内容 构造一个变量结点插入 AST 中
         return singleVarNode(strObj, tok);
     }
 

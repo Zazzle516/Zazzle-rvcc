@@ -549,10 +549,12 @@ void emitGlobalData(Object* Global) {
         printf("  # 数据段\n");     // 这里针对每一个 GlobalVar 都声明了 .data
         printf("  .data\n");
 
-        // commit[34]: 针对有初始值的全局变量进行特殊处理
+        // commit[34]: 针对有初始值的全局变量进行特殊处理 针对是否有赋值分别处理
         if (globalVar->InitData) {
             printf("%s:\n", globalVar->var_name);
             // Q: 这里为什么是小于 BaseSize
+            // A: 取出全局量被赋值的内容 从字节的角度思考 所以 InitData 类型是 char*
+            // 同时依赖 tokenize().readStringLiteral().linerArrayType 传递的字符串长度判断
             for (int I = 0; I < globalVar->var_type->BaseSize; ++I) {
                 char C = globalVar->InitData[I];
                 if (isprint(C))
