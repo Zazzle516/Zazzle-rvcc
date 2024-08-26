@@ -184,6 +184,7 @@ static Node* numNode(int val, Token* tok) {
 // 针对变量结点的定义
 static Node* singleVarNode(Object* var, Token* tok) {
     Node* varNode = createNode(ND_VAR, tok);
+    // 通过 var 把 str 的内容传入
     varNode->var = var;
     return varNode;
 }
@@ -427,7 +428,7 @@ static void createParamVar(Type* param) {
 }
 
 // commit[32]: 判断当前的语法是函数还是全局变量    区别就是 ";"
-static bool GlobalOrFunction(Token* tok) {      // Q: 这里为什么只用 tok 额外传一个 BaseType 也不会怎么样
+static bool GlobalOrFunction(Token* tok) {
     bool Global = true;
     bool Function = false;
 
@@ -437,8 +438,12 @@ static bool GlobalOrFunction(Token* tok) {      // Q: 这里为什么只用 tok 
     // Q: 为什么的虚设变量 Dummy 意义是
     // A: 全局变量的声明方式很多 比如数组或者赋值 无法简单的通过 equal(tok, ";") 判定
     // 所以这里进一步针对其他形式的全局声明进行解析 有可能不是函数  但总之后续会二次判断
-    Type Dummy = {};        // 初始化隐含了枚举变量的初始化  默认设置为 TY_INT  所以 BaseType 不是完全空的  只是现在碰巧是 INT 不可能解析 CHAR 也许后面会改？
+
+    // 初始化隐含了枚举变量的初始化  默认设置为 TY_INT  所以 BaseType 不是完全空的
+    Type Dummy = {};
     Type* ty = declarator(&tok, tok, &Dummy);
+    // Type* ty = declarator(&tok, tok, BaseType);
+
     if (ty->Kind == TY_FUNC)
         return Function;
     
@@ -461,6 +466,7 @@ static Object* newAnonyGlobalVar(Type* globalType) {
 static Object* newStringLiteral(char* strContent, Type* strType) {
     Object* strObj = newAnonyGlobalVar(strType);
     strObj->InitData = strContent;
+    // 返回更新后的 Global 链表
     return strObj;
 }
 
@@ -679,6 +685,7 @@ static Node* stamt(Token** rest, Token* tok) {
         *rest = tok;
         return ND;
     }
+    
     return exprStamt(rest, tok);
 }
 
@@ -890,7 +897,6 @@ static Node* primary_class_expr(Token** rest, Token* tok) {
 
     if ((tok->token_kind) == TOKEN_STR) {
         Object* strObj = newStringLiteral(tok->strContent, tok->tokenType);
-        // Q: 这里为什么是 next
         *rest = tok->next;
         return singleVarNode(strObj, tok);
     }
@@ -969,6 +975,9 @@ Object* parse(Token* tok) {
     while (tok->token_kind !=TOKEN_EOF) {
         Type* BaseType = declspec(&tok, tok);
         // Q: 即使是判断函数还是变量 为什么不在这里把 BaseType 传进去呢
+        // A: 在 GlobalOrFunction() 中会初始化一个 Type Dummy 作为 BaseType
+        // 目前测试传不传都行  可能在以后会有其他用处
+
         // commit[32]: 判断全局变量或者函数 进行不同的处理
         if (!GlobalOrFunction(tok)) {
             Type* funcReturnBaseType = copyType(BaseType);
