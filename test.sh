@@ -282,4 +282,24 @@ assert 0 'int main() { return "abc"[3]; }'
 assert 4 'int main() { return sizeof("abc"); }'
 echo -------------------commit-34-pass-----------------------
 
+# [36] 支持转义字符
+assert 7 'int main() { return "\a"[0]; }'
+assert 8 'int main() { return "\b"[0]; }'
+assert 9 'int main() { return "\t"[0]; }'
+assert 10 'int main() { return "\n"[0]; }'
+assert 11 'int main() { return "\v"[0]; }'
+assert 12 'int main() { return "\f"[0]; }'
+assert 13 'int main() { return "\r"[0]; }'
+assert 27 'int main() { return "\e"[0]; }'
+
+assert 106 'int main() { return "\j"[0]; }'
+assert 107 'int main() { return "\k"[0]; }'
+assert 108 'int main() { return "\l"[0]; }'
+
+assert 7 'int main() { return "\ax\ny"[0]; }'
+assert 120 'int main() { return "\ax\ny"[1]; }'
+assert 10 'int main() { return "\ax\ny"[2]; }'
+assert 121 'int main() { return "\ax\ny"[3]; }'     # 字符串内容 (\a, x, \n, y) 这个测试目的就是把 \a 和 \n 作为特殊字符读入
+echo -------------------commit-36-pass-----------------------
+
 echo all-test-passed

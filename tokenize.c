@@ -161,23 +161,84 @@ static bool isIdentIndex(char input) {
     return (isIdentIndex1(input) || (input >= '0' && input <= '9'));
 }
 
+// commit[36]: 在含有转义字符的情况处理字符串 读取到真正的结束符 '"' 返回位置
+static char* readStringLiteralEnd(char* strPos) {
+    char* strStart = strPos;
+
+    for (; *strPos != '"'; strPos++) {
+        if (*strPos == '\n' || *strPos == '\0')
+            charErrorAt(strStart, "unclosed string literal\n");
+        if (*strPos == '\\')
+            // 这里的 '\\' 是为了在 C 程序中正确表达 '\' 而是用转义
+            // 结合 for-loop 本身的 strPos++ 这里通过转义字符 '\' 跳过字符 '"' 或者其他想表示特殊含义的字符
+            strPos++;
+    }
+    // 指向结束字符串的右双引号
+    return strPos;
+}
+
+// commit[36]: 处理字符串中的转义字符
+static int readEscapeChar(char* escapeChar) {
+    switch (*escapeChar)
+    {
+    case 'a':
+        return '\a';        // 响铃
+    case 'b':
+        return '\b';        // 退格
+    case 't':
+        return '\t';        // 制表
+    case 'n':
+        return '\n';        // 换行
+    case 'v':
+        return '\v';        // 垂直制表符
+    case 'f':
+        return '\f';        // 换页
+    case 'r':
+        return '\r';        // 回车
+    case 'e':
+        return 27;          // 转义符 (GNU扩展 长见识了..
+    default:
+        return *escapeChar;
+    }
+}
+
 // commit[34]: 读取字符字面量 目前不支持 "" 的转义 以全局的方式处理
+// commit[36]: 在支持转义字符之后 注意转义字符在长度计算的参与
 static Token* readStringLiteral(char* start) {
-    char* input_ptr = start + 1;
+    // 注意在 readStringLiteralEnd 中直接从 strPos 判断 直接传 start 会被视为结束符
+    char* strEnd = readStringLiteralEnd(start + 1);
 
-    // 语法检查并且找到字符串结束的位置  此时 input_ptr 指向 <">
-    for (; *input_ptr != '"'; ++input_ptr) 
-        if (*input_ptr == '\n' || *input_ptr == '\0')
-            charErrorAt(input_ptr, "unclosed string literal\n");
+    // Q: 这里定义的 buffer 是在干什么
+    // 存储经过转义后的合法字符串 理论上还需要 - 1 但是没有 这里是预留给 '\0' 结束符
+    // 转义后的合法字符串长度一定小于 (strEnd - start) 但是直接分配可能的最大值不会出错
+    char* buffer = calloc(1, strEnd - start);
 
-    // 读取字符串内容
-    // strToken 的长度要结合 newToken 确定 因为是针对 token 而不是 praser 的语法有意义部分
-    // 同理在 tokenType 中针对 parser 就要传递有效长度
-    Token* strToken = newToken(TOKEN_STR, start, input_ptr + 1);
-    strToken->tokenType = linerArrayType(TYCHAR_GLOBAL, input_ptr - start);
+    // 初始化转义后合法字符串的长度 (转义符 \) + (后续字符 ?) 的转义结果统一记为长度 1
+    // 这里的长度一定是 小于等于 strEnd - start - 1 的  对应 buffer 存储内容的真实长度
+    int realStrLen = 0;
+
+    // 将转义结果结果写入 buffer
+    for (char* strPos = start + 1; strPos < strEnd; ) {
+        if (*strPos == '\\') {
+            // 读取当时被跳过的被转义字符 并返回特殊含义
+            buffer[realStrLen++] = readEscapeChar(strPos + 1);
+            strPos += 2;
+        }
+        else {
+            buffer[realStrLen++] = *strPos++;
+        }
+    }
+    
+    // Q: commit[36]: 这里修改的参数是什么意义
+    // A: 看待字符串的角度不同
+
+    // 词法: 包含两个双引号 不用考虑 '\0'
+    Token* strToken = newToken(TOKEN_STR, start, strEnd + 1);
+    // 语法: 必须是一个处理后的合法字符串 最后要有一个 \0
+    strToken->tokenType = linerArrayType(TYCHAR_GLOBAL, realStrLen + 1);
+    strToken->strContent = buffer;
 
     // 因为全局处理 所以需要通过 token 传递内容到 object 不然 token 的判断逻辑无法处理 str 和 ident
-    strToken->strContent = strndup(start + 1, input_ptr - start - 1);
     return strToken;
 }
 

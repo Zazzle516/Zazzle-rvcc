@@ -8,8 +8,13 @@ int main(int argc, char* argv[]) {
     }
 
     // commit[34]: launch.json 不好处理有双引号的输入 所以输入写在程序内
-    // char code[] = "int main() { return sizeof(\"abc\"); }";
-    
+
+    // commit[36]: 同理写在 main.c 中  不过注意和 test.sh 的区别 这里的测试代码同样写在双引号中
+    // 也就是说 虽然这个测试代码的目的是 (\a, x, \n, y)  但为了让编译器软件正常执行 需要对 '\' 进行二次转义
+    // char code[] = "int main() { return \"\ax\ny\"[3]; }";
+
+    // char code[] = "int main() { return \"\\ax\\ny\"[3]; }";
+
     // 得到指向输入流的指针
 
     char* input_ptr = argv[1];

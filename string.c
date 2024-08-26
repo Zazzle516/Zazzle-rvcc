@@ -5,7 +5,9 @@ char* format(char* Fmt, ...) {
     char* buffer;
     size_t bufferLen;
 
-    // 创建一个面向字节的流 ???
+    // 内存流: 可动态调整大小的内存缓冲区
+    // 系统会自动管理 open_memstream 分配的内存空间  并且保证缓冲区中的字符串以 '\0' 结尾
+    // 内存流的操作类似文件 返回值也是 FILE*  可以使用 vfprintf() fwrite() 之类的操作
     FILE* out = open_memstream(&buffer, &bufferLen);
 
     va_list VA;
@@ -14,5 +16,6 @@ char* format(char* Fmt, ...) {
     va_end(VA);
 
     fclose(out);
+    // 出于编译器的效率  没有使用 free(buffer) 释放空间
     return buffer;
 }
