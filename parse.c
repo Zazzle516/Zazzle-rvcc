@@ -427,7 +427,7 @@ static void createParamVar(Type* param) {
 }
 
 // commit[32]: 判断当前的语法是函数还是全局变量    区别就是 ";"
-static bool GlobalOrFunction(Token* tok) {
+static bool GlobalOrFunction(Token* tok) {      // Q: 这里为什么只用 tok 额外传一个 BaseType 也不会怎么样
     bool Global = true;
     bool Function = false;
 
@@ -436,8 +436,8 @@ static bool GlobalOrFunction(Token* tok) {
 
     // Q: 为什么的虚设变量 Dummy 意义是
     // A: 全局变量的声明方式很多 比如数组或者赋值 无法简单的通过 equal(tok, ";") 判定
-    // 所以这里进一步针对其他形式的全局声明进行解析 也有可能是函数  但总之后续会二次判断
-    Type Dummy = {};
+    // 所以这里进一步针对其他形式的全局声明进行解析 有可能不是函数  但总之后续会二次判断
+    Type Dummy = {};        // 初始化隐含了枚举变量的初始化  默认设置为 TY_INT  所以 BaseType 不是完全空的  只是现在碰巧是 INT 不可能解析 CHAR 也许后面会改？
     Type* ty = declarator(&tok, tok, &Dummy);
     if (ty->Kind == TY_FUNC)
         return Function;

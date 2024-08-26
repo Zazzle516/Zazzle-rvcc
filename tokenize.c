@@ -82,7 +82,10 @@ static bool isKeyWords(Token* input) {
 
 // 得到所有 Tokens 后针对 KEYWORD 进行判断
 static void convertKeyWord(Token* input_token) {
-    for (Token* tok = input_token; input_token->token_kind != TOKEN_EOF; input_token = input_token->next) {
+    // 直到 commit[34] 才发现这里写错了...
+    // 不过从 input_token 改了之后才发现速度提升了这么快  这个 keyWord 功能为什么提速这么快
+    // 没有发现在 parser 中用到 所以是怎么提速的???
+    for (Token* tok = input_token; tok->token_kind != TOKEN_EOF; tok = tok->next) {
         if (isKeyWords(tok)) {
             tok->token_kind = TOKEN_KEYWORD;
         }
@@ -168,10 +171,11 @@ static Token* readStringLiteral(char* start) {
             charErrorAt(input_ptr, "unclosed string literal\n");
 
     // 读取字符串内容
-    // 这里的 + 1 要结合 newToken 确定 因为函数里面直接是 (end - start)
-    // 计算的长度是针对 tokenize 而言的 从 prase 的角度是不需要双引号的
+    // strToken 的长度要结合 newToken 确定 因为是针对 token 而不是 praser 的语法有意义部分
+    // 同理在 tokenType 中针对 parser 就要传递有效长度
     Token* strToken = newToken(TOKEN_STR, start, input_ptr + 1);
     strToken->tokenType = linerArrayType(TYCHAR_GLOBAL, input_ptr - start);
+
     // 因为全局处理 所以需要通过 token 传递内容到 object 不然 token 的判断逻辑无法处理 str 和 ident
     strToken->strContent = strndup(start + 1, input_ptr - start - 1);
     return strToken;
@@ -267,7 +271,9 @@ Token* tokenize(char* P) {
     currToken->next = newToken(TOKEN_EOF, P, P);
 
     // 对完整的 Token 流进行判断 提取关键字
+    // 目前看这个 KEYWORD 没有任何作用 可能要到很后期才能体现出来 现在直接注释掉也 ok
     convertKeyWord(HEAD.next);
+
     // 对直接存在的结构体调用 "成员变量"
     return HEAD.next;
 }

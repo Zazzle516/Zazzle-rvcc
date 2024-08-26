@@ -7,9 +7,12 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
+    // commit[34]: launch.json 不好处理有双引号的输入 所以输入写在程序内
     char code[] = "int main() { return sizeof(\"abc\"); }";
     
     // 得到指向输入流的指针
+
+    // char* input_ptr = argv[1];
     char* input_ptr = code;
     
     // 把输入流进行标签化 得到 TokenStream 链表     此时没有空格
