@@ -52,8 +52,9 @@
 // Tip: 这里处理参数的语法规则有 ident 重叠 因为不确定是函数声明还是变量 所以要往前看一个字符
 
 // commit[30]: 新增对 "sizeof" 的支持
-// Q: 为什么这里的递归解析是 third_expr 而不是 expr 有什么好处吗 或者说必要性
-// primary_class_expr = '(' expr ')' | num | ident fun_args? | "sizeof" third_class_expr | str
+// commit[39]: 新增对 ND_GNU_EXPR 的支持
+// primary_class_expr = "(" "{" stamt+ "}" ")" |'(' expr ')' | num | ident fun_args? | "sizeof" third_class_expr | str
+// __primary_class_expr = '(' expr ')' | num | ident fun_args? | "sizeof" third_class_expr | str
 // __primary_class_expr = '(' expr ')' | num | ident fun_args?
 
 // commit[24]: 函数调用 在 primary_class_expr 前看一个字符确认是函数声明后的定义
@@ -508,7 +509,8 @@ static Token* functionDefinition(Token* tok, Type* funcReturnBaseType) {
     // 虽然它们最后都在同一个链表 Local 里面    但是赋值的变量 (formalParam, local) 是不同的
     function->local = Local;
 
-    // Q: 为什么这里是返回 tok 呢   可能是函数作为一个变量已经存入 Object 中了
+    // Q: 为什么这里是返回 tok
+    // A: 函数作为一个全局量已经存入 Object 中了
     return tok;
 }
 
@@ -871,6 +873,23 @@ static Node* preFix(Token** rest, Token* tok) {
 // 判断子表达式或者数字
 // commit[23]: 支持对零参函数的声明
 static Node* primary_class_expr(Token** rest, Token* tok) {
+    // commit[39]: 因为 GNU 的语句表达式包含 "(" 和 "{"  要优先判定
+    if (equal(tok, "(") && equal(tok->next, "{")) {
+        Node* ND = createNode(ND_GNU_EXPR, tok);
+
+        // "{}" 中的内容都被视为 Body 只是在外面套了一层 "()" 才会被定义为 GNU
+        // Q: 为什么只取 compoundStamt 的 Body 进行赋值
+        // A: 一开始我认为 compoundStamt 只提供了定义语句和执行语句的区分 于是想尝试直接调用 stamt() 解析
+        // 但是会在 ND_GNU_EXPR 中出现多个执行语句的时候报错    因为没有提供针对 ";" 的处理
+        // stamt() 只能处理一句而不是 compoundStamt() 可以处理一段程序
+        // ND->Body = stamt(&tok, tok->next->next);
+
+        ND->Body = compoundStamt(&tok, tok->next->next)->Body;
+        *rest = skip(tok, ")");
+
+        return ND;
+    }
+
     if (equal(tok, "(")) {
         // 递归调用顶层表达式处理
         Node* ND = expr(&tok, tok->next);

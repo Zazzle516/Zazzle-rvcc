@@ -145,6 +145,27 @@ void addType(Node* ND) {
         // commit[22]: 从原来的无脑默认 TY_INT 改为根据具体类型决定 虽然目前仍然是整形
         ND->node_type = ND->var->var_type;
         return;
+    
+    case ND_GNU_EXPR:
+    {
+        if (ND->Body) {
+            // 把大括号里面的内容取出来
+            Node* Stamt = ND->Body;
+            while (Stamt->next) {
+                // 因为只返回最后一个 stamt 的值 所以只需要获取最后一个 stamt 的类型
+                Stamt = Stamt->next;
+            }
+
+            if (Stamt->node_kind == ND_STAMT) {
+                // 在 GNU 扩展 Body 中 每一个分号语句都是一个 STAMT  同理根据 LHS 的类型赋值
+                ND->node_type = Stamt->LHS->node_type;
+                return;
+            }
+        }
+        tokenErrorAt(ND->token, "statement expr returning void is not support");
+        return;
+    }
+    
     case ND_ADDR:
         // commit[27]: 针对数组的取址需要根据数据基类决定   运算符 & 所以运算对象必须是指针
         {
@@ -156,11 +177,13 @@ void addType(Node* ND) {
             else
                 // 否则类型直接取左值即可
                 ND->node_type = newPointerTo(type);
-        }
+
         // ND->node_type = newPointerTo(ND->LHS->node_type);
         return;
+        }
 
     case ND_DEREF:
+    {
         // 在 parser() 中 {int* ptr;} 的构造 指针的基类会被存在 LHS->node_type->Base 中 
         if (ND->LHS->node_type->Kind == TY_PTR) {
             ND->node_type = ND->LHS->node_type->Base;
@@ -176,6 +199,7 @@ void addType(Node* ND) {
             tokenErrorAt(ND->token, "invalid pointer deref");
         }
         return;
+    }
 
     default:
         break;

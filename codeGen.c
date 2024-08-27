@@ -237,6 +237,14 @@ static void calcuGen(Node* AST) {
         return;
     }
 
+    case ND_GNU_EXPR:
+    {
+        // commit[39]: 只是处理语句的位置在 Body
+        for (Node* ND = AST->Body; ND; ND = ND->next)
+            exprGen(ND);
+        return;
+    }
+
     case ND_FUNCALL:
     {
         // commit[23]: 汇编代码通过函数名完成 function call

@@ -148,6 +148,10 @@ typedef enum {
 
     // commit[23]: 支持无参函数调用(函数内部可以调用函数)
     ND_FUNCALL,
+
+    // commit[39]: 对 GNU-C 的语句表达式的扩展支持
+    // 大多数时候用在宏定义中 ({expr1, expr2, ...}) 语法结构会被写入 Body 返回最后一个表达式结果
+    ND_GNU_EXPR,
 } NODE_KIND;
 
 // 定义 AST 的结点结构
