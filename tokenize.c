@@ -161,6 +161,15 @@ static bool isIdentIndex(char input) {
     return (isIdentIndex1(input) || (input >= '0' && input <= '9'));
 }
 
+// commit[38]: 判断一位十六进制数字并转换到十进制
+static int fromHex(char hexNumber) {
+    if (hexNumber >= '0' && hexNumber <= '9')
+        return hexNumber - '0';
+    if (hexNumber >= 'a' && hexNumber <= 'f')
+        return hexNumber - 'a' + 10;
+    return hexNumber - 'A' + 10;
+}
+
 // commit[36]: 在含有转义字符的情况处理字符串 读取到真正的结束符 '"' 返回位置
 static char* readStringLiteralEnd(char* strPos) {
     char* strStart = strPos;
@@ -177,19 +186,19 @@ static char* readStringLiteralEnd(char* strPos) {
     return strPos;
 }
 
-// commit[36]: 处理字符串中的转义字符
+// commit[36]: 处理字符串中的转义字符  所有转义结果都必须能被 ASCII 表示
 static int readEscapeChar(char** newPos, char* escapeChar) {
-    // 针对八进制数字返回十进制结果
-    // 注意八进制数字的语法: 至多三个数字并且每个数字小于等于 7 通过减 '0' 得到真实的整数值
+    // commit[37]: 针对八进制数字返回十进制结果
+    // 被转义的八进制数字至多三个数字  并且每个数字小于等于 7 通过减 '0' 得到真实的整数值
     if ('0' <= *escapeChar && *escapeChar <= '7') {
-        int C = *escapeChar - '0';
+        int octNumber = *escapeChar - '0';
         escapeChar++;
         if ('0' <= *escapeChar && *escapeChar <= '7') {
             // C1 在处理后要左移三位为 C2 的计算留出空间    再通过减 '0' 来计算数值
-            C = (C << 3) + (*escapeChar - '0');
+            octNumber = (octNumber << 3) + (*escapeChar - '0');
             escapeChar++;
             if ('0' <= *escapeChar && *escapeChar <= '7') {
-                C = (C << 3) + (*escapeChar - '0');
+                octNumber = (octNumber << 3) + (*escapeChar - '0');
                 escapeChar++;
             }
         }
@@ -197,11 +206,33 @@ static int readEscapeChar(char** newPos, char* escapeChar) {
         // 需要通过 指向 escapeChar 的指针的指针来记录解析位置并返回
         // 此时 escapeChar 已经指向八进制数字的下一个字符
         *newPos = escapeChar;
-        return C;
+        return octNumber;
     }
 
-    *newPos = escapeChar + 1;
+    // commit[38]: 针对十六进制返回十进制结果
+    // 被转义的十六进制数字对长度没有限制 在字母表示部分的大小写都需要处理
+    if (*escapeChar == 'x') {
+        // 'x' 作为十六进制数字标志会被跳过
+        escapeChar++;
 
+        // Tip: isxdigit() 标准 C 库提供判断十六进制数字
+        if (!isxdigit(*escapeChar))
+            charErrorAt(escapeChar, "invalied hex escape sequence\n");
+
+        int hexNumber = 0;
+        // Tip: 因为没有对十六进制数字长度有所限制  如果被转义的十六进制 它的超过了 ASCII 表示范围  执行结果是不可预测的
+        for (; isxdigit(*escapeChar); escapeChar++) {
+            hexNumber = (hexNumber << 4) + fromHex(*escapeChar);
+        }
+        *newPos = escapeChar;
+        return hexNumber;
+    }
+
+    // Q: 这里为什么要 + 1 呢
+    // 结合 readEscapeChar() 存在在 readStringLiteral() 的分支
+    // 就是传递读取到 '\\' 之后的被转移字符 在该函数内转义处理结束后 自然应该指向下一个字符
+    *newPos = escapeChar + 1;
+    // 转义字符
     switch (*escapeChar)
     {
     case 'a':

@@ -309,4 +309,11 @@ assert 65 'int main() { return "\101"[0]; }'
 assert 104 'int main() { return "\1500"[0]; }'
 echo -------------------commit-37-pass-----------------------
 
+# [38] 支持十六进制转义字符
+assert 0 'int main() { return "\x00"[0]; }'
+assert 119 'int main() { return "\x77"[0]; }'
+assert 165 'int main() { return "\xA5"[0]; }'
+assert 255 'int main() { return "\x00ff"[0]; }'
+echo -------------------commit-38-pass-----------------------
+
 echo all-test-passed
