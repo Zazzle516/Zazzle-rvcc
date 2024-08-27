@@ -12,8 +12,10 @@ int main(int argc, char* argv[]) {
     // commit[36]: 同理写在 main.c 中  不过注意和 test.sh 的区别 这里的测试代码同样写在双引号中
     // 也就是说 虽然这个测试代码的目的是 (\a, x, \n, y)  但为了让编译器软件正常执行 需要对 '\' 进行二次转义
     // char code[] = "int main() { return \"\ax\ny\"[3]; }";
-
     // char code[] = "int main() { return \"\\ax\\ny\"[3]; }";
+
+    // commit[37]: 测试代码
+    // char code[] = "int main() { return \"\\1500\"[0]; }";
 
     // 得到指向输入流的指针
 

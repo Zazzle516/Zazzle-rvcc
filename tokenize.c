@@ -178,7 +178,30 @@ static char* readStringLiteralEnd(char* strPos) {
 }
 
 // commit[36]: 处理字符串中的转义字符
-static int readEscapeChar(char* escapeChar) {
+static int readEscapeChar(char** newPos, char* escapeChar) {
+    // 针对八进制数字返回十进制结果
+    // 注意八进制数字的语法: 至多三个数字并且每个数字小于等于 7 通过减 '0' 得到真实的整数值
+    if ('0' <= *escapeChar && *escapeChar <= '7') {
+        int C = *escapeChar - '0';
+        escapeChar++;
+        if ('0' <= *escapeChar && *escapeChar <= '7') {
+            // C1 在处理后要左移三位为 C2 的计算留出空间    再通过减 '0' 来计算数值
+            C = (C << 3) + (*escapeChar - '0');
+            escapeChar++;
+            if ('0' <= *escapeChar && *escapeChar <= '7') {
+                C = (C << 3) + (*escapeChar - '0');
+                escapeChar++;
+            }
+        }
+
+        // 需要通过 指向 escapeChar 的指针的指针来记录解析位置并返回
+        // 此时 escapeChar 已经指向八进制数字的下一个字符
+        *newPos = escapeChar;
+        return C;
+    }
+
+    *newPos = escapeChar + 1;
+
     switch (*escapeChar)
     {
     case 'a':
@@ -221,8 +244,11 @@ static Token* readStringLiteral(char* start) {
     for (char* strPos = start + 1; strPos < strEnd; ) {
         if (*strPos == '\\') {
             // 读取当时被跳过的被转义字符 并返回特殊含义
-            buffer[realStrLen++] = readEscapeChar(strPos + 1);
-            strPos += 2;
+            // 类似 rest 同理通过 &strPos 更新解析位置
+            buffer[realStrLen++] = readEscapeChar(&strPos, strPos + 1);
+
+            // commit[37]: 更新数字进制后被转义的长度不确定
+            // strPos += 2;
         }
         else {
             buffer[realStrLen++] = *strPos++;
@@ -230,7 +256,7 @@ static Token* readStringLiteral(char* start) {
     }
     
     // Q: commit[36]: 这里修改的参数是什么意义
-    // A: 看待字符串的角度不同
+    // A: 看待字符串的角度不同  从词法的角度 字符本身没有意义
 
     // 词法: 包含两个双引号 不用考虑 '\0'
     Token* strToken = newToken(TOKEN_STR, start, strEnd + 1);

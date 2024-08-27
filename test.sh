@@ -302,4 +302,11 @@ assert 10 'int main() { return "\ax\ny"[2]; }'
 assert 121 'int main() { return "\ax\ny"[3]; }'     # 字符串内容 (\a, x, \n, y) 这个测试目的就是把 \a 和 \n 作为特殊字符读入
 echo -------------------commit-36-pass-----------------------
 
+# [37] 支持八进制转义字符
+assert 0 'int main() { return "\0"[0]; }'
+assert 16 'int main() { return "\20"[0]; }'
+assert 65 'int main() { return "\101"[0]; }'
+assert 104 'int main() { return "\1500"[0]; }'
+echo -------------------commit-37-pass-----------------------
+
 echo all-test-passed
