@@ -4,6 +4,11 @@
 // 写在最上面 如果只是定义在 main() 上面的话 tokenize() 找不到
 static char* InputHEAD;
 
+// commit[40]: 记录输入的文件名  用于在错误信息提示时打印错误文件名
+static char* currentFileName;
+
+// 测试: cd build   ./rvcc '../tmp.c'
+
 // 针对报错进行优化 errorHint() 和 errorAt() 是同级的错误信息展示
 // errorHint() 不去展示具体的语法错误未知 也就是不能用在具体的代码分析中 只可能能是一开始的参数数量错误
 // errorAt() 展示具体的语法错误位置
@@ -25,12 +30,34 @@ void errorHint(char* errorInfo, ...) {
 }
 
 // FMT VA 在 tokenize() 词法分析中定义的输出
+// commit[40]: 记录错误在文件中的位置 并打印错误信息
 void errorAt(char* place, char* FMT, va_list VA) {
     // 打印出错输入(目前的输入都是一行)
-    fprintf(stderr, "%s\n", InputHEAD);
-
+    // fprintf(stderr, "%s\n", InputHEAD);
     // 计算出错位置 并通过空格跳过
-    int err_place = place - InputHEAD;
+    // int err_place = place - InputHEAD;
+
+    // 找到 errorLineStart 最开始的位置
+    char* errorLineStart = place;
+    while (InputHEAD < errorLineStart && errorLineStart[-1] != '\n')
+        errorLineStart--;
+
+    // 找到 errorLineStart 结束的位置
+    char* errorLineEnd = place;
+    while (*errorLineEnd != '\n')
+        errorLineEnd++;
+
+    // 找到整个文件中 errorLine 的行号
+    int errorLine = 1;
+    for (char* P = InputHEAD; P < errorLineStart; P ++)
+        if (*P == '\n')
+            errorLine++;
+
+    // 对错误信息进行格式处理
+    int charNum = fprintf(stderr, "%s:%d: ", currentFileName, errorLine);
+    fprintf(stderr, "%.*s\n", (int)(errorLineEnd - errorLineStart), errorLineStart);
+
+    int err_place = place - errorLineStart + charNum;
 
     // 通过 '%*s' 表示该输出字符串长度可变
     fprintf(stderr, "%*s", err_place, "");
@@ -315,11 +342,14 @@ static int readPunct(char* input_ptr) {
     return (ispunct(*input_ptr) ? 1: 0);      // 单运算符返回 1 否则为 0
 }
 
-Token* tokenize(char* P) {
+Token* tokenize(char* fileName, char* P) {
     // 词法分析 根据链表的结构去调用 newToken() 构造
     Token HEAD = {};                 // 声明 HEAD 为空
     Token* currToken = &HEAD;        // 指向 HEAD 类型为 Token 的指针 声明为 currToken 注意是指针哦 通过 '->' 调用
     InputHEAD = P;
+
+    // commit[40]: 更新当前读取的文件路径 + 文件名
+    currentFileName = fileName;
 
     // 此时因为写在了新文件中 所以无法使用全局变量 InputHEAD 就没什么用了 和我 rebase 掉的那个错误是一致的
     // 就是初始化一下   不知道会不会在后面用到
@@ -394,4 +424,67 @@ Token* tokenize(char* P) {
 
     // 对直接存在的结构体调用 "成员变量"
     return HEAD.next;
+}
+
+// commit[40]: 根据文件路径读取文件内容
+static char* readFile(char* filePath) {
+    FILE* Fp;
+
+    // 文件读取方式判断
+    if (strcmp(filePath, "-") == 0) {
+        // Q: 如果文件名是 '-' 那么从输入中读取
+        // A: 结合 test.sh 来判断 (./rvcc -) 作为第一个参数否定了文件读取
+        Fp = stdin;
+    }
+
+    else {
+        Fp = fopen(filePath, "r");
+        if (!Fp)
+            // errno: 全局的错误编号  根据标准库设置
+            // 通过 strerror() 把编号转换为一串描述性语言
+            errorHint("cannot open %s: %s", filePath, strerror(errno));
+    }
+
+    /* 无论是 stdin 或者 FILE 都是写入文件的 */
+
+    // 准备好 Fp 读取后写入的空间
+    char* fileBuffer;
+    size_t fileBufferLength;
+    FILE* fileContent = open_memstream(&fileBuffer, &fileBufferLength);
+
+    // 开始读取
+    // Q: 这里使用两个缓冲区进行完成文件流的读写  有什么好处吗
+    // A: 好处基本是批量处理数据和减少 fwrite() 之类的系统调用
+    // 二级缓冲区的大小也可以手动调整  优化使用场景之类的
+    while(true) {
+        char fileBufferBack[4096];
+        int N = fread(fileBufferBack, 1, sizeof(fileBufferBack), Fp);
+
+        if (N == 0)
+            break;
+        fwrite(fileBufferBack, 1, N, fileContent);
+    }
+
+    // 读取结束  关掉  <读文件>
+    // 针对 Fp 的类型 (stdin | FILE) 判断   stdin 本身是由系统启动的 不应该由程序随意关闭
+    if (Fp != stdin)
+        fclose(Fp);
+
+    // fwrite() 为了效率通常都是先写到一个缓冲区的 只有显式调用 fclose() 或者 fflush() 之后才会写入文件
+    // 刷新 <写文件>
+    fflush(fileContent);
+    // Q: 这个长度是怎么记录的
+    // A: 以 byte 计数  累计到最后一个有效字节的 <下一个可写入位置>
+    if (fileBufferLength == 0 || fileBuffer[fileBufferLength - 1] != '\n')
+        fputc('\n', fileContent);
+    
+    // 写入结束  关掉 <写文件>
+    fputc('\0', fileContent);
+    fclose(fileContent);
+
+    return fileBuffer;
+}
+
+Token* tokenizeFile(char* filePath) {
+    return tokenize(filePath, readFile(filePath));
 }

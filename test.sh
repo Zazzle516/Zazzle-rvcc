@@ -23,7 +23,16 @@ assert() {
     # 自动化执行过程    默认已经生成 rvcc
 
     # 把汇编代码输出到 tmp.s 中 如果失败直接退出
-    ./rvcc "$input" > tmp.s || exit
+    # 这个 "$input" 可以是一个字符串或者文件路径 可以从指定文件中读取数据
+    # ./rvcc "$input" > tmp.s || exit
+    
+    # Q: 这个分隔符和这个 - 是什么意思
+    # A: (./rvcc -) 表示 rvcc 从 stdin 读取数据  不支持从文件中读取
+    # echo "$input" 将内容输出到 stdout 通过管道符传递到 stdin 被 (./rvcc -) 接收  重定向到 tmp.s
+    echo "$input" | ./rvcc - > tmp.s || exit
+
+    # Q: 在 commit[40] 添加 tmp.c 进行测试之后  执行 make rvcc 会报 tmp.c 的错误
+    # A: 这个和 Makefile 的内容有关  SRCS 的文件声明直接是 (*.c)  所以 tmp.c 也被编译了
 
     # 在生成文件的时候注意写明路径
 

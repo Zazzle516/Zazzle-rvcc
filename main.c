@@ -24,7 +24,8 @@ int main(int argc, char* argv[]) {
     // char* input_ptr = code;
     
     // 把输入流进行标签化 得到 TokenStream 链表     此时没有空格
-    Token* input_token = tokenize(input_ptr);
+    // commit[40]: 从给定的文件路径中读取
+    Token* input_token = tokenizeFile(input_ptr);
 
     // 调用语法分析
     Object* wrapper = parse(input_token);

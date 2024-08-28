@@ -6,7 +6,8 @@ CFLAGS=-std=c11 -g -fno-common
 
 # 使用 Makefile 的 wildcard 来匹配某个模式的文件列表
 # 找到所有的 .c 文件然后编译为 .o 文件	最后添加 zacc.h 依赖
-SRCS=$(wildcard *.c)
+# 修改 SRCS 的表示方式  防止解析测试文件 tmp.c
+SRCS=main.c type.c string.c tokenize.c parse.c codeGen.c
 OBJS=$(SRCS:.c=.o)
 $(OBJS): zacc.h
 

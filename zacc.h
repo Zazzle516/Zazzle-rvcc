@@ -25,6 +25,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <errno.h>          // commit[40]: 新增 ???
 
 // 提前声明
 typedef struct Node Node;
@@ -76,7 +77,7 @@ bool equal(Token* input_token, char* target);
 Token* skip(Token* input_token, char* target);
 bool consume(Token** rest, Token* tok, char* str);
 
-Token* tokenize(char* P);       // main() 调用声明
+Token* tokenizeFile(char* filePath);
 
 /* 语法分析 parse() 数据结构和函数声明 */
 
