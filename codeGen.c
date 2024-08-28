@@ -13,6 +13,7 @@ static Object* currFuncFrame;
 // 提前声明 后续会用到
 static void calcuGen(Node* AST);
 static void exprGen(Node* AST);
+static void printLn(char* Fmt, ...);
 
 // Q: commit[18]: codeGen() 怎么使用 AST 用作终结符的 tok
 // A: 在 default_err() 处理的部分声明错误发生的位置
@@ -24,16 +25,16 @@ static int count(void) {
 }
 
 static void push_stack(void) {
-    printf("  # 压栈ing 将 a0 的值存入栈顶\n");
-    printf("  addi sp, sp, -8\n");
-    printf("  sd a0, 0(sp)\n");             // 把 reg-a0 的内容写入 0(sp) 位置
+    printLn("  # 压栈ing 将 a0 的值存入栈顶");
+    printLn("  addi sp, sp, -8");
+    printLn("  sd a0, 0(sp)");             // 把 reg-a0 的内容写入 0(sp) 位置
     StackDepth++;
 }
 
 static void pop_stack(char* reg) {
-    printf("  # 出栈ing 将原 a0 的内容写入 reg-a1 恢复栈顶\n");
-    printf("  ld %s, 0(sp)\n", reg);
-    printf("  addi sp, sp, 8\n");
+    printLn("  # 出栈ing 将原 a0 的内容写入 reg-a1 恢复栈顶");
+    printLn("  ld %s, 0(sp)", reg);
+    printLn("  addi sp, sp, 8");
     StackDepth--;
 }
 
@@ -47,28 +48,28 @@ static void Load(Type* type) {
     if (type->Kind == TY_ARRAY_LINER)
         return;
     
-    printf("  # 读取 a0 储存的地址内容 并存入 a0\n");
+    printLn("  # 读取 a0 储存的地址内容 并存入 a0");
     
     if (type->BaseSize == 1)
         // Q: 这里使用 BaseSize 进行判断而不是 type->Kind 有什么特殊的考虑吗
         // A: 一开始在 else-branch 考虑用 type->Kind == TY_INT 判断但是在 commit20 报错
         // 因为没有考虑到现在还有 PTR ARRAY 之类的其他类型
         // Tip: 实际上在汇编代码部分 类型只能体现在大小 本身存储的什么已经没有意义了
-        printf("  lb a0, 0(a0)\n");
+        printLn("  lb a0, 0(a0)");
     else
-        printf("  ld a0, 0(a0)\n");
+        printLn("  ld a0, 0(a0)");
 }
 
 // Q: 为什么这里一定是 a1 和 pop_stack() 有什么关系
 // A: 把 ND_ASSIGN 的部分抽象出来
 static void Store(Type* type) {
     pop_stack("a1");
-    printf("  # 将 a0 的值写入 a1 存储的地址\n");
+    printLn("  # 将 a0 的值写入 a1 存储的地址");
 
     if (type->BaseSize == 1)
-        printf("  sb a0, 0(a1)\n");
+        printLn("  sb a0, 0(a1)");
     else
-        printf("  sd a0, 0(a1)\n");
+        printLn("  sd a0, 0(a1)");
 }
 
 // 一般编译器的对齐发生在 8B, 4B, 1B 空间混用的情况   但是目前都是固定的    这里就是先写出来方便后续扩展
@@ -126,15 +127,15 @@ static void getAddr(Node* nd_assign) {
 
         // commit[32]: 全局变量单独存储在内存中 需要获取地址
         if (nd_assign->var->IsLocal) {
-            printf("  # 获取变量 %s 的栈内地址 %d(fp)\n", nd_assign->var->var_name, nd_assign->var->offset);
+            printLn("  # 获取变量 %s 的栈内地址 %d(fp)", nd_assign->var->var_name, nd_assign->var->offset);
             // parse.primary_class_expr().singleVarNode() + codeGen.preAllocStackSpace()
-            printf("  addi a0, fp, %d\n", nd_assign->var->offset);
+            printLn("  addi a0, fp, %d", nd_assign->var->offset);
         }
 
         else {
-            printf("  # 获取全局变量 %s 的地址\n", nd_assign->var->var_name);
+            printLn("  # 获取全局变量 %s 的地址", nd_assign->var->var_name);
             // 伪指令 la: load address 用于加载大数
-            printf("  la a0, %s\n", nd_assign->var->var_name);
+            printLn("  la a0, %s", nd_assign->var->var_name);
         }
         return;
     }
@@ -152,9 +153,21 @@ static void getAddr(Node* nd_assign) {
         break;
     }
     // errorHint("wrong assign Node");
-    tokenErrorAt(nd_assign->token, "invalid expr\n");
+    tokenErrorAt(nd_assign->token, "invalid expr");
     
 }
+
+// commit[41]: 瓜小味甜
+static void printLn(char* Fmt, ...) {
+    va_list VA;
+
+    va_start(VA, Fmt);
+    vprintf(Fmt, VA);
+    va_end(VA);
+
+    printf("\n");
+}
+
 
 // 生成代码有 2 类: expr stamt
 // 某种程度上可以看成是 CPU 和 内存 的关系  互相包含 在执行层次上没有区别
@@ -170,8 +183,8 @@ static void calcuGen(Node* AST) {
     {
     case ND_NUM:
     {
-        printf("  # 加载立即数 %d 到 a0\n", AST->val);
-        printf("  li a0, %d\n", AST->val);
+        printLn("  # 加载立即数 %d 到 a0", AST->val);
+        printLn("  li a0, %d", AST->val);
         return;
     }
 
@@ -179,8 +192,8 @@ static void calcuGen(Node* AST) {
     {
         // 因为是单叉树所以某种程度上也是终结状态   递归找到最后的数字
         calcuGen(AST->LHS);
-        printf("  # 对 a0 的值取反\n");
-        printf("  neg a0, a0\n");
+        printLn("  # 对 a0 的值取反");
+        printLn("  neg a0, a0");
         return;
     }
 
@@ -269,8 +282,8 @@ static void calcuGen(Node* AST) {
             pop_stack(ArgReg[i]);
         }
 
-        printf("  # 调用 %s 函数\n", AST->FuncName);
-        printf("  call %s\n", AST->FuncName);
+        printLn("  # 调用 %s 函数", AST->FuncName);
+        printLn("  call %s", AST->FuncName);
         return;
     }
 
@@ -289,43 +302,43 @@ static void calcuGen(Node* AST) {
     switch (AST->node_kind)
     {
     case ND_ADD:
-        printf("  add a0, a0, a1\n");
+        printLn("  add a0, a0, a1");
         return;
     case ND_SUB:
-        printf("  sub a0, a0, a1\n");
+        printLn("  sub a0, a0, a1");
         return;
     case ND_MUL:
-        printf("  mul a0, a0, a1\n");
+        printLn("  mul a0, a0, a1");
         return;
     case ND_DIV:
-        printf("  div a0, a0, a1\n");
+        printLn("  div a0, a0, a1");
         return;
 
     case ND_EQ:
     case ND_NEQ:
         // 汇编层面通过 xor 比较结果
-        printf("  xor a0, a0, a1\n");       // 异或结果储存在 a0 中
+        printLn("  xor a0, a0, a1");       // 异或结果储存在 a0 中
         if (AST->node_kind == ND_EQ) 
-            printf("  seqz a0, a0\n");                   // 判断结果 == 0
+            printLn("  seqz a0, a0");                   // 判断结果 == 0
         if (AST->node_kind == ND_NEQ)
-            printf("  snez a0, a0\n");                   // 判断结果 > 0
+            printLn("  snez a0, a0");                   // 判断结果 > 0
         return;
 
     case ND_GT:
-        printf("  sgt a0, a0, a1\n");
+        printLn("  sgt a0, a0, a1");
         return;
     case ND_LT:
-        printf("  slt a0, a0, a1\n");
+        printLn("  slt a0, a0, a1");
         return;
 
     case ND_GE:
         // 转换为判断是否小于
-        printf("  slt a0, a0, a1\n");       // 先判断 > 情况
-        printf("  xori a0, a0, 1\n");       // 再判断 == 情况
+        printLn("  slt a0, a0, a1");       // 先判断 > 情况
+        printLn("  xori a0, a0, 1");       // 再判断 == 情况
         return;
     case ND_LE:
-        printf("  sgt a0, a0, a1\n");
-        printf("  xori a0, a0, 1\n");
+        printLn("  sgt a0, a0, a1");
+        printLn("  xori a0, a0, 1");
         return;
     
     default:
@@ -344,10 +357,10 @@ static void exprGen(Node* AST) {
     {
         // 因为在 parse.c 中的 stamt() 是同级定义 所以可以在这里比较
         // 通过跳转 return-label 的方式返回
-        printf("  # 返回到当前执行函数的 return 标签\n");
+        printLn("  # 返回到当前执行函数的 return 标签");
         calcuGen(AST->LHS);
         // commit[25]: 返回当前执行函数的 return label
-        printf("  j .L.return.%s\n", currFuncFrame->var_name);
+        printLn("  j .L.return.%s", currFuncFrame->var_name);
         return;
     }
 
@@ -372,29 +385,29 @@ static void exprGen(Node* AST) {
     {
         // 条件分支语句编号     一个程序中可能有多个 if-else 需要通过编号区分 if-block 的作用范围
         int num = count();
-        printf("\n# =====分支语句 %d ==============\n", num);
+        printLn("\n# =====分支语句 %d ==============", num);
 
         // cond-expr 执行开始
-        printf("  # if-condition\n");
+        printLn("  # if-condition");
         calcuGen(AST->Cond_Block);
-        printf("  beqz a0, .L.else.%d\n", num);
+        printLn("  beqz a0, .L.else.%d", num);
 
         // true-branch  不需要 .L.if 标签直接继续执行
-        printf("  # true-branch\n");
+        printLn("  # true-branch");
         exprGen(AST->If_BLOCK);
 
         // if-else 代码块执行完成
-        printf("  j .L.end.%d\n", num);
+        printLn("  j .L.end.%d", num);
 
         // false-branch 跳转 .L.else 标签执行
-        printf("  # false-branch\n");
-        printf(".L.else.%d:\n", num);
+        printLn("  # false-branch");
+        printLn(".L.else.%d:", num);
         if (AST->Else_BLOCK)
             exprGen(AST->Else_BLOCK);       // 只有显式声明 else-branch 存在才会执行
 
         // else-branch 顺序执行到 end-label 就不需要额外的跳转的语句了
-        printf("  # =====分支语句 %d 执行结束========\n", num);
-        printf(".L.end.%d:", num);
+        printLn("\n  # =====分支语句 %d 执行结束========", num);
+        printLn(".L.end.%d:", num);
         // Q: 为什么这里不需要后续的执行语句?
         // A: 这就要说到语法定义了最外层必须有 {} 大括号    通过大括号保证了 ND_BLOCK 的递归执行
         // 所以这里的标签其实是写给后续的递归返回的语句的
@@ -407,7 +420,7 @@ static void exprGen(Node* AST) {
         // commit[17]: while 通过简化 for-loop 实现
         // 汇编的循环本质是通过 if-stamt + goto 实现
         int num = count();
-        printf("\n# =====循环语句 %d ===============\n", num);
+        printLn("\n# =====循环语句 %d ===============", num);
 
         // Q: 下面的执行为什么有的使用 exprGen() 有的使用 calcuGen()
         // A: 要追溯到 parse() 的定义 在 parse() 中 for 的 init, conditon, operation 是一个函数分支中定义的 stamt().for
@@ -416,20 +429,20 @@ static void exprGen(Node* AST) {
         // 循环初始化
         // 在 while 中是可能不存在的
         if (AST->For_Init) {
-            printf("  # while-init\n");
+            printLn("  # while-init");
             // 因为 init 在递归中定义为 ND_STAMT 所以通过递归执行 calcuGen()
             exprGen(AST->For_Init);
         }
 
         // 定义循环开始 用于后续跳转
-        printf(".L.begin.%d:\n", num);
+        printLn(".L.begin.%d:", num);
 
         // 判断循环是否中止
         if (AST->Cond_Block) {
             // 如果存在 condition 语句
-            printf("  # while-condition-true\n");
+            printLn("  # while-condition-true");
             calcuGen(AST->Cond_Block);
-            printf("  beqz a0, .L.end.%d\n", num);
+            printLn("  beqz a0, .L.end.%d", num);
         }
 
         // 循环体
@@ -437,15 +450,15 @@ static void exprGen(Node* AST) {
 
         // 处理循环变量 后续 goto .L.begin 判断是否继续
         if (AST->Inc) {
-            printf("  # while-increase\n");
+            printLn("  # while-increase");
             calcuGen(AST->Inc);
         }
 
-        printf("  j .L.begin.%d\n", num);
+        printLn("  j .L.begin.%d", num);
 
         // 循环出口
-        printf("  # =====循环语句 %d 执行结束========\n", num);
-        printf(".L.end.%d:\n", num);
+        printLn("\n  # =====循环语句 %d 执行结束========", num);
+        printLn(".L.end.%d:", num);
         return;
     }
 
@@ -468,33 +481,33 @@ void emitText(Object* Global) {
             // commit[31]: 目前没有对全局变量进行任何汇编代码层面的处理
             continue;
 
-        printf("  .global %s\n", currFunc->var_name);
+        printLn("  .global %s", currFunc->var_name);
 
-        printf("  .text\n");
-        printf("\n# ========当前函数 %s 开始============\n", currFunc->var_name);
-        printf("%s:\n", currFunc->var_name);
+        printLn("  .text");
+        printLn("\n# ========当前函数 %s 开始============", currFunc->var_name);
+        printLn("%s:", currFunc->var_name);
         // 更新全局变量的指向
         currFuncFrame = currFunc;
     
         // commit[23]: 零参函数调用 新增对 reg-ra 的保存
         // Tip: 目前栈上有 2 个 reg 要保存 注意对 (sp) 偏移量的更改
-        printf("  # 把返回地址寄存器 ra 压栈\n");
-        printf("  addi sp, sp, -16\n");
-        printf("  sd ra, 8(sp)\n");
+        printLn("  # 把返回地址寄存器 ra 压栈");
+        printLn("  addi sp, sp, -16");
+        printLn("  sd ra, 8(sp)");
         
         // 根据当前的 sp 定义准备执行的函数栈帧 fp
-        printf("  # 把函数栈指针 fp 压栈\n");
+        printLn("  # 把函数栈指针 fp 压栈");
         // 因为 ra 的保存提前分配了 16 个字节 这里就不用额外分配了
         // printf("  addi sp, sp, -8\n");
-        printf("  sd fp, 0(sp)\n");     // 保存上一个 fp 状态用于恢复
+        printLn("  sd fp, 0(sp)");     // 保存上一个 fp 状态用于恢复
 
         // 在准备执行的函数栈帧中定义栈顶指针
-        printf("  # 更新 sp 指向当前函数栈帧的栈空间\n");
-        printf("  mv fp, sp\n");
+        printLn("  # 更新 sp 指向当前函数栈帧的栈空间");
+        printLn("  mv fp, sp");
 
         // 在 preAllocStackSpace() 中得到的是总空间 需要添加负号哦
-        printf("  # 分配当前函数所需要的栈空间\n");
-        printf("  addi sp, sp, -%d\n", currFunc->StackSize);
+        printLn("  # 分配当前函数所需要的栈空间");
+        printLn("  addi sp, sp, -%d", currFunc->StackSize);
 
         // 这里的 AST 实际上是链表而不是树结构
         // for (Node* ND = Func->AST; ND != NULL; ND = ND->next) {
@@ -508,41 +521,41 @@ void emitText(Object* Global) {
         // Tip: 这里 Local 的顺序在 createParamVar() 处理后已经正序了
         int I = 0;
         for (Object* obj = currFunc->formalParam; obj; obj = obj->next) {
-            printf("  # 将 %s 寄存器存入 %s 栈地址\n", ArgReg[I], obj->var_name);
+            printLn("  # 将 %s 寄存器存入 %s 栈地址", ArgReg[I], obj->var_name);
             if (obj->var_type->BaseSize == 1)
-                printf("  sb %s, %d(fp)\n", ArgReg[I++], obj->offset);
+                printLn("  sb %s, %d(fp)", ArgReg[I++], obj->offset);
             else
-                printf("  sd %s, %d(fp)\n", ArgReg[I++], obj->offset);
+                printLn("  sd %s, %d(fp)", ArgReg[I++], obj->offset);
         }
 
         // commit[13]: 现在的 AST-root 是单节点不是链表了
-        printf("\n# =====程序主体===============\n");
+        printLn("\n# =====程序主体===============\n");
         exprGen(currFunc->AST);
         assert(StackDepth == 0);
 
         // 为 return 的跳转定义标签
-        printf("\n# =====程序结束===============\n");
-        printf(".L.return.%s:\n", currFunc->var_name);
+        printLn("\n# =====程序结束===============\n");
+        printLn(".L.return.%s:", currFunc->var_name);
 
         // 目前只支持 main 函数 所以只有一个函数帧
 
         // commit[23]: 执行结束 从 fp -> ra 逆序出栈
 
         // 函数执行完成 通过 fp 恢复空间(全程使用的是 sp, fp 并没有更改)
-        printf("  # 释放函数栈帧 恢复 fp, sp 指向\n");
-        printf("  mv sp, fp\n");
+        printLn("  # 释放函数栈帧 恢复 fp, sp 指向");
+        printLn("  mv sp, fp");
 
-        printf("  # 恢复 fp 内容\n");
-        printf("  ld fp, 0(sp)\n");
+        printLn("  # 恢复 fp 内容");
+        printLn("  ld fp, 0(sp)");
 
-        printf("  # 恢复 ra 内容\n");
-        printf("  ld ra, 8(sp)\n");
+        printLn("  # 恢复 ra 内容");
+        printLn("  ld ra, 8(sp)");
 
         // 恢复栈顶指针
-        printf("  addi sp, sp, 16\n");
+        printLn("  addi sp, sp, 16");
 
-        printf("  # 返回 reg-a0 给系统调用\n");
-        printf("  ret\n");
+        printLn("  # 返回 reg-a0 给系统调用");
+        printLn("  ret");
     }
 }
 
@@ -554,28 +567,28 @@ void emitGlobalData(Object* Global) {
         
         // 关于 .data 段的汇编生成参考 
 
-        printf("  # 数据段\n");     // 这里针对每一个 GlobalVar 都声明了 .data
-        printf("  .data\n");
+        printLn("  # 数据段");     // 这里针对每一个 GlobalVar 都声明了 .data
+        printLn("  .data");
 
         // commit[34]: 针对有初始值的全局变量进行特殊处理 针对是否有赋值分别处理
         if (globalVar->InitData) {
-            printf("%s:\n", globalVar->var_name);
+            printLn("%s:", globalVar->var_name);
             // Q: 这里为什么是小于 BaseSize
             // A: 取出全局量被赋值的内容 从字节的角度思考 所以 InitData 类型是 char*
             // 同时依赖 tokenize().readStringLiteral().linerArrayType 传递的字符串长度判断
             for (int I = 0; I < globalVar->var_type->BaseSize; ++I) {
                 char C = globalVar->InitData[I];
                 if (isprint(C))
-                    printf("  .byte %d\t# 字符: %c\n", C, C);
+                    printLn("  .byte %d\t# 字符: %c", C, C);
                 else
-                    printf("  .byte %d\n", C);
+                    printLn("  .byte %d", C);
             }
         }
         else {
-            printf("  .global %s\n", globalVar->var_name);
-            printf("%s:\n", globalVar->var_name);
-            printf("  # 零填充 %d 比特\n", globalVar->var_type->BaseSize);
-            printf("  .zero %d\n", globalVar->var_type->BaseSize);
+            printLn("  .global %s", globalVar->var_name);
+            printLn("%s:", globalVar->var_name);
+            printLn("  # 零填充 %d 比特", globalVar->var_type->BaseSize);
+            printLn("  .zero %d", globalVar->var_type->BaseSize);
         }
     }
 }
