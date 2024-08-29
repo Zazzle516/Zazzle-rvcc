@@ -2,15 +2,17 @@
 
 // commit[1] - commit[22] 注释备份在 annotation-bak 中
 
-// commit[25]: 最顶层语法规则更新为函数定义 注释掉 program 重新修改为两层结构
 // commit[31]: 把函数作为 Global Object 进行处理
 // parse() = (functionDefinition | globalVariable)*
-// __program = "{" compoundStamt
 
-// commit[25]: 函数定义 目前只支持 'int' 并且无参  eg. int* funcName() {...}
-// functionDefinition = declspec declarator "{" compoundStamt*
 // declspec = "int" | "char"
 // declarator = "*"* ident typeSuffix
+
+// commit[22]: 声明语句的语法定义 支持连续定义
+// commit[25]: 函数定义 目前只支持 'int' 并且无参  eg. int* funcName() {...}
+// functionDefinition = declspec declarator "{" compoundStamt*
+
+// compoundStamt = (declaration | stamt)* "}"
 
 // commit[26]: 含参的函数定义
 // commit[27]: 新增对数组变量定义的支持(修改了 typeSuffix 的语法 把结束位置移动到下一层)
@@ -18,14 +20,6 @@
 // typeSuffix = ("(" funcFormalParams | "[" num "]" typeSuffix | ε
 // funcFormalParams = (formalParam ("," formalParam)*)? ")"
 // formalParam = declspec declarator
-// __typeSuffix = ("(" ")")?
-
-// compoundStamt = (declaration | stamt)* "}"
-
-// commit[22]: 声明语句的语法定义 支持连续定义
-// int a, b; | int a, *b; | int a = 3, b = expr;
-// declspec: "int" 类型声明     declarator: "*" 指针声明
-// declaration = declspec (declarator ("=" expr)? ("," declarator ("=" expr)?)*)? ";"
 
 // stamt = "return" expr ";"
 //          | exprStamt
@@ -44,18 +38,13 @@
 // second_class_expr = third_class_expr (*|/ third_class_expr)
 
 // commit[29]: 新增对 [] 的语法支持  本质上就是对 *(x + y) 的一个语法糖 => x[y]
-// __third_class_expr = (+|-|&|*)third_class_expr | primary_class_expr        优先拆分出一个符号作为减法符号
 // third_class_expr = (+|-|&|*)third_class_expr | postFix
 // postFix = primary_class_expr ("[" expr "]")*
 
 // commit[23]: 添加对零参函数名声明的支持
-// Tip: 这里处理参数的语法规则有 ident 重叠 因为不确定是函数声明还是变量 所以要往前看一个字符
-
 // commit[30]: 新增对 "sizeof" 的支持
 // commit[39]: 新增对 ND_GNU_EXPR 的支持
 // primary_class_expr = "(" "{" stamt+ "}" ")" |'(' expr ')' | num | ident fun_args? | "sizeof" third_class_expr | str
-// __primary_class_expr = '(' expr ')' | num | ident fun_args? | "sizeof" third_class_expr | str
-// __primary_class_expr = '(' expr ')' | num | ident fun_args?
 
 // commit[24]: 函数调用 在 primary_class_expr 前看一个字符确认是函数声明后的定义
 // funcall = ident "(" (expr ("," expr)*)? ")"
@@ -63,7 +52,6 @@
 Object* Local;      // 函数内部变量
 Object* Global;     // 全局变量 + 函数定义(因为 C 不能发生函数嵌套 所以一定是全局的层面)
 
-// 当前只有一个匿名 main 函数帧 一旦扫描到一个 var 就检查一下是否已经定义过 如果没有定义过就在链表中新增定义
 static Object* findVar(Token* tok) {
     // 查找局部变量
     for (Object* obj = Local; obj != NULL; obj = obj->next) {
@@ -80,10 +68,11 @@ static Object* findVar(Token* tok) {
                 return obj;
             } 
     }
+    
     return NULL;
 }
 
-// commit[31]: 针对局部变量和全局变量的共同行为，给出一个函数用来复用
+// commit[31]: 针对局部变量和全局变量的共同行为 函数复用
 static Object* newVariable(char* varName, Type* varType) {
     Object* obj = calloc(1, sizeof(Object));
     obj->var_type = varType;
@@ -91,15 +80,11 @@ static Object* newVariable(char* varName, Type* varType) {
     return obj;
 }
 
-// 对没有定义过的变量名 通过头插法新增到 Local 链表中
+// 未定义的局部变量通过头插法新增到 Local 链表中
 static Object* newLocal(char* varName, Type* localVarType) {
     Object* obj = newVariable(varName, localVarType);
 
-    // Object* obj = calloc(1, sizeof(Object));
-    // obj->var_type = type;
-    // obj->var_name = varName;
-
-    obj->next = Local;      // 每个变量结点其实都是指向了 Local 链表
+    obj->next = Local;
     Local = obj;
 
     // commit[31]: 针对局部变量需要特殊声明
@@ -126,8 +111,6 @@ static char* getVarName(Token* tok) {
 
 // commit[27]: 获取数组定义中括号中的数字
 static int getArrayNumber(Token* tok) {
-    // Q: 为什么需要这样的获取数字的方式
-    // A: 就是数组的结构比较特殊 没什么原因
     if (tok->token_kind != TOKEN_NUM)
         tokenErrorAt(tok, "need a number for array declaration");
     return tok->value;
@@ -138,10 +121,7 @@ static bool isTypeName(Token* tok) {
     return (equal(tok, "int") || equal(tok, "char"));
 }
 
-// 定义产生式关系并完成自顶向下的递归调用
-// static Node* __program(Token** rest, Token* tok);
 
-// commit[32]: 全局变量和函数定义作为 rank 1 级进行解析
 static Token* functionDefinition(Token* tok, Type* funcReturnBaseType);
 static Token* gloablDefinition(Token* tok, Type* globalBaseType);
 
@@ -156,7 +136,7 @@ static Node* expr(Token** rest, Token* tok);
 
 static Node* assign(Token** rest, Token* tok);
 
-static Node* equality_expr(Token** rest, Token* tok);       // 针对 (3 < 6 == 5) 需要优先判断 (<)
+static Node* equality_expr(Token** rest, Token* tok);
 static Node* relation_expr(Token** rest, Token* tok);
 static Node* first_class_expr(Token** rest, Token* tok);
 static Node* second_class_expr(Token** rest, Token* tok);
@@ -165,7 +145,7 @@ static Node* preFix(Token** rest, Token* tok);
 static Node* primary_class_expr(Token** rest, Token* tok);
 static Node* funcall(Token** rest, Token* tok);
 
-// 定义 AST 结点  (注意因为 ND_NUM 的定义不同要分开处理)
+// 定义 AST 结点
 
 // 创造新的结点并分配空间
 static Node* createNode(NODE_KIND node_kind, Token* tok) {
@@ -185,12 +165,11 @@ static Node* numNode(int val, Token* tok) {
 // 针对变量结点的定义
 static Node* singleVarNode(Object* var, Token* tok) {
     Node* varNode = createNode(ND_VAR, tok);
-    // 通过 var 把 str 的内容传入
     varNode->var = var;
     return varNode;
 }
 
-// 定义 AST 的树型结构  (本质上仍然是一个结点但是有左右子树的定义)
+// 定义 AST 的树型结构
 static Node* createAST(NODE_KIND node_kind, Node* LHS, Node* RHS, Token* tok) {
     Node* rootNode = createNode(node_kind, tok);
     rootNode->LHS = LHS;
@@ -198,15 +177,12 @@ static Node* createAST(NODE_KIND node_kind, Node* LHS, Node* RHS, Token* tok) {
     return rootNode;
 }
 
-// 在引入一元运算符后 涉及到单叉树的构造(本质上是看成负号 和一般意义上的 ++|-- 不同)
-
-// 作用于一元运算符的单边树
+// 作用于一元运算符的单边树  选择在左子树中
 static Node* createSingle(NODE_KIND node_kind, Node* single_side, Token* tok) {
     Node* rootNode = createNode(node_kind, tok);
-    rootNode->LHS = single_side;            // 定义在左子树中
+    rootNode->LHS = single_side;            
     return rootNode;
 }
-
 
 /* 提供对指针的加减运算 */
 
@@ -216,28 +192,23 @@ static Node* newPtrAdd(Node* LHS, Node* RHS, Token* tok) {
     addType(RHS);
 
     // 根据 LHS 和 RHS 的类型进行不同的计算
-    // Tip: ptr + ptr 是非法运算
+    
+    // ptr + ptr 非法运算
     if ((!isInteger(LHS->node_type)) && (!isInteger(RHS->node_type))) {
         tokenErrorAt(tok, "can't add two pointers");
     }
 
-    // 如果都是整数 正常计算
+    // int + int 正常计算
     if (isInteger(LHS->node_type) && isInteger(RHS->node_type)) {
         return createAST(ND_ADD, LHS, RHS, tok);
     }
 
-    // 如果有一个整数一个指针 对 LHS 和 RHS 两种情况分别讨论 核心是对整数结点处理
-    // commit[27]: 优化了直接写数字 8 的情况 改为变量 为后续不同类型大小的指针运算准备
-
-    // commit[29]: 在这次的 commit 里面发现了一个隐藏 bug 关于 LHS 和 RHS 左右位置的问题
-    // 示例代码通过调换左右子树的顺序让这个问题不是很明显 但是我是分开处理的 所以在处理 (2[x] = 5;) 这个表达式的时候出错
-    // 指针部分永远放在左边! 要结合 addType() 来理解   所有的赋值都通过 LHS 来进行
+    // 指针必须在 LHS 分支传递  结合 addType() 来理解  所有的赋值都通过 LHS 来进行 (左值右值)
     // 否则叶子结点的类型无法向上传递导致出错
     
     // LHS: int  +  RHS: ptr
     if (isInteger(LHS->node_type) && (!isInteger(RHS->node_type))) {
         Node* newLHS = createAST(ND_MUL, numNode(RHS->node_type->Base->BaseSize, tok), LHS, tok);
-        // return createAST(ND_ADD, newLHS，RHS, tok);
         return createAST(ND_ADD, RHS, newLHS, tok);
     }
 
@@ -258,18 +229,12 @@ static Node* newPtrSub(Node* LHS, Node* RHS, Token* tok) {
     addType(LHS);
     addType(RHS);
 
-    // Tip: ptr - ptr 是合法运算!
+    // ptr - ptr 合法运算  得到数组元素个数
     if (LHS->node_type->Base && RHS->node_type->Base) {
-        // 先得到指针相减的结果
         Node* ND = createAST(ND_SUB, LHS, RHS, tok);
-
-        // 通过在 zacc.h 中的 extern 访问
-        // Q: 相比于直接 ND->node_type->Kind = TY_INT; 的优势是什么??
-        // A: 目前还不知道 也许后面类型多起来会体现吧
         ND->node_type = TYINT_GLOBAL;
 
-        // 挂载到 LHS: LHS / RHS(8)
-        // 注意除法需要区分左子树和右子树(小心~)
+        // 挂载到 LHS: LHS / RHS(8)     除法需要区分左右子树
         return createAST(ND_DIV, ND, numNode(LHS->node_type->Base->BaseSize, tok), tok);
     }
 
@@ -278,8 +243,7 @@ static Node* newPtrSub(Node* LHS, Node* RHS, Token* tok) {
         return createAST(ND_SUB, LHS, RHS, tok);
     }
 
-    // LHS: ptr  -  RHS: int
-    // 对比加法 相反的操作顺序是非法的  (int - ptr) 没有意义
+    // LHS: ptr  -  RHS: int   
     if (LHS->node_type->Base && isInteger(RHS->node_type)) {
         Node* newRHS = createAST(ND_MUL, numNode(LHS->node_type->Base->BaseSize, tok), RHS, tok);
 
@@ -288,23 +252,24 @@ static Node* newPtrSub(Node* LHS, Node* RHS, Token* tok) {
 
         Node* ND = createAST(ND_SUB, LHS, newRHS, tok);
 
-        // Q: 最后要声明该结点是指针类型 ???
-        // Q: 对比加法没有进行额外的声明        那加法最后的结点类型是什么呢
-        // 即使省去这一步操作   在 CompoundStamt().addType(Curr) 应该也可以设置为正确类型的
+        // Q: 最后要声明该结点类型 ???  在 compoundStamt() 中不可以吗
         ND->node_type = LHS->node_type;
         return ND;
     }
 
+    // LHS: int  -  RHS: ptr 没有意义
     tokenErrorAt(tok, "Unable to parse sub operation\n");
     return NULL;
 }
 
-/* 下面的三个辅助函数只可能发生函数定义与变量定义的混用(因为 funcall 不会有 int 前缀) */
+
+/* 下面的三个辅助函数可能发生函数定义与变量定义的混用(因为 funcall 不会有 int 前缀) */
 // 函数定义: int* funcName() {...}
 // 变量定义: int a, *b = xx;
 // 因为混用导致函数嵌套定义的报错发生在 declaration() 的变量解析中
 
-// 返回对类型 'int' 的判断
+
+// 类型前缀判断
 static Type* declspec(Token** rest, Token* tok) {
     // commit[33]: 对类型分别进行处理
     if (equal(tok, "int")) {
@@ -318,14 +283,8 @@ static Type* declspec(Token** rest, Token* tok) {
     return TYINT_GLOBAL;
 }
 
-// commit[27]: 拆分 typeSuffix 到 funcFormalParams 和 typeSuffix 两个语法函数
-// Q: 为什么要去进行一个拆分    A: 出于对 TypeSuffix 的结构清晰性
-
+// 解析函数传参
 static Type* funcFormalParams(Token** rest, Token* tok, Type* returnType) {
-    // commit[27]: 在 typeSuffix() 功能拆分后 该函数只处理函数定义括号内部变量
-    // if (equal(tok, "(")) {
-    //     tok = tok->next;
-
     // commit[26]: 利用 Type 结构定义存储形参的链表
     Type HEAD = {};
     Type* Curr = &HEAD;
@@ -334,18 +293,14 @@ static Type* funcFormalParams(Token** rest, Token* tok, Type* returnType) {
         // 多参跳过分隔符
         if (Curr != &HEAD)
             tok = skip(tok, ",");
-        // commit[26]: 复用函数定义的规则(因为不可能存在 "=" 所以 != 变量定义)
+        // commit[26]: 复用函数定义的规则
         Type* formalBaseType = declspec(&tok, tok);
         Type* isPtr = declarator(&tok, tok, formalBaseType);
         
-        // Q: 这里的 copyType() 到底干什么了
-        // A: 实现 C 的值传递规则 任何变量都会换一个新地址保存
         Curr->formalParamNext = copyType(isPtr);
         Curr = Curr->formalParamNext;
     }
 
-    // Q: 为什么没有在这里声明函数返回值属于哪个函数
-    // A: 返回值本身是已经确定的 这里在新建一个函数结点 反向声明该函数拥有什么返回类型
     *rest = skip(tok, ")");
 
     // 封装函数结点类型
@@ -355,15 +310,7 @@ static Type* funcFormalParams(Token** rest, Token* tok, Type* returnType) {
     return funcNode;
 }
 
-// commit[27]: 原本写在 typeSuffix() 中 解析变量定义的部分 在拆分后不需要了
-//     // 变量声明
-//     // Q: 这里没有把形参的名字读进去??     A: 在后面的 Base->Name 中更新
-//     *rest = tok;
-//     return returnType;
-// }
-
-// commit[25]: 目前只支持零参函数定义 或者 变量定义
-// commit[27]: 拆分两个功能分开处理 更清晰
+// commit[27]: 处理定义语法的后缀
 static Type* typeSuffix(Token** rest, Token* tok, Type* BaseType) {
     if (equal(tok, "(")) {
         // 函数定义处理    BaseType: 函数返回值类型
@@ -373,9 +320,7 @@ static Type* typeSuffix(Token** rest, Token* tok, Type* BaseType) {
     if (equal(tok, "[")) {
         // 数组定义处理    BaseType: 数组基类
         int arraySize = getArrayNumber(tok->next);
-        // *rest = skip(tok->next->next, "]");
 
-        // commit[28]: 多维数组 递归解析语法
         tok = skip(tok->next->next, "]");
         // 通过递归不断重置 BaseType 保存 (n - 1) 维数组的信息  最终返回 n 维数组信息
         BaseType = typeSuffix(rest, tok, BaseType);
@@ -387,41 +332,32 @@ static Type* typeSuffix(Token** rest, Token* tok, Type* BaseType) {
     return BaseType;
 }
 
-// 判断是否是指针类型 如果是指针类型那么要声明该指针的指向
+// 对类型进行完整判断
 static Type* declarator(Token** rest, Token* tok, Type* Base) {
     while (consume(&tok, tok, "*")) {
         Base = newPointerTo(Base);
     }
     // 此时的 Base 已经是最终的返回值类型 或 变量类型 因为全部的 (int**...) 已经解析完成了
 
-    // 接下来要读取 funcName | identName 实际上根据 zacc.h 会写入 Type Base 中
+    // 接下来要读取 funcName | identName
     if (tok->token_kind != TOKEN_IDENT) {
         tokenErrorAt(tok, "expected a variable name or a function name");
     }
 
     // commit[25]: 这里同时有变量声明 | 函数定义两个可能性 所以后续交给 typeSuffix 判断
-    // *rest = tok->next;
-    // commit[26]: 使用 typeSuffix() 完成对传参的处理
+    // 调用 typeSuffix() 传递的是 rest 所以这里 tok 没有更新
     Base = typeSuffix(rest, tok->next, Base);
-    // 如果是函数结点   因为调用 typeSuffix() 传递的是 rest 所以这里 tok 没有更新
 
     // case1: 函数定义         读取函数名
     // case2: 变量或者传参解析  读取传参变量名
-    Base->Name = tok;       // Tip: 这里保留了 Token 的链接
+    Base->Name = tok;
 
     return Base;
 }
 
 // commit[26]: 对多参函数的传参顺序进行构造 添加到 Local 链表
 static void createParamVar(Type* param) {
-    // Tip: Local 构造是头插法 所以要先递归到最后一个参数插入
-    // Q: 如果 param 本身是 NULL 那么会在这里出现 segment fault
-    // A: 所以这里不能使用这样的递归    (说起来这类错误我犯了好几次了但是一点意识都没有...
-    
-    // if (param->formalParamNext)
-    //     createParamVar(param->formalParamNext);
-    // newLocal(getVarName(param->Name), param);
-
+    // Tip: param 本身可能是 NULL
     if (param) {
         createParamVar(param->formalParamNext);
         newLocal(getVarName(param->Name), param);
@@ -436,29 +372,20 @@ static bool GlobalOrFunction(Token* tok) {
     if (equal(tok, ";"))
         return Global;
 
-    // Q: 为什么的虚设变量 Dummy 意义是
-    // A: 全局变量的声明方式很多 比如数组或者赋值 无法简单的通过 equal(tok, ";") 判定
-    // 所以这里进一步针对其他形式的全局声明进行解析 有可能不是函数  但总之后续会二次判断
+    // 这里进一步针对其他 TYPE 进行解析 数组或者其他什么  二次判断
 
     // 初始化隐含了枚举变量的初始化  默认设置为 TY_INT  所以 BaseType 不是完全空的
     Type Dummy = {};
     Type* ty = declarator(&tok, tok, &Dummy);
-    // Type* ty = declarator(&tok, tok, BaseType);
-
     if (ty->Kind == TY_FUNC)
         return Function;
     
-    // __tokenErrorAt(tok, "Not a Global Variable nor a Function define\n");
     return Global;
 }
 
 static char* newUniqueName(void) {
     static int I = 0;
-
     return format(".L..%d", I++);
-    // char* buffer = calloc(1, 20);
-    // sprintf(buffer, ".L..%d", I++);
-    // return buffer;
 }
 
 static Object* newAnonyGlobalVar(Type* globalType) {
@@ -469,13 +396,11 @@ static Object* newAnonyGlobalVar(Type* globalType) {
 static Object* newStringLiteral(char* strContent, Type* strType) {
     Object* strObj = newAnonyGlobalVar(strType);
     strObj->InitData = strContent;
-    // 返回更新后的 Global 链表
     return strObj;
 }
 
 /* 语法规则的递归解析 */
 
-// commit[25]: 解析零参函数定义     int* funcName() {...}
 // Q: commit[31] 的修改为什么传递 Token 回去
 // A: 因为函数已经作为一种特殊的变量被写入 Global 了
 static Token* functionDefinition(Token* tok, Type* funcReturnBaseType) {
@@ -487,15 +412,6 @@ static Token* functionDefinition(Token* tok, Type* funcReturnBaseType) {
 
     // 初始化函数帧内部变量
     Local = NULL;
-
-    // 初始化函数定义结点
-    // __Function* func = calloc(1, sizeof(Function));
-    
-    // Q: 这里一定要用 funcType->Name 吗   Base->Name = tok;
-    // A: 因为在 declarator 中更新了 &tok 所以这个时候 tok 位置指向函数体
-    // __func->FuncName = getVarName(funcType->Name);
-
-    // commit[26]: 形参变量和函数内部变量需要两次不同的更新
     
     // 第一次更新 Local: 函数形参
     createParamVar(funcType->formalParamLink);
@@ -504,27 +420,19 @@ static Token* functionDefinition(Token* tok, Type* funcReturnBaseType) {
     tok = skip(tok, "{");
     // 第二次更新 Local: 更新函数内部定义变量
     function->AST = compoundStamt(&tok, tok);
-
-    // 因为更新的 local 是不同区域的 Local 比如参数和函数内变量
-    // 虽然它们最后都在同一个链表 Local 里面    但是赋值的变量 (formalParam, local) 是不同的
     function->local = Local;
 
-    // Q: 为什么这里是返回 tok
-    // A: 函数作为一个全局量已经存入 Object 中了
     return tok;
 }
 
 // commit[32]: 正式在 AST 中加入全局变量的处理
 static Token* gloablDefinition(Token* tok, Type* globalBaseType) {
-    // Q: 为什么需要 First 这种东西
-    // A: 因为全局变量也可能是连续定义的语法结构 初始化默认为只有一个变量定义
-    // 同时保证了如果连续的变量定义 第一个变量不会从 ", var" 开始判断
+    // 如果连续的变量定义 第一个变量不会从 ", var" 开始判断
     bool isLast = true;
 
     while (!consume(&tok, tok, ";")) {
-        // 判断为连续的全局变量的定义   通过 skip 进行语法检查
+        // 判断是否为连续的全局变量的定义  同时正确解析第一个变量
         if (!isLast)
-            // 为了正确解析第一个变量
             tok = skip(tok, ",");
         isLast = false;
 
@@ -543,16 +451,14 @@ static Node* compoundStamt(Token** rest, Token* tok) {
     Node* Curr = &HEAD;
 
     while (!equal(tok, "}")) {
-        // commit[22]: 对声明语句和表达式语句分别处理
-        // commit[25]: 函数调用是没有返回值的前缀! 所以目前 compoundStamt.declaration 只用于变量定义
-        // commit[33]: 在加入新的类型判断之后 Q: ???
+        // 针对定义语句和表达式语句分别处理
         if (isTypeName(tok))
             // Tip: 如果只是变量声明没有赋值 不会新建任何结点 只是更新了 Local
             Curr->next = declaration(&tok, tok);
         else
             Curr->next = stamt(&tok, tok);
+        
         Curr = Curr->next;
-        // 在 commit[25] 和 commot[26] 更新之后 Curr 实际上只指向函数体内部的语句
         addType(Curr);
     }
     // 得到 CompoundStamt 内部的语句链表
@@ -572,19 +478,16 @@ static Node* declaration(Token** rest, Token* tok) {
     Node HEAD = {};
     Node* Curr = &HEAD;
 
-    // Tip: 计数 至少有一个变量被定义
-    // Q: 这个计数的意义是什么  只是为了合法性判断吗
+    // 连续定义的合法性判断
     int variable_count = 0;
-
     // 2. 如果存在连续声明  需要通过 for-loop 完成
     while(!equal(tok, ";")) {
-        // 判断循环是否能合法的继续下去  同时排除掉第一个变量声明子语句
         if ((variable_count ++) > 0)
             // Tip: 函数嵌套定义报错位置
             tok = skip(tok, ",");
 
         Type* isPtr = declarator(&tok, tok, nd_base_type);
-        Object* var = newLocal(getVarName(isPtr->Name), isPtr);     // 通过 Name 链接的 Token 保留上一个解析位置 进行传递
+        Object* var = newLocal(getVarName(isPtr->Name), isPtr);
 
         // 3. 如果存在赋值那么解析赋值部分
         if (!equal(tok, "=")) {
@@ -592,7 +495,7 @@ static Node* declaration(Token** rest, Token* tok) {
         }
 
         // 通过递归下降的方式构造
-        Node* LHS = singleVarNode(var, isPtr->Name);    // 利用到 Name 到 Token 的链接
+        Node* LHS = singleVarNode(var, isPtr->Name);
         Node* RHS = assign(&tok, tok->next);
 
         Node* ND_ROOT = createAST(ND_ASSIGN, LHS, RHS, tok);
@@ -613,7 +516,6 @@ static Node* declaration(Token** rest, Token* tok) {
 // 对表达式语句的解析
 static Node* stamt(Token** rest, Token* tok) {
     if (equal(tok, "return")) {
-        // Node* retNode = createSingle(ND_RETURN, expr(&tok, tok->next));
         Node* retNode = createNode(ND_RETURN, tok);
         retNode->LHS = expr(&tok, tok->next);
 
@@ -624,7 +526,6 @@ static Node* stamt(Token** rest, Token* tok) {
     if (equal(tok, "{")) {
         Node* ND = compoundStamt(&tok, tok->next);
         *rest = tok;
-
         return ND;
     }
 
@@ -693,7 +594,7 @@ static Node* stamt(Token** rest, Token* tok) {
     return exprStamt(rest, tok);
 }
 
-// commit[14]: 新增对空语句的支持   同时支持两种空语句形式
+// commit[14]: 新增对空语句的支持   同时支持两种空语句形式 {} | ;
 static Node* exprStamt(Token** rest, Token* tok) {
     // 如果第一个字符是 ";" 那么认为是空语句
     if (equal(tok, ";")) {
@@ -729,7 +630,6 @@ static Node* assign(Token** rest, Token* tok) {
 static Node* equality_expr(Token** rest, Token* tok) {
     Node* ND = relation_expr(&tok, tok);
     while(true) {
-        // 因为不确定后面的表达式执行是否正确 所以提前保存目前为止正确执行的位置
         Token* start = tok;
 
         // 比较符号后面不可能还是比较符号
@@ -778,27 +678,22 @@ static Node* relation_expr(Token** rest, Token* tok) {
 
 // 加减运算判断
 static Node* first_class_expr(Token** rest, Token* tok) {
-    // 处理最左表达式
     Node* ND = second_class_expr(&tok, tok);
 
     while(true) {
         Token* start = tok;
 
-        // 如果仍然有表达式的话
         if (equal(tok, "+")) {
-            // 构建 ADD 根节点 (注意使用的是 tok->next) 并且
             ND = newPtrAdd(ND, second_class_expr(&tok, tok->next), start);
             continue;
         }
 
         if (equal(tok, "-")) {
-            // 同理建立 SUB 根节点
             ND = newPtrSub(ND, second_class_expr(&tok, tok->next), start);
             continue;
         }
 
-        // 表达式解析结束   退出
-        *rest = tok;        // rest 所指向的指针 = tok  rest 仍然维持一个 3 层的指针结构
+        *rest = tok;
         return ND;
     }
 }
@@ -833,7 +728,6 @@ static Node* third_class_expr(Token** rest, Token* tok) {
     }
 
     if (equal(tok, "-")) {
-        // 作为负数标志记录结点
         Node* ND = createSingle(ND_NEG, third_class_expr(rest, tok->next), tok);
         return ND;
     }
@@ -858,9 +752,6 @@ static Node* preFix(Token** rest, Token* tok) {
     Node* ND = primary_class_expr(&tok, tok);
 
     while (equal(tok, "[")) {
-        // 需要考虑到多维数组的情况   x[y] | y[x] => *(x + y)
-        // Tip: 针对 x[y] 和 y[x] 两种情况  对应 primary 中的 NUM 和 IDENT 判断
-        // 但是从执行效率上讲 更推荐 x[y] 的方式
         Token* idxStart = tok;
         Node* idxExpr = expr(&tok, tok->next);
         tok = skip(tok, "]");
@@ -877,13 +768,6 @@ static Node* primary_class_expr(Token** rest, Token* tok) {
     if (equal(tok, "(") && equal(tok->next, "{")) {
         Node* ND = createNode(ND_GNU_EXPR, tok);
 
-        // "{}" 中的内容都被视为 Body 只是在外面套了一层 "()" 才会被定义为 GNU
-        // Q: 为什么只取 compoundStamt 的 Body 进行赋值
-        // A: 一开始我认为 compoundStamt 只提供了定义语句和执行语句的区分 于是想尝试直接调用 stamt() 解析
-        // 但是会在 ND_GNU_EXPR 中出现多个执行语句的时候报错    因为没有提供针对 ";" 的处理
-        // stamt() 只能处理一句而不是 compoundStamt() 可以处理一段程序
-        // ND->Body = stamt(&tok, tok->next->next);
-
         ND->Body = compoundStamt(&tok, tok->next->next)->Body;
         *rest = skip(tok, ")");
 
@@ -899,9 +783,6 @@ static Node* primary_class_expr(Token** rest, Token* tok) {
 
     // commit[30]: 支持 sizeof
     if (equal(tok, "sizeof")) {
-        // Q: 为什么这里调用的是 third_class_expr 而不能用最顶层的 expr()
-        // A: 是 sizeof() 语法结构的问题 这个关键字本身就只能处理单边表达式  如果使用双边 expr 会导致 AST 结构问题
-        // 比如 {sizeof(**x) + 1} ND_ADD 结点本身在顶层 如果使用 expr 加法结点会被转换为 ND_NUM 进入叶子层
         Node* ND = third_class_expr(rest, tok->next);
         
         // Q: 为什么这里需要调用 addType() 如果注释掉会完全错误
@@ -937,7 +818,7 @@ static Node* primary_class_expr(Token** rest, Token* tok) {
             tokenErrorAt(tok, "undefined variable");
         }
         // 初始化变量结点
-        Node* ND = singleVarNode(varObj, tok);       // Tip: 变量结点指向的是链表 Local 对应结点的位置
+        Node* ND = singleVarNode(varObj, tok);
         *rest = tok->next;
         return ND;
     }
@@ -978,27 +859,13 @@ static Node* funcall(Token** rest, Token* tok) {
     return ND;
 }
 
-// 读入 token stream 在每个 stamt 中处理一部分 token 结点
+// 解析全局变量和函数定义
 Object* parse(Token* tok) {
-    // 生成的 AST 只有一个根节点 而不是像前面的 commit 一样的单链表
-
-    // commit[25]: 顶层结构从 program 变成 functionDefinition*
-    //Node* AST = program(&tok, tok);
-
-    // commit[25]: 解析层次修改之后 从 parse->program 的两层结构变成 parse->funcDefin->program 三层结构
-    // 三层结构会导致 *rest tok 错误    除非换成两层
-
-    // __Function HEAD = {};
-    // __Function* Curr = &HEAD;
-
     // commit[31]: 使用全局变量 Global 来记录函数定义
     Global = NULL;
 
     while (tok->token_kind !=TOKEN_EOF) {
         Type* BaseType = declspec(&tok, tok);
-        // Q: 即使是判断函数还是变量 为什么不在这里把 BaseType 传进去呢
-        // A: 在 GlobalOrFunction() 中会初始化一个 Type Dummy 作为 BaseType
-        // 目前测试传不传都行  可能在以后会有其他用处
 
         // commit[32]: 判断全局变量或者函数 进行不同的处理
         if (!GlobalOrFunction(tok)) {
@@ -1012,12 +879,6 @@ Object* parse(Token* tok) {
             tok = gloablDefinition(tok, globalBaseType);
         }
     }
-    
-    // commit[25]: 在 functionDefinition() 中进行空间分配
-    // Function* Func = calloc(1, sizeof(Function));
-
-    // 对 Func->StackSize 的处理在 codeGen() 实现
-    // __return HEAD.next;
 
     return Global;
 }

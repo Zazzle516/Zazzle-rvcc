@@ -7,35 +7,20 @@ static char* InputHEAD;
 // commit[40]: 记录输入的文件名  用于在错误信息提示时打印错误文件名
 static char* currentFileName;
 
-// 测试: cd build   ./rvcc '../tmp.c'
-
-// 针对报错进行优化 errorHint() 和 errorAt() 是同级的错误信息展示
-// errorHint() 不去展示具体的语法错误未知 也就是不能用在具体的代码分析中 只可能能是一开始的参数数量错误
-// errorAt() 展示具体的语法错误位置
-
+// 极简版错误提示  一般用于系统错误
 void errorHint(char* errorInfo, ...) {
-    // 使用 <stdarg.h> 提供的变长参数
-
-    // 初始化
     va_list Info;
     va_start(Info, errorInfo);
 
-    // 处理
     fprintf(stderr, errorInfo, Info);
     fprintf(stderr, "\n");
 
-    // 清理
     va_end(Info);
     exit(1);
 }
 
-// FMT VA 在 tokenize() 词法分析中定义的输出
 // commit[40]: 记录错误在文件中的位置 并打印错误信息
 void errorAt(char* place, char* FMT, va_list VA) {
-    // 打印出错输入(目前的输入都是一行)
-    // fprintf(stderr, "%s\n", InputHEAD);
-    // 计算出错位置 并通过空格跳过
-    // int err_place = place - InputHEAD;
 
     // 找到 errorLineStart 最开始的位置
     char* errorLineStart = place;
@@ -82,7 +67,6 @@ void tokenErrorAt(Token* token, char* FMT, ...) {
     va_list VA;
     va_start(VA, FMT);
 
-    // 指明该 Token 的出错位置
     errorAt(token->place, FMT, VA);
 }
 
@@ -93,13 +77,10 @@ void charErrorAt(char* place, char* FMT, ...) {
     errorAt(place, FMT, VA);
 }
 
-// 判断是否是 keywords
-// 如果写在一起的话是一个二重循环了 不太好理解
-// commit[30]: 新增对 sizeof 的支持
+// 关键字声明 目前没用
 static bool isKeyWords(Token* input) {
     static char* keywords[] = {"if", "else", "return", "for", "while", "sizeof", "char"};
 
-    // Tip: 注意这里的下标      sizeof() 得到的是该对象的总空间
     for (int i = 0; i < sizeof(keywords) / sizeof(*keywords); i ++) {
         if (equal(input, keywords[i]))
             return true;
@@ -109,9 +90,6 @@ static bool isKeyWords(Token* input) {
 
 // 得到所有 Tokens 后针对 KEYWORD 进行判断
 static void convertKeyWord(Token* input_token) {
-    // 直到 commit[34] 才发现这里写错了...
-    // 不过从 input_token 改了之后才发现速度提升了这么快  这个 keyWord 功能为什么提速这么快
-    // 没有发现在 parser 中用到 所以是怎么提速的???
     for (Token* tok = input_token; tok->token_kind != TOKEN_EOF; tok = tok->next) {
         if (isKeyWords(tok)) {
             tok->token_kind = TOKEN_KEYWORD;
@@ -121,27 +99,18 @@ static void convertKeyWord(Token* input_token) {
 
 // 判断当前 Token 与指定 target 是否相同
 bool equal(Token* input_token, char* target) {
-    // 使用 memcmp 进行存储内容的比较   因为不清楚 Token 的存储类型 不能直接使用 '=='
     return memcmp(input_token->place, target, input_token->length) == 0 && target[input_token->length] == '\0';
 }
 
 // 指定 target 去跳过
 Token* skip(Token* input_token, char* target) {
     if (!equal(input_token, target)) {
-        // errorHint("expected: %s", target);   针对 Token 进行错误优化
         tokenErrorAt(input_token, "expected: %s", target);
     }
-
-    // 不是根据 target 连续跳过 这个函数是用来跳过负号的(一次就够了 这么写会无法检测到语法错误)
-    // while (equal(input_token, target)) {
-    //     input_token = input_token.next;
-    // }
     return input_token->next;
 }
 
-// commit[22]: 
-// Q: 消耗掉指定 Token  目前是用在 DEREF 中 不能用 skip 代替的区别是什么
-// A: skip() 用在准确跳过一个目标 tok 而 comsume 面对的是数量不确定的 tok*
+// commit[22]: comsume 处理数量不确定的 tok
 bool consume(Token** rest, Token* tok, char* str) {
     // 可能没有目标 tok 可能有 1 个
     if (equal(tok, str)) {
@@ -154,7 +123,6 @@ bool consume(Token** rest, Token* tok, char* str) {
 
 static int getNumber(Token* input_token) {
     if (input_token->token_kind != TOKEN_NUM) {
-        // errorHint("expected number");        同理根据 Token 优化错误信息
         tokenErrorAt(input_token, "expected number");
     }
     // 把在 newToken() 中构造好的值取出
@@ -164,7 +132,7 @@ static int getNumber(Token* input_token) {
 // 定义一个新的 Token 结点挂载到链表上
 static Token* newToken(TokenKind token_kind, char* start, char* end) {
     // 在传参的时候实际上只能看到一段内存空间
-    Token* currToken = calloc(1, sizeof(Token));            // 底层语言 C 这种只能用 calloc / malloc 来分配内存
+    Token* currToken = calloc(1, sizeof(Token));
     currToken->token_kind = token_kind;
     currToken->place = start;
     currToken->length = end - start;
@@ -172,8 +140,6 @@ static Token* newToken(TokenKind token_kind, char* start, char* end) {
 
     // 为了编译器的效率 这里分配的空间并没有释放
 }
-
-// commit[11] 在支持任意变量名后新增判断
 
 // 变量名首位判断 [a-zA-Z_]
 static bool isIdentIndex1(char input_ptr) {
@@ -255,9 +221,7 @@ static int readEscapeChar(char** newPos, char* escapeChar) {
         return hexNumber;
     }
 
-    // Q: 这里为什么要 + 1 呢
-    // 结合 readEscapeChar() 存在在 readStringLiteral() 的分支
-    // 就是传递读取到 '\\' 之后的被转移字符 在该函数内转义处理结束后 自然应该指向下一个字符
+    // 跳过读取到 '\\' 之后的被转移字符 在该函数内转义处理结束后 自然应该指向下一个字符
     *newPos = escapeChar + 1;
     // 转义字符
     switch (*escapeChar)
@@ -281,6 +245,7 @@ static int readEscapeChar(char** newPos, char* escapeChar) {
     default:
         return *escapeChar;
     }
+
 }
 
 // commit[34]: 读取字符字面量 目前不支持 "" 的转义 以全局的方式处理
@@ -326,9 +291,6 @@ static Token* readStringLiteral(char* start) {
     return strToken;
 }
 
-
-// 引入比较符后修改 isdigit() 的判断
-
 // 比较字符串是否相等   和 equal() 中的 memcmp() 区分
 static bool strCmp(char* input_ptr, char* target) {
     return (strncmp(input_ptr, target, strlen(target)) == 0);
@@ -339,13 +301,12 @@ static int readPunct(char* input_ptr) {
     if (strCmp(input_ptr, "==") || strCmp(input_ptr, "!=") || strCmp(input_ptr, ">=") || strCmp(input_ptr, "<=")) {
         return 2;
     }
-    return (ispunct(*input_ptr) ? 1: 0);      // 单运算符返回 1 否则为 0
+    return (ispunct(*input_ptr) ? 1: 0);
 }
 
 Token* tokenize(char* fileName, char* P) {
-    // 词法分析 根据链表的结构去调用 newToken() 构造
-    Token HEAD = {};                 // 声明 HEAD 为空
-    Token* currToken = &HEAD;        // 指向 HEAD 类型为 Token 的指针 声明为 currToken 注意是指针哦 通过 '->' 调用
+    Token HEAD = {};
+    Token* currToken = &HEAD;
     InputHEAD = P;
 
     // commit[40]: 更新当前读取的文件路径 + 文件名
@@ -355,15 +316,11 @@ Token* tokenize(char* fileName, char* P) {
     // 就是初始化一下   不知道会不会在后面用到
 
     while(*P) {
-        // 对空格没有使用 while 因为如果在里面写了 continue 的话 while 实际上就没有意义了
-        // 如果不写 continue 程序就会继续执行 访问到 errorHint()
         if (isspace(*P)) {
             // 跳过空格 \t \n \v \f \r
             P ++;
             continue;
         }
-
-        // 把数字和操作符分开处理
 
         // 仅处理数字
         if (isdigit(*P)) {
@@ -379,7 +336,6 @@ Token* tokenize(char* fileName, char* P) {
             continue;
         }
 
-        // 对单个字符进行处理 commit[10]    通过 ASCII 编码进行判断
         // commit[11] 通过循环完成对变量名的获取
         if (isIdentIndex1(*P)) {
             char* start = P;
@@ -389,7 +345,6 @@ Token* tokenize(char* fileName, char* P) {
             
             // 当时这里因为判断条件的限制   只能分辨小写字符    如果是大写的就判断不了了
             currToken->next = newToken(TOKEN_IDENT, start, P);
-            // P += length;            目前是单个字符 长度已知为 1 直接 ++ 就好
             currToken = currToken->next;
             continue;
         }
@@ -407,8 +362,8 @@ Token* tokenize(char* fileName, char* P) {
         if (opLen) {
             // 如果是运算符 目前的运算符只有一位 +/-
             currToken->next = newToken(TOKEN_OP, P, P + opLen);
-            P += opLen;                 // 根据符号长度更新指向!!!
-            currToken = currToken->next;        // 更新指向下一个位置
+            P += opLen;
+            currToken = currToken->next;
             continue;
         }
 
@@ -419,10 +374,8 @@ Token* tokenize(char* fileName, char* P) {
     currToken->next = newToken(TOKEN_EOF, P, P);
 
     // 对完整的 Token 流进行判断 提取关键字
-    // 目前看这个 KEYWORD 没有任何作用 可能要到很后期才能体现出来 现在直接注释掉也 ok
     convertKeyWord(HEAD.next);
 
-    // 对直接存在的结构体调用 "成员变量"
     return HEAD.next;
 }
 

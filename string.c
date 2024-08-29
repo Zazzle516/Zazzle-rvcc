@@ -16,6 +16,7 @@ char* format(char* Fmt, ...) {
     va_end(VA);
 
     fclose(out);
+    
     // 出于编译器的效率  没有使用 free(buffer) 释放空间
     return buffer;
 }

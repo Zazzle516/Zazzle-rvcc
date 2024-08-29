@@ -7,7 +7,6 @@ static int StackDepth;
 static char* ArgReg[] = {"a0", "a1", "a2", "a3", "a4", "a5"};
 
 // commit[25]: 记录当前正在执行的函数帧
-// commit[31]: 修改类型
 static Object* currFuncFrame;
 
 // commit[42]: 声明当前解析结果的输出文件
@@ -18,24 +17,21 @@ static void calcuGen(Node* AST);
 static void exprGen(Node* AST);
 static void printLn(char* Fmt, ...);
 
-// Q: commit[18]: codeGen() 怎么使用 AST 用作终结符的 tok
-// A: 在 default_err() 处理的部分声明错误发生的位置
 
 static int count(void) {
-    // 通过函数的方式定义一个值可以变化的全局变量
     static int count = 1;
-    return count++;             // 莫名想到 yield 虽然实现完全不同...233
+    return count++;
 }
 
 static void push_stack(void) {
     printLn("  # 压栈ing 将 a0 的值存入栈顶");
     printLn("  addi sp, sp, -8");
-    printLn("  sd a0, 0(sp)");             // 把 reg-a0 的内容写入 0(sp) 位置
+    printLn("  sd a0, 0(sp)");
     StackDepth++;
 }
 
 static void pop_stack(char* reg) {
-    printLn("  # 出栈ing 将原 a0 的内容写入 reg-a1 恢复栈顶");
+    printLn("  # 出栈ing 将原 a0 的内容写入 reg 恢复栈顶");
     printLn("  ld %s, 0(sp)", reg);
     printLn("  addi sp, sp, 8");
     StackDepth--;
@@ -43,28 +39,23 @@ static void pop_stack(char* reg) {
 
 // commit[33]: 在新增 char 类型后 不同类型读写的字节数量不同 需要进行判断 byte word ddouble
 
-// commit[27]: 把 exprGen() 中的 ld 和 sd 提取出来(提高代码可读性吧
+// commit[27]: 把 exprGen() 中的 ld 和 sd 提取出来(提高代码可读性
+
 static void Load(Type* type) {
-    // Q: 为什么这里遇到数组选择返回了
-    // A: 数组和变量都是存储在栈上的 但是区别在数组存储的是值 而变量存储的是地址 所以数组不需要额外的 DEREF 的操作
-    // getAddr().ND_VAR 会加载数组的首地址(同时就是第一个值的地址)到 a0
+    // 数组的 AST 结构本身就是 ND_DEREF  通过 calcuGen(DEREF->LHS) 已经可以得到数组的地址
     if (type->Kind == TY_ARRAY_LINER)
         return;
     
     printLn("  # 读取 a0 储存的地址内容 并存入 a0");
     
     if (type->BaseSize == 1)
-        // Q: 这里使用 BaseSize 进行判断而不是 type->Kind 有什么特殊的考虑吗
-        // A: 一开始在 else-branch 考虑用 type->Kind == TY_INT 判断但是在 commit20 报错
-        // 因为没有考虑到现在还有 PTR ARRAY 之类的其他类型
-        // Tip: 实际上在汇编代码部分 类型只能体现在大小 本身存储的什么已经没有意义了
+        // Tip: 在汇编代码部分 类型只能体现在大小  根据 Kind 区分没有意义
         printLn("  lb a0, 0(a0)");
     else
         printLn("  ld a0, 0(a0)");
 }
 
-// Q: 为什么这里一定是 a1 和 pop_stack() 有什么关系
-// A: 把 ND_ASSIGN 的部分抽象出来
+
 static void Store(Type* type) {
     pop_stack("a1");
     printLn("  # 将 a0 的值写入 a1 存储的地址");
@@ -75,18 +66,11 @@ static void Store(Type* type) {
         printLn("  sd a0, 0(a1)");
 }
 
-// 一般编译器的对齐发生在 8B, 4B, 1B 空间混用的情况   但是目前都是固定的    这里就是先写出来方便后续扩展
 static int alignTo(int realTotal, int aimAlign) {
     // 在真实使用的空间 readTotal 上加上 (+ Align - 1) 不足以形成一次对齐倍数的空间 防止对齐后导致的空间不足
-    // 1. N = 18    (18 + 16 - 1) = 33
-    // 2. 33 / 16 = 2.xxx
-    // 3. 2 * 16 => 32
     return ((realTotal + aimAlign - 1) / aimAlign) * aimAlign;
 }
 
-// commit[11]: 根据 parse() 的结果计算栈空间的预分配
-// commit[25]: 根据每个函数中的变量 Local 情况分配空间  二重循环
-// commit[27]: 同样的把 8 优化掉
 // commit[31]: 全局变量一般存储在 .data 段或者 .bss 段中    局部变量存储在栈上
 static void preAllocStackSpace(Object* func) {
     // 在栈上分配空间只处理局部变量 如果不是 IsFunction 那么一定是 IsGlobal 跳过
@@ -99,7 +83,6 @@ static void preAllocStackSpace(Object* func) {
         
         // 遍历链表计算出总空间
         for(Object* obj = currFunc->local; obj; obj = obj->next) {
-            // realTotal += 8;     // int64_t => 8B
             realTotal += obj->var_type->BaseSize;
 
             // Tip: 很巧妙!     在计算空间的时候同时顺序得到变量在栈空间(B区域)的偏移量
@@ -110,28 +93,18 @@ static void preAllocStackSpace(Object* func) {
     }
 }
 
-// 在 commit[10] 中对赋值情况需要定义函数栈帧和栈空间的存储分配
-// 目前是单字符的变量 名字已知并且数量有限  a~z 26个 => 1B * 26 = 208B
-// 在栈上预分配 208B 的空间     根据名称顺序定义地址和偏移量
-// commit[11]: 根据 Local 的存储方式读取变量的存储位置
+
 static void getAddr(Node* nd_assign) {
-    // 
     switch (nd_assign->node_kind) {
     
-    // 表面上只有 ND_VAR 其实结合 ND_ADDR 在 calcuGen() 的实现
     // 这里同时完成了对 ND_VAR 和 ND_ADDR 的支持
     case ND_VAR:
     {
-        // 根据偏移量得到存储的目标地址
-        // int offset = (nd_assign->var_name - 'a' + 1) * 8;       // 根据名称决定偏移位置
-        // 类似于内存定义好 预计在栈上使用的位置
-
-        // commit[11]: 因为存储空间的改变  commit[10] 的写法不适用了
-
         // commit[32]: 全局变量单独存储在内存中 需要获取地址
         if (nd_assign->var->IsLocal) {
             printLn("  # 获取变量 %s 的栈内地址 %d(fp)", nd_assign->var->var_name, nd_assign->var->offset);
             // parse.primary_class_expr().singleVarNode() + codeGen.preAllocStackSpace()
+            // 栈帧是内存的一部分 虽然都是寄存器运算 但是最终 a0 会指向内存中该栈帧所储存的变量指针
             printLn("  addi a0, fp, %d", nd_assign->var->offset);
         }
 
@@ -145,9 +118,7 @@ static void getAddr(Node* nd_assign) {
 
     case ND_DEREF:
     {
-        // 这里的递归是用于解引用的 （&*x)
-        // Q: 解引用的前提是内容必须是一个引用 在真正的 C 中 x 必须是一个指针
-        // A: 但是示例中的 x 是全局变量 所以其实目前和正规的 C 语法是不一样的
+        // 这里的递归是用于多次解引用的 （&*x)
         calcuGen(nd_assign->LHS);
         return;
     }
@@ -155,12 +126,11 @@ static void getAddr(Node* nd_assign) {
     default:
         break;
     }
-    // errorHint("wrong assign Node");
+
     tokenErrorAt(nd_assign->token, "invalid expr");
     
 }
 
-// commit[41]: 在 commit[42] 中的文件输出体现出结果
 // commit[42]: 格式化输出 Fmt 就是字符串 变长参数是用来处理字符串传递过程中的一些变量和传参
 static void printLn(char* Fmt, ...) {
     va_list VA;
@@ -175,16 +145,8 @@ static void printLn(char* Fmt, ...) {
 }
 
 
-// 生成代码有 2 类: expr stamt
-// 某种程度上可以看成是 CPU 和 内存 的关系  互相包含 在执行层次上没有区别
-// 但是从代码角度   AST 的根节点是 ND_BLOCK 所以从 stamt 开始执行    同理所有的计算式都是被 ND_STAMT 包裹的 所以一定要通过 exprGen() 递归调用
-
-// 根据 AST 和目标后端 RISCV-64 生成代码
-// 计算式代码 生成的汇编代码一定是执行得到一个确定数字的代码段
+// 计算式汇编
 static void calcuGen(Node* AST) {
-    // Q: 为什么要这么设计三段式处理流程   和优先级有关吗
-    // A: 提前处理后续复合运算需要用到的内容    也可以把第一个 switch 拆分出来递归调用
-
     switch (AST->node_kind)
     {
     case ND_NUM:
@@ -196,7 +158,6 @@ static void calcuGen(Node* AST) {
 
     case ND_NEG:
     {
-        // 因为是单叉树所以某种程度上也是终结状态   递归找到最后的数字
         calcuGen(AST->LHS);
         printLn("  # 对 a0 的值取反");
         printLn("  neg a0, a0");
@@ -205,8 +166,6 @@ static void calcuGen(Node* AST) {
 
     case ND_VAR:
     {
-        // Q: ND_VAR 只会应用在计算语句里吗    因为 AST 结构的问题会优先递归到 ND_ASSIGN  等操作结点
-        // 从 a0 的值(存储地址)偏移位置为 0 的位置加载 var 的值本身
         getAddr(AST);
         Load(AST->node_type);
         return;
@@ -214,10 +173,8 @@ static void calcuGen(Node* AST) {
 
     case ND_ASSIGN:
     {
-        // 定义表达式左侧的存储地址(把栈空间视为内存去使用)
-        // 赋值语句需要先得到左侧表达式地址(已经判断是 ASSIGN 左侧理论上只有 ND_VAR
+        // 得到左值的存储地址
         getAddr(AST->LHS);
-
         // 完成左侧的压栈
         push_stack();
 
@@ -226,12 +183,6 @@ static void calcuGen(Node* AST) {
 
         Store(AST->node_type);
 
-        // 将 *左侧* 的结果弹栈
-        // pop_stack("a1");
-        // 完成赋值操作
-        // printf("  # 将 a0 的值写入 0(a1) 存储的地址中\n");
-        // printf("  sd a0, 0(a1)\n");     // 把得到的地址写入 a1 中 取相对于 (a1) 偏移量为 0 的位置赋值
-        
         return;
     }
     
@@ -246,12 +197,10 @@ static void calcuGen(Node* AST) {
     case ND_DEREF:
     {
         // *(ptr) 中的 ptr 本身是地址 可能会进行计算 eg.*(ptr + 8) 所以先计算内部的具体地址写入 a0
-        // 结合 parse.third_class_expr() 构造去理解  LHS 储存了目标地址表达式
         calcuGen(AST->LHS);
 
         // 读取 a0 中的储存的值(地址) 访问该地址
-        // printf("  # 读取 a0 储存的地址值 写入 reg(a0) 中\n");
-        // printf("  ld a0, 0(a0)\n");
+        // 如果是数组 由于本身的 DEREF 结构 通过 newPtrXXX() 完成地址加载
         Load(AST->node_type);
         return;
     }
@@ -266,12 +215,7 @@ static void calcuGen(Node* AST) {
 
     case ND_FUNCALL:
     {
-        // commit[23]: 汇编代码通过函数名完成 function call
-        // commit[24]: 完成对至多 6 个参数的函数调用
-
-        // 此时在执行 codeGen() 的时候 参数的个数是未知的 (这点很重要)
-        // 所以先通过正向压栈(也就是遍历) 得到函数传参的个数
-        // 而因为栈的 FILO 的特性 必然会逆序出栈 这样可以保证传参的完整性
+        // 先通过遍历 得到传参的个数 因为栈的 FILO 会逆序出栈 保证传参的完整性
 
         // 初始化参数的个数
         int argNum = 0;
@@ -325,9 +269,9 @@ static void calcuGen(Node* AST) {
         // 汇编层面通过 xor 比较结果
         printLn("  xor a0, a0, a1");       // 异或结果储存在 a0 中
         if (AST->node_kind == ND_EQ) 
-            printLn("  seqz a0, a0");                   // 判断结果 == 0
+            printLn("  seqz a0, a0");      // 判断结果 == 0
         if (AST->node_kind == ND_NEQ)
-            printLn("  snez a0, a0");                   // 判断结果 > 0
+            printLn("  snez a0, a0");      // 判断结果 > 0
         return;
 
     case ND_GT:
@@ -355,17 +299,12 @@ static void calcuGen(Node* AST) {
 
 // 表达式代码
 static void exprGen(Node* AST) {
-    // 针对单个 exprStamt 结点的 codeGen()  (循环是针对链表的所以不会出现在这里)
-    // 引入 return
     switch (AST->node_kind)
     {
     case ND_RETURN:
     {
-        // 因为在 parse.c 中的 stamt() 是同级定义 所以可以在这里比较
-        // 通过跳转 return-label 的方式返回
         printLn("  # 返回到当前执行函数的 return 标签");
         calcuGen(AST->LHS);
-        // commit[25]: 返回当前执行函数的 return label
         printLn("  j .L.return.%s", currFuncFrame->var_name);
         return;
     }
@@ -378,16 +317,14 @@ static void exprGen(Node* AST) {
 
     case ND_BLOCK:
     {
-        // 对 parse().CompoundStamt() 生成的语句链表执行
+        // 对 parse().CompoundStamt() 生成的语句链表执行  Block 是可以嵌套的
         for (Node* ND = AST->Body; ND; ND = ND->next) {
-            // 注意 Block 是可以嵌套的 所以这里继续调用 exprGen()
             exprGen(ND);
         }
         return;
     }
     
     case ND_IF:
-    // Tip: 如果在 switch-case 语句内部定义变量 比如 num 需要大括号 不然会有 Warning
     {
         // 条件分支语句编号     一个程序中可能有多个 if-else 需要通过编号区分 if-block 的作用范围
         int num = count();
@@ -409,34 +346,25 @@ static void exprGen(Node* AST) {
         printLn("  # false-branch");
         printLn(".L.else.%d:", num);
         if (AST->Else_BLOCK)
-            exprGen(AST->Else_BLOCK);       // 只有显式声明 else-branch 存在才会执行
+            exprGen(AST->Else_BLOCK);
 
         // else-branch 顺序执行到 end-label 就不需要额外的跳转的语句了
         printLn("\n  # =====分支语句 %d 执行结束========", num);
+        // If 语句本身不需要一个 end 标签  只是为了让 if-branch 跳过 else-branch
         printLn(".L.end.%d:", num);
-        // Q: 为什么这里不需要后续的执行语句?
-        // A: 这就要说到语法定义了最外层必须有 {} 大括号    通过大括号保证了 ND_BLOCK 的递归执行
-        // 所以这里的标签其实是写给后续的递归返回的语句的
-        // exprGen(AST->next);
+
         return;
     }
 
     case ND_FOR:
     {
-        // commit[17]: while 通过简化 for-loop 实现
         // 汇编的循环本质是通过 if-stamt + goto 实现
         int num = count();
         printLn("\n# =====循环语句 %d ===============", num);
 
-        // Q: 下面的执行为什么有的使用 exprGen() 有的使用 calcuGen()
-        // A: 要追溯到 parse() 的定义 在 parse() 中 for 的 init, conditon, operation 是一个函数分支中定义的 stamt().for
-        // 因为只能向下调用 所以至高是 ND_ASSIGN 不可能是 ND_STAMT  所以只能使用 calcuGen() 解析
-
         // 循环初始化
-        // 在 while 中是可能不存在的
         if (AST->For_Init) {
             printLn("  # while-init");
-            // 因为 init 在递归中定义为 ND_STAMT 所以通过递归执行 calcuGen()
             exprGen(AST->For_Init);
         }
 
@@ -445,7 +373,6 @@ static void exprGen(Node* AST) {
 
         // 判断循环是否中止
         if (AST->Cond_Block) {
-            // 如果存在 condition 语句
             printLn("  # while-condition-true");
             calcuGen(AST->Cond_Block);
             printLn("  beqz a0, .L.end.%d", num);
@@ -472,19 +399,13 @@ static void exprGen(Node* AST) {
         break;
     }
 
-    // errorHint("invalid statement\n");
     tokenErrorAt(AST->token, "invalid expr\n");
 }
 
-// commit[25]: 为每个函数单独分配栈空间
 // commit[32]: 完成汇编的 .text 段
 void emitText(Object* Global) {
-    // commit[11]: 预分配栈空间
-    // __preAllocStackSpace(Global);
-
     for (Object* currFunc = Global; currFunc; currFunc = currFunc->next) {
         if (!currFunc->IsFunction)
-            // commit[31]: 目前没有对全局变量进行任何汇编代码层面的处理
             continue;
 
         printLn("  .global %s", currFunc->var_name);
@@ -496,16 +417,14 @@ void emitText(Object* Global) {
         currFuncFrame = currFunc;
     
         // commit[23]: 零参函数调用 新增对 reg-ra 的保存
-        // Tip: 目前栈上有 2 个 reg 要保存 注意对 (sp) 偏移量的更改
         printLn("  # 把返回地址寄存器 ra 压栈");
         printLn("  addi sp, sp, -16");
         printLn("  sd ra, 8(sp)");
         
         // 根据当前的 sp 定义准备执行的函数栈帧 fp
         printLn("  # 把函数栈指针 fp 压栈");
-        // 因为 ra 的保存提前分配了 16 个字节 这里就不用额外分配了
-        // printf("  addi sp, sp, -8\n");
-        printLn("  sd fp, 0(sp)");     // 保存上一个 fp 状态用于恢复
+        // 因为 ra 的保存提前分配了 16 个字节 保存上一个 fp 状态用于恢复
+        printLn("  sd fp, 0(sp)");
 
         // 在准备执行的函数栈帧中定义栈顶指针
         printLn("  # 更新 sp 指向当前函数栈帧的栈空间");
@@ -515,16 +434,7 @@ void emitText(Object* Global) {
         printLn("  # 分配当前函数所需要的栈空间");
         printLn("  addi sp, sp, -%d", currFunc->StackSize);
 
-        // 这里的 AST 实际上是链表而不是树结构
-        // for (Node* ND = Func->AST; ND != NULL; ND = ND->next) {
-        //     exprGen(ND);
-        //     // Q: 每行语句都能保证 stack 为空吗
-        //     // 目前是的 因为每个完整的语句都是个运算式 虽然不一定有赋值(即使有赋值 因为没有定义寄存器结构会被后面的结果直接覆盖 a0)
-        //     assert(StackDepth==0);
-        // }
-
         // commot[26]: 支持函数传参
-        // Tip: 这里 Local 的顺序在 createParamVar() 处理后已经正序了
         int I = 0;
         for (Object* obj = currFunc->formalParam; obj; obj = obj->next) {
             printLn("  # 将 %s 寄存器存入 %s 栈地址", ArgReg[I], obj->var_name);
@@ -542,8 +452,6 @@ void emitText(Object* Global) {
         // 为 return 的跳转定义标签
         printLn("\n# =====程序结束===============\n");
         printLn(".L.return.%s:", currFunc->var_name);
-
-        // 目前只支持 main 函数 所以只有一个函数帧
 
         // commit[23]: 执行结束 从 fp -> ra 逆序出栈
 
@@ -573,15 +481,15 @@ void emitGlobalData(Object* Global) {
         
         // 关于 .data 段的汇编生成参考 
 
-        printLn("  # 数据段");     // 这里针对每一个 GlobalVar 都声明了 .data
+        // 这里针对每一个 GlobalVar 都声明了 .data
+        printLn("  # 数据段");
         printLn("  .data");
 
         // commit[34]: 针对有初始值的全局变量进行特殊处理 针对是否有赋值分别处理
         if (globalVar->InitData) {
             printLn("%s:", globalVar->var_name);
             // Q: 这里为什么是小于 BaseSize
-            // A: 取出全局量被赋值的内容 从字节的角度思考 所以 InitData 类型是 char*
-            // 同时依赖 tokenize().readStringLiteral().linerArrayType 传递的字符串长度判断
+            // A: 依赖 tokenize().readStringLiteral().linerArrayType 传递的字符串长度判断
             for (int I = 0; I < globalVar->var_type->BaseSize; ++I) {
                 char C = globalVar->InitData[I];
                 if (isprint(C))
@@ -590,6 +498,7 @@ void emitGlobalData(Object* Global) {
                     printLn("  .byte %d", C);
             }
         }
+        
         else {
             printLn("  .global %s", globalVar->var_name);
             printLn("%s:", globalVar->var_name);
@@ -599,14 +508,12 @@ void emitGlobalData(Object* Global) {
     }
 }
 
-// commit[32]: 结构清晰点
+
 void codeGen(Object* Prog, FILE* result) {
     // commit[42]: 把 codeGen() 中所有的 printLn() 输出全部导向 cmopilerResult 文件中
     compileResult = result;
 
-    // 在栈上预分配局部变量空间
-    // Q: 为什么这里单独处理局部变量
-    // A: 我觉得只是为了结构更清晰 放在 emitText() 执行没差
+    // 在栈上预分配局部变量空间 结构更清晰
     preAllocStackSpace(Prog);
 
     // 处理全局变量
