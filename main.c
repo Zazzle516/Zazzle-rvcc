@@ -5,59 +5,70 @@ static char* compilResPath;
 static char* compilInputPath;
 
 // commit[42]: 针对 '--help' 选项的声明
-static void usage(int Status) {
+static void rvccIntroduce(int Status) {
     // Tip: 从这里能看出来 [-o tmp.s] 是一组参数
-    fprintf(stderr, "zacc [ -o <path> ] <file>\n");
+    fprintf(stderr, "zacc [ -o <outPutPath> ] <file>\n");
     exit(Status);
 }
 
-// commit[42]: 对 ./rvcc 的两个参数进行解析  并将输出结果传递到文件(结合 test.sh 来理解)
+// commit[42]: 对 ./rvcc 的传参进行解析  结合 test.sh 和 testDriver.sh 判断
 static void parseArgs(int argc, char** argv) {
     // Tip: argc 记录所有参数个数包括文件名自己  所以从 I = 1 开始
+    // commit[42]: argv 是一个指向字符串指针的指针(二维数组)  每个元素 argv[I] 都是一个指向参数字符串的指针
     for (int I = 1; I < argc; I ++) {
 
-        // 解析 '--help' 参数
-        if (!strcmp(argv[I], "--help"))
-            usage(0);
+        // testDriver.sh: ./rvcc --help
+        if (!strcmp(argv[I], "--help")) {
+            rvccIntroduce(0);
+        }
         
-        // 结合 test.sh [-o tmp.s] 是一组参数
-        // Q: 它虽然是一组参数  但是在 argv 的存储具体是什么样呢
+        // test.sh: ./rvcc -o tmp.s -
+        // testDriver.sh: ./rvcc -o "$tmp/out"
+        // 区别在于输入的方式 test.sh 采用 stdin 而 testDirver.sh 采用 FILE
         if (!strcmp(argv[I], "-o")) {
             if (!argv[++I])
-                // Q: 这里是认为没有传入路径吗
-                usage(1);
+                // 解析下一个参数 判断输出文件是否定义
+                rvccIntroduce(1);
 
             compilResPath = argv[I];
             continue;
         }
 
-        // 类似 解析 [-otmp.s] 参数 (没有空格分隔)
+        // 类似 基于省略空格的判断
         if (!strncmp(argv[I], "-o", 2)) {
+            // 这里比较的长度 2 是 "-o" 的长度
+            // 因为两个参数没有空格 所以在 argv 中是同一个指针
             compilResPath = argv[I] + 2;
             continue;
         }
 
-        if (argv[I][0] == '-' && argv[I][1] != '\0')
-            error("unknown argument: %s\n", argv[I]);
+        // 目前 zacc 不支持的编译参数
+        if (argv[I][0] == '-' && argv[I][1] != '\0') {
+            errorHint("unknown argument: %s\n", argv[I]);
+        }
 
         // 其他情况  匹配为输入文件
         compilInputPath = argv[I];
 
+        // 最后是固定的输入文件的位置
         if (!compilInputPath)
-            error("no input file\n");
+            errorHint("no input file\n");
     }
 }
 
-// commit[42]: 尝试打开写入文件
+// commit[42]: 尝试打开输出文件
 static FILE* openFile(char* filePath) {
-    if (!filePath || strcmp(filePath, "-") == 0)
-        // 如果没有给输出定义输出文件  那么输出到控制台
+    if (!filePath || strcmp(filePath, "-") == 0) {
+        // 如果没有给输出定义输出文件  并且 stdout 判定那么输出到控制台
+        // Q: 理论上应该不会被调用
+        printf("control table\n");
         return stdout;
+    }
 
     FILE* result = fopen(filePath, "w");
     if (!result)
         // Tip: 这里比较的不是 0 而是 NULL
-        error("cannot open output file: %s: %s", filePath, strerror(errno));
+        errorHint("cannot open output file: %s: %s", filePath, strerror(errno));
 
     return result;
 }

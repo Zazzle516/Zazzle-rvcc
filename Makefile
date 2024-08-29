@@ -24,9 +24,11 @@ rvcc: $(OBJS)
 # $(CC) -o rvcc $(CFLAGS) main.o
 	$(CC) -o $@ $(CFLAGS) $^
 
+# commit[42]: 新增对 zacc 驱动的检测
 test: rvcc
-	./test.sh
 	./testDriver.sh
+	
+	
 
 clean:
 	rm -f rvcc *.o *.s tmp* a.out
