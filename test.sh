@@ -30,6 +30,10 @@ assert() {
     # A: (./rvcc -) 表示 rvcc 从 stdin 读取数据  不支持从文件中读取
     # echo "$input" 将内容输出到 stdout 通过管道符传递到 stdin 被 (./rvcc -) 接收  重定向到 tmp.s
     echo "$input" | ./rvcc - > tmp.s || exit
+    
+    # commit[42]: (./rvcc [-o tmp.s] [-])  整体上 ./rvcc 需要两个参数 1. 编译对象 [-o tmp.s]  2. IO 方式 标准输入
+    # 这里的重定向功能由 ./rvcc 程序本身来实现
+    echo "$input" | ./rvcc -o tmp.s - || exit
 
     # Q: 在 commit[40] 添加 tmp.c 进行测试之后  执行 make rvcc 会报 tmp.c 的错误
     # A: 这个和 Makefile 的内容有关  SRCS 的文件声明直接是 (*.c)  所以 tmp.c 也被编译了

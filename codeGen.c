@@ -10,6 +10,9 @@ static char* ArgReg[] = {"a0", "a1", "a2", "a3", "a4", "a5"};
 // commit[31]: 修改类型
 static Object* currFuncFrame;
 
+// commit[42]: 声明当前解析结果的输出文件
+static FILE* compileResult;
+
 // 提前声明 后续会用到
 static void calcuGen(Node* AST);
 static void exprGen(Node* AST);
@@ -157,13 +160,16 @@ static void getAddr(Node* nd_assign) {
     
 }
 
-// commit[41]: 瓜小味甜
+// commit[41]: 在 commit[42] 中的文件输出体现出结果
+// commit[42]: 格式化输出 Fmt 就是字符串 变长参数是用来处理字符串传递过程中的一些变量和传参
 static void printLn(char* Fmt, ...) {
     va_list VA;
 
     va_start(VA, Fmt);
-    vprintf(Fmt, VA);
+    vfprintf(compileResult, Fmt, VA);
     va_end(VA);
+
+    fprintf(compileResult, "\n");   // 没有参数考虑就不需要调用 vprintf()
 
     printf("\n");
 }
@@ -594,7 +600,10 @@ void emitGlobalData(Object* Global) {
 }
 
 // commit[32]: 结构清晰点
-void codeGen(Object* Prog) {
+void codeGen(Object* Prog, FILE* result) {
+    // commit[42]: 把 codeGen() 中所有的 printLn() 输出全部导向 cmopilerResult 文件中
+    compileResult = result;
+
     // 在栈上预分配局部变量空间
     // Q: 为什么这里单独处理局部变量
     // A: 我觉得只是为了结构更清晰 放在 emitText() 执行没差

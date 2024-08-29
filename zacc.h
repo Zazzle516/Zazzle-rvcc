@@ -25,7 +25,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <errno.h>          // commit[40]: 新增 ???
+#include <errno.h>          // commit[40]: 记录全局的错误号  针对文件操作
 
 // 提前声明
 typedef struct Node Node;
@@ -293,4 +293,4 @@ Type* copyType(Type* origin);
 Type* linerArrayType(Type* arrayBaseType, int arrayElemCount);
 
 /* 后端生成 codeGen() 数据结构和函数声明 */
-void codeGen(Object* Global);
+void codeGen(Object* Prog, FILE* result);

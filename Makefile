@@ -26,6 +26,7 @@ rvcc: $(OBJS)
 
 test: rvcc
 	./test.sh
+	./testDriver.sh
 
 clean:
 	rm -f rvcc *.o *.s tmp* a.out
