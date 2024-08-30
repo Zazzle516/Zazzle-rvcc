@@ -316,6 +316,24 @@ Token* tokenize(char* fileName, char* P) {
     // 就是初始化一下   不知道会不会在后面用到
 
     while(*P) {
+        // commit[43]: 跳过行注释
+        if (strCmp(P, "//")) {
+            P += 2;
+            while (*P != '\n')
+                P++;
+            continue;
+        }
+
+        // commit[43]: 跳过块注释
+        if (strCmp(P, "/*")) {
+            char* rightClose = strstr(P + 2, "*/");  // strstr() 查找子串首次出现的位置
+            if (!rightClose)
+                charErrorAt(P, "unclosed block annotations\n");
+
+            P = rightClose + 2;     // 更新指向块注释右侧后的字符
+            continue;
+        }
+        
         if (isspace(*P)) {
             // 跳过空格 \t \n \v \f \r
             P ++;

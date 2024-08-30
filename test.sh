@@ -340,4 +340,11 @@ assert 6 'int main() { return ({ 1; }) + ({ 2; }) + ({ 3; }); }'
 assert 3 'int main() { return ({ int x=3; x; }); }'
 echo -------------------commit-39-pass----------------------- >> ./testRes/testResult.log
 
+# [43] 支持注释
+assert 2 'int main() { /* return 1; */
+             return 2; }'
+assert 2 'int main() { // return 1;
+             return 2; }'
+echo -------------------commit-43-pass----------------------- >> ./testRes/testResult.log
+
 echo all-test-passed >> ./testRes/testResult.log
