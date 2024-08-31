@@ -1,6 +1,34 @@
 #include "zacc.h"
 
 // commit[1] - commit[22] 注释备份在 annotation-bak 中
+// commit[42]: 通过 checkout 查看注释
+
+/* commit[44]: 从两个层次进行作用域的管理 {var} */
+// 类似于 Antlr4 对变量域通过 [[], [], ..] 的管理  这里使用 Scope 链表管理
+// 每个 Scope 中的变量同样构成了一个 VarInScope 链表存储
+
+// commit[44]: 针对局部变量和全局变量标记作用范围  根据这个变量在 Scope 的位置判断
+// 具体的域的层次都是由 Scope 来决定的  VarInScope 只是负责插入正确的 Scope 层次位置
+typedef struct VarInScope VarInScope;
+struct VarInScope {
+    VarInScope* next;
+
+    // Q: 在 findVar() 查找变量通过这里判断  为什么不是 Object 中的 name  目前这个 scopeName 完全就是 Object.name
+    // A: 目前猜测有一些匿名变量的考虑  需要结合后面的实现
+    char* scopeName;
+
+    // 标记变量作用范围的同时指向该变量
+    Object* varList;
+};
+
+// 每个 {} 构成一个生效 Scope 范围
+typedef struct Scope Scope;
+struct Scope {
+    Scope* next;
+
+    VarInScope* varScope;
+};
+
 
 // commit[31]: 把函数作为 Global Object 进行处理
 // parse() = (functionDefinition | globalVariable)*
@@ -52,23 +80,51 @@
 Object* Local;      // 函数内部变量
 Object* Global;     // 全局变量 + 函数定义(因为 C 不能发生函数嵌套 所以一定是全局的层面)
 
+// 复合字面量: 在代码中直接创建一个结构体或数组的匿名实例
+// static: 文件作用域  只能在定义它的文件中访问   对比 type 的非静态定义  很适合需要临时对象的类型
+// HEADScope: 指向零初始化的 Scope 结构体指针  每次访问 HEADScope 仍然指向同一块静态分配的空间  并且保持上一次修改后的状态
+// 类似于链表操作的头结点  本身不储存实际内容  只是为了方便操作比如头插法
+
+// 还有一个功能是储存全局变量  或许可以把这个 HEADScope 看成一个程序本身的函数
+static Scope *HEADScope = &(Scope){};
+
+/* 变量域的操作定义 */
+
+// 块域 {} 执行开始
+static void enterScope(void) {
+    Scope* newScope = calloc(1, sizeof(Scope));
+
+    newScope->next = HEADScope;
+    HEADScope = newScope;
+}
+
+// 块域 {} 执行结束
+static void leaveScope() {
+    HEADScope = HEADScope->next;
+}
+
+static VarInScope* pushVarScopeToScope(char* Name, Object* var) {
+    VarInScope* newVarScope = calloc(1, sizeof(VarInScope));
+
+    newVarScope->scopeName = Name;
+    newVarScope->varList = var;
+
+    newVarScope->next = HEADScope->varScope;
+    HEADScope->varScope = newVarScope;
+
+    return newVarScope;
+}
+
 static Object* findVar(Token* tok) {
-    // 查找局部变量
-    for (Object* obj = Local; obj != NULL; obj = obj->next) {
-        if ((strlen(obj->var_name) == tok->length) &&
-            !strncmp(obj->var_name, tok->place, tok->length)) {
-                return obj;
-            }
+    // commit[44]: 在使用域记录之后遍历域查找
+    for (Scope* currScp = HEADScope; currScp ; currScp = currScp->next) {
+        // 类似于 Antlr4 中通过逆序查找  必须找到当前或者最近 Scope 中的对应变量
+        for (VarInScope* currVarScope = currScp->varScope; currVarScope; currVarScope = currVarScope->next) {
+            if (equal(tok, currVarScope->scopeName))
+                return currVarScope->varList;
+        }
     }
 
-    // commit[32]: 真正支持全局变量的查找
-    for (Object* obj = Global; obj != NULL; obj = obj->next) {
-        if ((strlen(obj->var_name) == tok->length) &&
-            !strncmp(obj->var_name, tok->place, tok->length)) {
-                return obj;
-            } 
-    }
-    
     return NULL;
 }
 
@@ -77,6 +133,10 @@ static Object* newVariable(char* varName, Type* varType) {
     Object* obj = calloc(1, sizeof(Object));
     obj->var_type = varType;
     obj->var_name = varName;
+
+    // commit[43]: 压入 newVarScope 中
+    pushVarScopeToScope(varName, obj);
+
     return obj;
 }
 
@@ -145,7 +205,8 @@ static Node* preFix(Token** rest, Token* tok);
 static Node* primary_class_expr(Token** rest, Token* tok);
 static Node* funcall(Token** rest, Token* tok);
 
-// 定义 AST 结点
+
+/* AST 结构的辅助函数 */
 
 // 创造新的结点并分配空间
 static Node* createNode(NODE_KIND node_kind, Token* tok) {
@@ -184,7 +245,7 @@ static Node* createSingle(NODE_KIND node_kind, Node* single_side, Token* tok) {
     return rootNode;
 }
 
-/* 提供对指针的加减运算 */
+/* 指针的加减运算 */
 
 // commit[21]: 新增对指针的加法运算支持
 static Node* newPtrAdd(Node* LHS, Node* RHS, Token* tok) {
@@ -311,6 +372,7 @@ static Type* funcFormalParams(Token** rest, Token* tok, Type* returnType) {
 }
 
 // commit[27]: 处理定义语法的后缀
+// Tip: 现在的语法解析不支持全局变量的赋值
 static Type* typeSuffix(Token** rest, Token* tok, Type* BaseType) {
     if (equal(tok, "(")) {
         // 函数定义处理    BaseType: 函数返回值类型
@@ -369,6 +431,8 @@ static bool GlobalOrFunction(Token* tok) {
     bool Global = true;
     bool Function = false;
 
+    // Debug 的时候根据这里的语法不支持全局变量的赋值  只支持定义
+    // 如果优化 equal() 能传递一个错误信息参数就好了        // 不支持吗
     if (equal(tok, ";"))
         return Global;
 
@@ -412,7 +476,12 @@ static Token* functionDefinition(Token* tok, Type* funcReturnBaseType) {
 
     // 初始化函数帧内部变量
     Local = NULL;
-    
+
+    // commit[43]: 函数也是新的作用范围
+    // Q: 这里结合函数本身定义的 {} 同样会在 compoundStamt() 中声明 是无效的
+    // 截至 commit[43] 即使是注释掉也 ok  看看后面是否一定需要
+    enterScope();
+
     // 第一次更新 Local: 函数形参
     createParamVar(funcType->formalParamLink);
     function->formalParam = Local;
@@ -421,6 +490,9 @@ static Token* functionDefinition(Token* tok, Type* funcReturnBaseType) {
     // 第二次更新 Local: 更新函数内部定义变量
     function->AST = compoundStamt(&tok, tok);
     function->local = Local;
+
+    // commit[43]: 函数访问结束 退出
+    leaveScope();
 
     return tok;
 }
@@ -450,6 +522,9 @@ static Node* compoundStamt(Token** rest, Token* tok) {
     Node HEAD = {};
     Node* Curr = &HEAD;
 
+    // commit[43]: 每次进入一个新的 {} 范围执行 enter       // Q: 在函数后面紧跟着算是无效层次吗
+    enterScope();
+
     while (!equal(tok, "}")) {
         // 针对定义语句和表达式语句分别处理
         if (isTypeName(tok))
@@ -462,6 +537,9 @@ static Node* compoundStamt(Token** rest, Token* tok) {
         addType(Curr);
     }
     // 得到 CompoundStamt 内部的语句链表
+
+    // commit[43]: 同理 退出域
+    leaveScope();
 
     ND->Body = HEAD.next;
 

@@ -347,4 +347,11 @@ assert 2 'int main() { // return 1;
              return 2; }'
 echo -------------------commit-43-pass----------------------- >> ./testRes/testResult.log
 
+# [44] 处理域
+assert 2 'int main() { int x=2; { int x=3; } return x; }'
+assert 2 'int main() { int x=2; { int x=3; } { int y=4; return x; }}'
+# 注意定义变量和修改变量值的区别
+assert 3 'int main() { int x=2; { x=3; } return x; }'
+echo -------------------commit-44-pass----------------------- >> ./testRes/testResult.log
+
 echo all-test-passed >> ./testRes/testResult.log
