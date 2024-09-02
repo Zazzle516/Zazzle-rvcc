@@ -134,7 +134,7 @@ static Object* newVariable(char* varName, Type* varType) {
     obj->var_type = varType;
     obj->var_name = varName;
 
-    // commit[43]: 压入 newVarScope 中
+    // commit[44]: 压入 newVarScope 中
     pushVarScopeToScope(varName, obj);
 
     return obj;
@@ -477,9 +477,8 @@ static Token* functionDefinition(Token* tok, Type* funcReturnBaseType) {
     // 初始化函数帧内部变量
     Local = NULL;
 
-    // commit[43]: 函数也是新的作用范围
     // Q: 这里结合函数本身定义的 {} 同样会在 compoundStamt() 中声明 是无效的
-    // 截至 commit[43] 即使是注释掉也 ok  看看后面是否一定需要
+    // 截至 commit[44] 即使是注释掉也 ok  看看后面是否一定需要
     enterScope();
 
     // 第一次更新 Local: 函数形参
@@ -491,7 +490,7 @@ static Token* functionDefinition(Token* tok, Type* funcReturnBaseType) {
     function->AST = compoundStamt(&tok, tok);
     function->local = Local;
 
-    // commit[43]: 函数访问结束 退出
+    // commit[44]: 函数访问结束 退出
     leaveScope();
 
     return tok;
@@ -522,7 +521,7 @@ static Node* compoundStamt(Token** rest, Token* tok) {
     Node HEAD = {};
     Node* Curr = &HEAD;
 
-    // commit[43]: 每次进入一个新的 {} 范围执行 enter       // Q: 在函数后面紧跟着算是无效层次吗
+    // commit[44]: 每次进入一个新的 {} 范围执行 enter       // Q: 在函数后面紧跟着算是无效层次吗
     enterScope();
 
     while (!equal(tok, "}")) {
@@ -538,7 +537,7 @@ static Node* compoundStamt(Token** rest, Token* tok) {
     }
     // 得到 CompoundStamt 内部的语句链表
 
-    // commit[43]: 同理 退出域
+    // commit[44]: 同理 退出域
     leaveScope();
 
     ND->Body = HEAD.next;

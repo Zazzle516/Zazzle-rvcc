@@ -1,0 +1,14 @@
+#include <stdio.h>
+#include <stdlib.h>
+
+// 结合在 test.h 中的 #y(字符串化) 是为了更好的进行结果信息的打印
+void assert(int expected, int actual, char* code) {
+    if (expected == actual) {
+        printf("%s => %d\n", code, actual);
+    }
+
+    else {
+        printf("%s => %d expected but got %d\n", code, expected, actual);
+        exit(1);
+    }
+}
