@@ -83,6 +83,11 @@ int main(int argc, char* argv[]) {
 
     // 后端生成代码
     FILE* result = openFile(compilResPath);
+
+    // commit[47]: 为汇编文件添加调试信息  参考 DWARF 索引
+    // .file 1 "fileName"  定义数字 1 对应的文件名的映射 建立索引
+    fprintf(result, ".file 1 \"%s\"\n", compilInputPath);
+
     codeGen(wrapper, result);
 
     return 0;

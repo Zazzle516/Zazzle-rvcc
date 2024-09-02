@@ -147,6 +147,11 @@ static void printLn(char* Fmt, ...) {
 
 // 计算式汇编
 static void calcuGen(Node* AST) {
+    // .loc fileNumber lineNumber [columnNumber] [options]
+    // fileNumber: 根据 .file 的定义 执行对文件名的索引
+    // lineNumber: 当前汇编代码对应源码中的行
+    printLn("  .loc 1 %d", AST->token->LineNum);
+
     switch (AST->node_kind)
     {
     case ND_NUM:
@@ -299,6 +304,9 @@ static void calcuGen(Node* AST) {
 
 // 表达式代码
 static void exprGen(Node* AST) {
+    // 同理 声明下面这些汇编代码都属于某一条源代码语句
+    printLn("  .loc 1 %d", AST->token->LineNum);
+
     switch (AST->node_kind)
     {
     case ND_RETURN:
