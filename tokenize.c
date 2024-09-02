@@ -20,7 +20,7 @@ void errorHint(char* errorInfo, ...) {
 }
 
 // commit[40]: 记录错误在文件中的位置 并打印错误信息
-void errorAt(char* place, char* FMT, va_list VA) {
+void errorAt(int errorLineNum, char* place, char* FMT, va_list VA) {
 
     // 找到 errorLineStart 最开始的位置
     char* errorLineStart = place;
@@ -32,14 +32,15 @@ void errorAt(char* place, char* FMT, va_list VA) {
     while (*errorLineEnd != '\n')
         errorLineEnd++;
 
+    // commit[46]: 在 zacc.h 中添加行号信息后 优化掉这段公共计算
     // 找到整个文件中 errorLine 的行号
-    int errorLine = 1;
-    for (char* P = InputHEAD; P < errorLineStart; P ++)
-        if (*P == '\n')
-            errorLine++;
+    // int errorLine = 1;
+    // for (char* P = InputHEAD; P < errorLineStart; P ++)
+    //     if (*P == '\n')
+    //         errorLine++;
 
     // 对错误信息进行格式处理
-    int charNum = fprintf(stderr, "%s:%d: ", currentFileName, errorLine);
+    int charNum = fprintf(stderr, "%s:%d: ", currentFileName, errorLineNum);
     fprintf(stderr, "%.*s\n", (int)(errorLineEnd - errorLineStart), errorLineStart);
 
     int err_place = place - errorLineStart + charNum;
@@ -63,18 +64,27 @@ void errorAt(char* place, char* FMT, va_list VA) {
 
 // 对错误信息的具体处理     针对 数字/符号 抽象出一层用来调用 errorAt()
 
+// 针对 token 的报错  只会在 parse 层被调用
 void tokenErrorAt(Token* token, char* FMT, ...) {
     va_list VA;
     va_start(VA, FMT);
 
-    errorAt(token->place, FMT, VA);
+    // commit[46]: 在 struct token 添加了 lineNUm 属性后通过空间提高了效率
+    errorAt(token->LineNum, token->place, FMT, VA);
 }
 
+// 针对 char 的报错  只会在 tokenize 层调用
 void charErrorAt(char* place, char* FMT, ...) {
     va_list VA;
     va_start(VA, FMT);
 
-    errorAt(place, FMT, VA);
+    // commit[46]: 因为在 tokenize 层 token 是生成目标  所以通过编译的方式得到错误的字符位置
+    int errorLineNum = 1;
+    for (char* P = InputHEAD; P < place; P ++)
+        if (*P == '\n')
+            errorLineNum ++;
+
+    errorAt(errorLineNum, place, FMT, VA);
 }
 
 // 关键字声明 目前没用
@@ -304,6 +314,24 @@ static int readPunct(char* input_ptr) {
     return (ispunct(*input_ptr) ? 1: 0);
 }
 
+// commit[46]: 计算 token 的行号
+static void calcuLineNum(Token* tok) {
+    int lineNum = 1;        // 预测下一次赋值的行号  lineNum 提前 P 一行 ??
+    char* P = InputHEAD;
+
+    while (*P) {
+        // Tip: 如果是个很长的单词 需要完全走过一遍才能进入下一个 token 效率不高但是实现简单
+        if (P == tok->place) {
+            tok->LineNum = lineNum;
+            tok = tok->next;
+        }
+
+        if (*P == '\n')
+            lineNum++;
+        P++;
+    }
+}
+
 Token* tokenize(char* fileName, char* P) {
     Token HEAD = {};
     Token* currToken = &HEAD;
@@ -393,6 +421,9 @@ Token* tokenize(char* fileName, char* P) {
 
     // 对完整的 Token 流进行判断 提取关键字
     convertKeyWord(HEAD.next);
+
+    // commit[46]: 为每个 Token 分配行号
+    calcuLineNum(HEAD.next);
 
     return HEAD.next;
 }

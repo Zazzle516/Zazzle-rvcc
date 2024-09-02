@@ -52,10 +52,13 @@ struct Token {
     Type* tokenType;
 
     char* strContent;
+
+    // commit[46]: 记录行号 方便报错
+    int LineNum;
 };
 
 void errorHint(char* errorInfo, ...);
-void errorAt(char* place, char* FMT, va_list VA);
+void errorAt(int errorLineNum, char* place, char* FMT, va_list VA);
 void tokenErrorAt(Token* token, char* FMT, ...);
 void charErrorAt(char* place, char* FMT, ...);
 bool equal(Token* input_token, char* target);
