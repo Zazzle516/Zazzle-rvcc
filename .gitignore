@@ -30,3 +30,6 @@ build/
 commit-note/
 annotation-bak/
 testRes/
+
+# commit[45]: 将 test.sh 拆分  忽视可执行文件
+/test/*.exe
