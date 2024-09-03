@@ -134,6 +134,10 @@ typedef enum {
     // commit[39]: 对 GNU-C 的语句表达式的扩展支持
     // 大多数时候用在宏定义中 ({expr1, expr2, ...}) 语法结构会被写入 Body 返回最后一个表达式结果
     ND_GNU_EXPR,
+
+    // commit[48]: 支持 "," 表达式
+    ND_COMMA,
+
 } NODE_KIND;
 
 // 定义函数内部 AST 结构

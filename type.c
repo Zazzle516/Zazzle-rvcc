@@ -121,6 +121,10 @@ void addType(Node* ND) {
     case ND_VAR:
         ND->node_type = ND->var->var_type;
         return;
+
+    case ND_COMMA:
+        ND->node_type = ND->RHS->node_type;
+        return;
     
     case ND_GNU_EXPR:
     {

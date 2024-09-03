@@ -688,7 +688,16 @@ static Node* exprStamt(Token** rest, Token* tok) {
 }
 
 static Node* expr(Token** rest, Token* tok) {
-    return assign(rest, tok);
+    // commit[48]: 针对 ND_COMMA 构造镜像 Haffman 结构
+    Node* ND = assign(&tok, tok);
+
+    if (equal(tok, ",")) {
+        ND = createAST(ND_COMMA, ND, expr(rest, tok->next), tok);
+        return ND;
+    }
+
+    *rest = tok;
+    return ND;
 }
 
 // 赋值语句
@@ -907,7 +916,7 @@ static Node* primary_class_expr(Token** rest, Token* tok) {
 
 // commit[24]: 处理含参函数调用
 static Node* funcall(Token** rest, Token* tok) {
-    // funcall = ident "(" (expr ("," expr)*)? ")"
+    // 在测试 commit[48] 突发了报错  经过 3h 的排查找到是 funcall 的问题(吐血...
 
     // 1. 处理 ident
     Node* ND = createNode(ND_FUNCALL, tok);
@@ -926,7 +935,12 @@ static Node* funcall(Token** rest, Token* tok) {
         // 针对多个参数的情况 跳过分割符 其中第一个参数没有 "," 分割
         if (Curr != &HEAD)
             tok = skip(tok, ",");
-        Curr->next = expr(&tok, tok);
+
+        // 问题就出现在 expr() 和 assign() 的层次调用上  在 commit[24] 实现 funcall() 的时候
+        // expr() 和 assign() 调用层次没有区别所以测试 Ok 但是在 expr() 支持 ND_COMMA 后层次不同  所以报错
+        // Curr->next = expr(&tok, tok);
+        Curr->next = assign(&tok, tok);
+
         Curr = Curr->next;
     }
 

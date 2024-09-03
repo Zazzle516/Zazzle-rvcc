@@ -123,6 +123,13 @@ static void getAddr(Node* nd_assign) {
         return;
     }
 
+    case ND_COMMA:
+    {
+        calcuGen(nd_assign->LHS);
+        getAddr(nd_assign->RHS);
+        return;
+    }
+
     default:
         break;
     }
@@ -239,6 +246,13 @@ static void calcuGen(Node* AST) {
 
         printLn("  # 调用 %s 函数", AST->FuncName);
         printLn("  call %s", AST->FuncName);
+        return;
+    }
+
+    case ND_COMMA:
+    {
+        calcuGen(AST->LHS);
+        calcuGen(AST->RHS);
         return;
     }
 
