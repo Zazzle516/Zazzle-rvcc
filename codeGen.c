@@ -55,7 +55,6 @@ static void Load(Type* type) {
         printLn("  ld a0, 0(a0)");
 }
 
-
 static void Store(Type* type) {
     pop_stack("a1");
     printLn("  # 将 a0 的值写入 a1 存储的地址");
@@ -93,7 +92,6 @@ static void preAllocStackSpace(Object* func) {
     }
 }
 
-
 static void getAddr(Node* nd_assign) {
     switch (nd_assign->node_kind) {
     
@@ -125,9 +123,14 @@ static void getAddr(Node* nd_assign) {
 
     case ND_COMMA:
     {
+        // eg. int *ptr = &(a, b, c);
+        // 只能作用在 &(expr1, ..., exprN) 这样的表达式 并且 exprN 必须是 leftValue 才可以
+        // 因为 &(ND_COMMA) 的执行和 (ND_COMMA) 是独立的(执行入口不同)  所以这里同样需要执行 LHS 保证正确
         calcuGen(nd_assign->LHS);
-        getAddr(nd_assign->RHS);
-        return;
+
+        // ND_COMMA 是 Haffman 结构  所以执行 LHS 叶子结点   递归 RHS 右子树
+        // 又因为递归结束后直接返回  所以最后一个表达式地址会出现在汇编代码的最后
+        return getAddr(nd_assign->RHS);
     }
 
     default:
@@ -197,7 +200,7 @@ static void calcuGen(Node* AST) {
 
         return;
     }
-    
+
     case ND_ADDR:
     {
         // case 1: &var  根据变量的名字找到栈内地址偏移量 - ND_VAR

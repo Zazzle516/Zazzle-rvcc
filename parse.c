@@ -575,6 +575,8 @@ static Node* declaration(Token** rest, Token* tok) {
         Node* LHS = singleVarNode(var, isPtr->Name);
         Node* RHS = assign(&tok, tok->next);
 
+        // Tip: int a, b = 2;  这样的赋值语句 a 是不会被赋值 2 的
+        // ND_ASSIGN->LHS: 存储变量的链表 var(b)->var(a)  但是只有 var(b) 会在 codeGen() 中被赋值
         Node* ND_ROOT = createAST(ND_ASSIGN, LHS, RHS, tok);
 
         Curr->next = createSingle(ND_STAMT, ND_ROOT, tok);
@@ -688,7 +690,8 @@ static Node* exprStamt(Token** rest, Token* tok) {
 }
 
 static Node* expr(Token** rest, Token* tok) {
-    // commit[48]: 针对 ND_COMMA 构造镜像 Haffman 结构
+    // commit[48]: 针对 ND_COMMA 构造 Haffman 结构
+    // 因为每次递归 expr() 后 ND 会更新 不会记录上一层的 ND 所以不是镜像的 Haffman 树
     Node* ND = assign(&tok, tok);
 
     if (equal(tok, ",")) {
