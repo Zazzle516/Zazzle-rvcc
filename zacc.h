@@ -22,6 +22,8 @@
 typedef struct Node Node;
 typedef struct Type Type;
 typedef struct Object Object;
+typedef struct structMember structMember;
+
 
 // 字符串
 char* format(char* Fmt, ...);
@@ -92,7 +94,7 @@ struct Object {
     Object* formalParam;
 };
 
-// 声明 AST 的节点类型
+// 声明 AST 的节点类型   和构造 AST 相关所以一定是和某种运算操作
 typedef enum {
     ND_NUM,
     ND_ADD,
@@ -138,6 +140,9 @@ typedef enum {
     // commit[48]: 支持 "," 表达式
     ND_COMMA,
 
+    // commit[49]: 支持结构体访问运算
+    ND_STRUCT_MEMEBER,
+
 } NODE_KIND;
 
 // 定义函数内部 AST 结构
@@ -176,6 +181,9 @@ struct Node {
 
     // 因为参数本身可能是计算式 比如 ND_ADD 之类的 所以用 Node 类型
     Node* Func_Args;
+
+    // commit[49]: 储存结构体访问的成员变量  一个 ND_STRUCT_MEMEBER 每次只能访问一个
+    structMember* structTargetMember;
 };
 
 
@@ -194,6 +202,9 @@ typedef enum {
 
     // commit[33]: 支持 char 类型
     TY_CHAR,
+
+    // commit[49]: 结构体
+    TY_STRUCT,
 } Typekind;
 
 
@@ -216,7 +227,22 @@ struct Type {
 
     // commit[27]: 记录数组的元素个数(在 newSubPtr() 有具体使用)
     int arrayElemCount;
+
+    // commit[49]: 该结构体的成员变量链表
+    structMember* structMemLink;
 };
+
+
+/* 定义结构体的结构 */
+struct structMember {
+    structMember* next;
+
+    Type* memberType;
+    Token* memberName;
+
+    int offset;             // 记录该成员相对于结构体的偏移量
+};
+
 
 // 使用在 type.c 中定义的全局变量 (用于对 int 类型的判断)
 extern Type* TYINT_GLOBAL;

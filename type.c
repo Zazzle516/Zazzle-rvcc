@@ -125,6 +125,11 @@ void addType(Node* ND) {
     case ND_COMMA:
         ND->node_type = ND->RHS->node_type;
         return;
+
+    case ND_STRUCT_MEMEBER:
+        // 把访问目标的成员变量的类型向上传递
+        ND->node_type = ND->structTargetMember->memberType;
+        return;
     
     case ND_GNU_EXPR:
     {

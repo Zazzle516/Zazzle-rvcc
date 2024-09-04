@@ -33,7 +33,14 @@ struct Scope {
 // commit[31]: 把函数作为 Global Object 进行处理
 // parse() = (functionDefinition | globalVariable)*
 
-// declspec = "int" | "char"
+// commit[49]: 支持 struct 语法解析
+// declspec = "int" | "char" | structDeclaration
+// __declspec = "int" | "char"
+
+// commit[49]: struct StructName { variableDeclaration }
+// structDeclaration = "{" structMembers
+// structMembers = (declspec declarator ("," declarator)* ";")*
+
 // declarator = "*"* ident typeSuffix
 
 // commit[22]: 声明语句的语法定义 支持连续定义
@@ -67,7 +74,10 @@ struct Scope {
 
 // commit[29]: 新增对 [] 的语法支持  本质上就是对 *(x + y) 的一个语法糖 => x[y]
 // third_class_expr = (+|-|&|*)third_class_expr | postFix
-// postFix = primary_class_expr ("[" expr "]")*
+
+// commit[49]: 支持对结构体成员的访问
+// postFix = primary_calss_expr ("[" expr"]" | "." ident)*
+// __postFix = primary_class_expr ("[" expr "]")*
 
 // commit[23]: 添加对零参函数名声明的支持
 // commit[30]: 新增对 "sizeof" 的支持
@@ -85,7 +95,7 @@ Object* Global;     // 全局变量 + 函数定义(因为 C 不能发生函数�
 // HEADScope: 指向零初始化的 Scope 结构体指针  每次访问 HEADScope 仍然指向同一块静态分配的空间  并且保持上一次修改后的状态
 // 类似于链表操作的头结点  本身不储存实际内容  只是为了方便操作比如头插法
 
-// 还有一个功能是储存全局变量  或许可以把这个 HEADScope 看成一个程序本身的函数
+// 还有一个功能是储存全局变量  或许可以把这个 HEADScope 看成这个程序函数
 static Scope *HEADScope = &(Scope){};
 
 /* 变量域的操作定义 */
@@ -178,7 +188,19 @@ static int getArrayNumber(Token* tok) {
 
 // commit[33]: 判断当前读取的类型是否符合变量声明的类型
 static bool isTypeName(Token* tok) {
-    return (equal(tok, "int") || equal(tok, "char"));
+    return (equal(tok, "int") || equal(tok, "char")) || equal(tok, "struct");
+}
+
+static structMember* getStructMember(Type* structType, Token* tok) {
+    // 遍历结构体所有的成员变量返回 .x 的目标变量
+    for (structMember* mem = structType->structMemLink; mem; mem = mem->next) {
+        if (mem->memberName->length == tok->length &&
+            !strncmp(mem->memberName->place, tok->place, tok->length))
+            return mem;
+    }
+
+    tokenErrorAt(tok, "No such struct member");
+    return NULL;
 }
 
 
@@ -188,6 +210,8 @@ static Token* gloablDefinition(Token* tok, Type* globalBaseType);
 static Type* declarator(Token** rest, Token* tok, Type* Base);
 static Type* declspec(Token** rest, Token* tok);
 static Node* declaration(Token** rest, Token* tok);
+
+static Type* structDeclaration(Token** rest, Token* tok);
 
 static Node* compoundStamt(Token** rest, Token* tok);
 static Node* stamt(Token** rest, Token* tok);
@@ -341,7 +365,14 @@ static Type* declspec(Token** rest, Token* tok) {
         *rest = skip(tok, "char");
         return TYCHAR_GLOBAL;
     }
-    return TYINT_GLOBAL;
+
+    // commit[49]: 支持对 struct 关键字的前缀判断
+    if (equal(tok, "struct")) {
+        return structDeclaration(rest, tok->next);
+    }
+
+    tokenErrorAt(tok, "unexpected preFix declaration\n");
+    return NULL;
 }
 
 // 解析函数传参
@@ -372,7 +403,6 @@ static Type* funcFormalParams(Token** rest, Token* tok, Type* returnType) {
 }
 
 // commit[27]: 处理定义语法的后缀
-// Tip: 现在的语法解析不支持全局变量的赋值
 static Type* typeSuffix(Token** rest, Token* tok, Type* BaseType) {
     if (equal(tok, "(")) {
         // 函数定义处理    BaseType: 函数返回值类型
@@ -390,6 +420,7 @@ static Type* typeSuffix(Token** rest, Token* tok, Type* BaseType) {
     }
 
     // 变量定义处理    BaseType: 变量类型
+    // commit[49]: 记录结构体的名称定义 更新 tok
     *rest = tok;
     return BaseType;
 }
@@ -410,8 +441,9 @@ static Type* declarator(Token** rest, Token* tok, Type* Base) {
     // 调用 typeSuffix() 传递的是 rest 所以这里 tok 没有更新
     Base = typeSuffix(rest, tok->next, Base);
 
-    // case1: 函数定义         读取函数名
-    // case2: 变量或者传参解析  读取传参变量名
+    // case1: 函数定义 & 读取函数名
+    // case2: 传参解析 & 读取传参变量名
+    // case3: 记录成员变量的名称 & 结构体本身的名称
     Base->Name = tok;
 
     return Base;
@@ -426,13 +458,11 @@ static void createParamVar(Type* param) {
     }
 }
 
-// commit[32]: 判断当前的语法是函数还是全局变量    区别就是 ";"
+// commit[32]: 判断当前的语法是函数还是全局变量
 static bool GlobalOrFunction(Token* tok) {
     bool Global = true;
     bool Function = false;
 
-    // Debug 的时候根据这里的语法不支持全局变量的赋值  只支持定义
-    // 如果优化 equal() 能传递一个错误信息参数就好了        // 不支持吗
     if (equal(tok, ";"))
         return Global;
 
@@ -461,6 +491,38 @@ static Object* newStringLiteral(char* strContent, Type* strType) {
     Object* strObj = newAnonyGlobalVar(strType);
     strObj->InitData = strContent;
     return strObj;
+}
+
+// commit[49]: 以链表的形式存储所有成员变量
+static void structMembers(Token** rest, Token* tok, Type* structType) {
+    structMember HEAD = {};
+    structMember* Curr = &HEAD;
+
+    while (!equal(tok, "}")) {
+        Type* memberBaseType = declspec(&tok, tok);
+
+        // 类似于变量 declaration 成员变量也可能是连续定义的
+        int First = true;
+        while (!consume(&tok, tok, ";")) {
+            if (!First)
+                tok = skip(tok, ",");
+            First = false;
+            
+            // 结构体中的每一个成员都作为 struct structMember 存储
+            structMember* newStructMember = calloc(1, sizeof(structMember));
+
+            // 使用 declarator 支持复杂的成员定义
+            newStructMember->memberType = declarator(&tok, tok, memberBaseType);
+            // 后续对成员变量的访问通过 structName 判断
+            newStructMember->memberName = newStructMember->memberType->Name;
+
+            Curr->next = newStructMember;
+            Curr = Curr->next;
+        }
+    }
+
+    *rest = tok->next;
+    structType->structMemLink = HEAD.next;
 }
 
 /* 语法规则的递归解析 */
@@ -504,6 +566,7 @@ static Token* gloablDefinition(Token* tok, Type* globalBaseType) {
     while (!consume(&tok, tok, ";")) {
         // 判断是否为连续的全局变量的定义  同时正确解析第一个变量
         if (!isLast)
+            // 目前的语法不支持全局变量的赋值  还没有办法接入 ND_ASSIGN 语法
             tok = skip(tok, ",");
         isLast = false;
 
@@ -521,13 +584,13 @@ static Node* compoundStamt(Token** rest, Token* tok) {
     Node HEAD = {};
     Node* Curr = &HEAD;
 
-    // commit[44]: 每次进入一个新的 {} 范围执行 enter       // Q: 在函数后面紧跟着算是无效层次吗
+    // commit[44]: 每次进入一个新的 {} 范围执行 enter
+    // Q: 在函数后面紧跟着算是无效层次吗  现在看起来没影响
     enterScope();
 
     while (!equal(tok, "}")) {
         // 针对定义语句和表达式语句分别处理
         if (isTypeName(tok))
-            // Tip: 如果只是变量声明没有赋值 不会新建任何结点 只是更新了 Local
             Curr->next = declaration(&tok, tok);
         else
             Curr->next = stamt(&tok, tok);
@@ -550,8 +613,11 @@ static Node* compoundStamt(Token** rest, Token* tok) {
 // declaration = declspec (declarator ("=" expr)? ("," declarator ("=" expr)?)*)? ";"
 static Node* declaration(Token** rest, Token* tok) {
     // 1. 解析 declspec 类型语法  放在循环外面应用于所有的声明变量
+    // commit[49]: 在 declspec 中完成对结构体的解析
     Type* nd_base_type = declspec(&tok, tok);
-
+    
+    // commit[49]: 处理结构体的名称定义
+    
     Node HEAD = {};
     Node* Curr = &HEAD;
 
@@ -563,6 +629,7 @@ static Node* declaration(Token** rest, Token* tok) {
             // Tip: 函数嵌套定义报错位置
             tok = skip(tok, ",");
 
+        // 单纯的变量声明不会写入 AST 结构  只是更新了 Local | Global 链表
         Type* isPtr = declarator(&tok, tok, nd_base_type);
         Object* var = newLocal(getVarName(isPtr->Name), isPtr);
 
@@ -591,6 +658,49 @@ static Node* declaration(Token** rest, Token* tok) {
     *rest = tok->next;
     return multi_declara;
 }
+
+// commit[49]: 对结构体的解析
+static Type* structDeclaration(Token** rest, Token* tok) {
+    tok = skip(tok, "{");
+
+    // 分配记录结构体元数据的空间
+    Type* structType = calloc(1, sizeof(Type));
+    structType->Kind = TY_STRUCT;
+
+    // 解析结构体成员
+    structMembers(rest, tok, structType);
+
+    // 对应到 codeGen() 通过 offset 分配空间 找到成员变量  这个时候还没有进行对齐  所以只是根据成员本身的大小决定偏移量
+    int Offset = 0;
+    for (structMember* newStructMem = structType->structMemLink; newStructMem; newStructMem = newStructMem->next) {
+        newStructMem->offset = Offset;
+        Offset += newStructMem->memberType->BaseSize;
+    }
+
+    // 结构体地址就是第一个成员的地址
+    structType->BaseSize = Offset;
+    return structType;
+}
+
+// commit[49]: 构造访问结构体成员的 AST
+static Node* structRef(Node* VAR_STRUCT, Token* tok) {
+    // 把 ND_VAR.node_type 根据 var.var_type 更新为 ND_STRUCT  同时记录一些 size 相关的元数据
+    // 本质上是把存储在 Local 链表变量的内容传递到 Node 成为一个结构体结点
+    addType(VAR_STRUCT);
+
+    // 判断该变量是结构体的合法性
+    if (VAR_STRUCT->node_type->Kind != TY_STRUCT)
+        tokenErrorAt(VAR_STRUCT->token, "not a struct");
+
+    // 把 x.a 拆成两个结点构成的单叉树  所以 codeGen() 都是根据 ND_STRUCT_MEMEBER 去实现
+    Node* ND = createSingle(ND_STRUCT_MEMEBER, VAR_STRUCT, tok);
+    // Q: 为什么传递 Type
+    // A: 同样因为成员变量只是变量声明  并不会存储在 AST 结构中  只能存在 Type 中
+    ND->structTargetMember = getStructMember(VAR_STRUCT->node_type, tok);
+
+    return ND;
+}
+
 
 // 对表达式语句的解析
 static Node* stamt(Token** rest, Token* tok) {
@@ -840,14 +950,25 @@ static Node* third_class_expr(Token** rest, Token* tok) {
 static Node* preFix(Token** rest, Token* tok) {
     Node* ND = primary_class_expr(&tok, tok);
 
-    while (equal(tok, "[")) {
-        Token* idxStart = tok;
-        Node* idxExpr = expr(&tok, tok->next);
-        tok = skip(tok, "]");
-        ND = createSingle(ND_DEREF, newPtrAdd(ND, idxExpr, idxStart), idxStart);
+    while (true) {
+        if (equal(tok, "[")) {
+            Token* idxStart = tok;
+            Node* idxExpr = expr(&tok, tok->next);
+            tok = skip(tok, "]");
+            ND = createSingle(ND_DEREF, newPtrAdd(ND, idxExpr, idxStart), idxStart);
+            continue;
+        }
+
+        // 从 primary_class_expr 中变量访问返回 (优先级还挺高的
+        if (equal(tok, ".")) {
+            ND = structRef(ND, tok->next);
+            tok = tok->next->next;
+            continue;
+        }
+
+        *rest = tok;
+        return ND;
     }
-    *rest = tok;
-    return ND;
 }
 
 // 判断子表达式或者数字

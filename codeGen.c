@@ -133,6 +133,18 @@ static void getAddr(Node* nd_assign) {
         return getAddr(nd_assign->RHS);
     }
 
+    case ND_STRUCT_MEMEBER:
+    {
+        // 获取结构体本身的地址 ND_VAR 写入 reg-a0
+        printLn("  # 获取 struct_var 地址 ND_VAR");
+        getAddr(nd_assign->LHS);
+
+        printLn("  # 计算成员变量的地址偏移");
+        printLn("  li t0, %d", nd_assign->structTargetMember->offset);      // 把偏移量结果放到 t~ 临时寄存器中
+        printLn("  add a0, a0, t0");        // 计算偏移结果
+        return;
+    }
+
     default:
         break;
     }
@@ -150,8 +162,6 @@ static void printLn(char* Fmt, ...) {
     va_end(VA);
 
     fprintf(compileResult, "\n");   // 没有参数考虑就不需要调用 vprintf()
-
-    printf("\n");
 }
 
 
@@ -182,6 +192,16 @@ static void calcuGen(Node* AST) {
     case ND_VAR:
     {
         getAddr(AST);
+        Load(AST->node_type);
+        return;
+    }
+
+    case ND_STRUCT_MEMEBER:
+    {
+        printLn("  # 获取 struct_var 地址 ND_STRUCT_MEMBER");
+        getAddr(AST);
+
+        printLn("  # 读取目标成员变量");
         Load(AST->node_type);
         return;
     }
