@@ -85,6 +85,9 @@ static void preAllocStackSpace(Object* func) {
         for(Object* obj = currFunc->local; obj; obj = obj->next) {
             realTotal += obj->var_type->BaseSize;
 
+            // commit[51]: 支持变量对齐
+            realTotal = alignTo(realTotal, obj->var_type->alignSize);
+
             // Tip: 很巧妙!     在计算空间的时候同时顺序得到变量在栈空间(B区域)的偏移量
             // 由于 AST 的 ND_VAR 指向 Local 所以随着 func.local 遍历会同时改变 AST.var.offset
             obj->offset = -realTotal;
@@ -461,12 +464,12 @@ void emitText(Object* Global) {
         printLn("%s:", currFunc->var_name);
         // 更新全局变量的指向
         currFuncFrame = currFunc;
-    
+
         // commit[23]: 零参函数调用 新增对 reg-ra 的保存
         printLn("  # 把返回地址寄存器 ra 压栈");
         printLn("  addi sp, sp, -16");
         printLn("  sd ra, 8(sp)");
-        
+
         // 根据当前的 sp 定义准备执行的函数栈帧 fp
         printLn("  # 把函数栈指针 fp 压栈");
         // 因为 ra 的保存提前分配了 16 个字节 保存上一个 fp 状态用于恢复
