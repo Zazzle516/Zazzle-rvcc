@@ -498,7 +498,7 @@ static void structMembers(Token** rest, Token* tok, Type* structType) {
     structMember HEAD = {};
     structMember* Curr = &HEAD;
 
-    while (!equal(tok, "}")) {
+    while (!equal(tok, "}")) {  // 支持结构体的递归执行
         Type* memberBaseType = declspec(&tok, tok);
 
         // 类似于变量 declaration 成员变量也可能是连续定义的
@@ -660,6 +660,7 @@ static Node* declaration(Token** rest, Token* tok) {
 }
 
 // commit[49]: 对结构体的解析
+// commit[50]: 新增结构体的对齐
 static Type* structDeclaration(Token** rest, Token* tok) {
     tok = skip(tok, "{");
 
@@ -670,15 +671,32 @@ static Type* structDeclaration(Token** rest, Token* tok) {
     // 解析结构体成员
     structMembers(rest, tok, structType);
 
-    // 对应到 codeGen() 通过 offset 分配空间 找到成员变量  这个时候还没有进行对齐  所以只是根据成员本身的大小决定偏移量
-    int Offset = 0;
+    // 结构体对齐初始化 1B
+    // Q: 如果改 0: 会发生 Floating point exception (core dumped)
+    // A: 在 test/struct.c 中有一个空结构体测试  导致在 BaseSize 更新中除零异常
+    structType->alignSize = 1;
+
+    int totalOffset = 0;
+    // int-char-int => 0-8-9-16-24
     for (structMember* newStructMem = structType->structMemLink; newStructMem; newStructMem = newStructMem->next) {
-        newStructMem->offset = Offset;
-        Offset += newStructMem->memberType->BaseSize;
+        // 确定当前变量的起始位置  判断是否会对齐  => 判断 realTotal 是否为 aimAlign 的倍数
+        // realTotal < 1.0 * aimAlign => 由小变大  填充字节  反之相反
+        totalOffset = alignTo(totalOffset, newStructMem->memberType->alignSize);
+        newStructMem->offset = totalOffset;
+
+        // 为下一个变量计算起始位置准备
+        totalOffset += newStructMem->memberType->BaseSize;
+
+        // 判断是否更新结构体对齐最大值  本质上 structType->alignSize = maxSingleOffset
+        if (structType->alignSize < newStructMem->memberType->alignSize)
+            structType->alignSize = newStructMem->memberType->alignSize;
     }
 
-    // 结构体地址就是第一个成员的地址
-    structType->BaseSize = Offset;
+    // Q: 为什么这里需要额外一次对齐
+    // A: 比如 int-char 这种情况  最后的 char 也要单独留出 8B 否则 9B 中另外的 7B 读取会出问题
+    structType->BaseSize = alignTo(totalOffset, structType->alignSize);
+    // __structType->BaseSize = Offset;
+
     return structType;
 }
 

@@ -45,9 +45,9 @@ static void Load(Type* type) {
     // 数组的 AST 结构本身就是 ND_DEREF  通过 calcuGen(DEREF->LHS) 已经可以得到数组的地址
     if (type->Kind == TY_ARRAY_LINER)
         return;
-    
+
     printLn("  # 读取 a0 储存的地址内容 并存入 a0");
-    
+
     if (type->BaseSize == 1)
         // Tip: 在汇编代码部分 类型只能体现在大小  根据 Kind 区分没有意义
         printLn("  lb a0, 0(a0)");
@@ -65,8 +65,9 @@ static void Store(Type* type) {
         printLn("  sd a0, 0(a1)");
 }
 
-static int alignTo(int realTotal, int aimAlign) {
-    // 在真实使用的空间 readTotal 上加上 (+ Align - 1) 不足以形成一次对齐倍数的空间 防止对齐后导致的空间不足
+// commit[50]: 修改为 public 函数调用
+int alignTo(int realTotal, int aimAlign) {
+    // 在真实使用的空间 realTotal 上加上 (+ Align - 1) 不足以形成一次对齐倍数的空间 防止对齐后导致的空间不足
     return ((realTotal + aimAlign - 1) / aimAlign) * aimAlign;
 }
 

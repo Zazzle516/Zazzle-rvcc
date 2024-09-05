@@ -1,10 +1,20 @@
 #include "zacc.h"
 
-Type* TYINT_GLOBAL = &(Type){.Kind = TY_INT, .BaseSize = 8};
+// commit[50]: 更新不同类型需要的对齐长度
+Type* TYINT_GLOBAL = &(Type){.Kind = TY_INT, .BaseSize = 8, .alignSize = 8};
+Type* TYCHAR_GLOBAL = &(Type){.Kind = TY_CHAR, .BaseSize = 1, .alignSize = 1};
 
-// commit[33]: 定义全局需要的 char 属性
-// 作为万能的 BaseType 直接使用
-Type* TYCHAR_GLOBAL = &(Type){.Kind = TY_CHAR, .BaseSize = 1};
+// commit[50]: 对每个类型新增 typeAlign 保证 codeGen().alignTo() 计算正确性
+static Type* newType(Typekind typeKind, int typeSize, int typeAlign) {
+    Type* returnType = calloc(1, sizeof(Type));
+
+    returnType->Kind = typeKind;
+    returnType->BaseSize = typeSize;
+    returnType->alignSize = typeAlign;
+
+    return returnType;
+}
+
 
 // 判断变量类型
 bool isInteger(Type* TY) {
@@ -14,19 +24,16 @@ bool isInteger(Type* TY) {
 
 // 新建指针变量结点 根据 Base 定义指向
 Type* newPointerTo(Type* Base) {
-    Type* ty = calloc(1, sizeof(Type));
+    Type* returnType = newType(TY_PTR, 8, 8);
+    returnType->Base = Base;
 
-    ty->Kind = TY_PTR;
-    ty->Base = Base;
-
-    // commit[27]: 任何指针的空间都是 8B
-    ty->BaseSize = 8;
-
-    return ty;
+    return returnType;
 }
 
 // 构造函数结点
 Type* funcType(Type* ReturnType) {
+    // Q: 这个没有用 newType 抽象
+    // A: 我觉得是因为函数没有对齐需求 类型大小
     Type* type = calloc(1, sizeof(Type));
     type->Kind = TY_FUNC;
     type->ReturnType = ReturnType;
@@ -44,15 +51,20 @@ Type* copyType(Type *origin) {
 Type* linerArrayType(Type* arrayBaseType, int arrayElemCount) {
     // Q: 数组真正的空间分配发生在哪里
     // A: 在 codeGen().preAllocStackSpace() 中 根据数组的 BaseSize 总大小进行空间分配
-    Type* linerArray = calloc(1, sizeof(Type));
 
-    linerArray->Kind = TY_ARRAY_LINER;
-    linerArray->arrayElemCount = arrayElemCount;
     // commit[28]: 多维数组的每一层都是 linerArray
-    linerArray->Base = arrayBaseType;
     // commit[28]: 如果是多维数组定义 这里会用 (n - 1) 维数组的大小 * 第 n 维数组的个数
-    linerArray->BaseSize = arrayBaseType->BaseSize * arrayElemCount;
 
+    // commit[50]: 更新了数组的对齐方式  以每个数组元素的对齐空间为准
+    // 结构体数组元素的 BaseSize != alignSize  比如 int-char 情况  alignSize = 8 同时 BaseSize = 16
+    // 两个变量概念不同  结构体空间像一个盒子 这个盒子很多层 整个盒子的空间是 BaseSize 而 alignSize 是一层的大小
+    int linerTotalSize = arrayBaseType->BaseSize * arrayElemCount;
+    Type* linerArray = newType(TY_ARRAY_LINER, linerTotalSize, arrayBaseType->alignSize);
+    // Type* linerArray = newType(TY_ARRAY_LINER, linerTotalSize, arrayBaseType->BaseSize);
+
+    linerArray->Base = arrayBaseType;
+    linerArray->arrayElemCount = arrayElemCount;
+    
     return linerArray;
 }
 
@@ -115,6 +127,7 @@ void addType(Node* ND) {
     case ND_NUM:
     // Q: 为什么这里把函数调用的类型设置为 TYINT
     // Q: 而且不是所有结点都需要一个类型 比如 ND_STAMT 的类型就空置了 那 FUNCALL 为什么一定需要一个类型
+    // 现在 commit[50] 也没有对 ND_FUNCALL 使用 newType() 函数  emm.. 挺迷惑的
     case ND_FUNCALL:
         ND->node_type = TYINT_GLOBAL;
         return;

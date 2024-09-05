@@ -211,6 +211,7 @@ typedef enum {
 struct Type {
     Typekind Kind;
     Type* Base;         // 如果当前类型是指针 必须声明指针基类 后续涉及空间计算
+    int alignSize;      // 结构中单个最大的成员对齐目标  maxSingleOffset
 
     // commit[27]: 对 *任何类型* 的空间计算 等于 sizeof() 的返回值
     int BaseSize;
@@ -268,3 +269,5 @@ Type* linerArrayType(Type* arrayBaseType, int arrayElemCount);
 
 /* 后端生成 codeGen() 数据结构和函数声明 */
 void codeGen(Object* Prog, FILE* result);
+
+int alignTo(int realTotal, int aimAlign);
