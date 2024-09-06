@@ -3,6 +3,23 @@
 // commit[1] - commit[22] 注释备份在 annotation-bak 中
 // commit[42]: 通过 checkout 查看注释
 
+// commit[52]: 支持结构体标签的解析
+// 本质上和 TY_INT 没什么区分  只是 TY_INT 可以用字面量去提前定义  而结构体不能
+    // struct t {...} x;
+    //        t       x;
+    //       int      x;
+// 结构体声明和变量声明是同一个语法层次
+
+typedef struct TagScope TagScope;
+struct TagScope {
+    // 将函数可能定义的多个结构体类型模板作为链表存储
+    TagScope* next;
+
+    char* tagName;
+    // 利用 Type 记录该结构体的一些元数据  比如成员 对齐值 大小...
+    Type* tagType;
+};
+
 /* commit[44]: 从两个层次进行作用域的管理 {var} */
 // 类似于 Antlr4 对变量域通过 [[], [], ..] 的管理  这里使用 Scope 链表管理
 // 每个 Scope 中的变量同样构成了一个 VarInScope 链表存储
@@ -27,6 +44,10 @@ struct Scope {
     Scope* next;
 
     VarInScope* varScope;
+
+    // 没有标签的结构体实际上是一个匿名结构体  虽然可以定义多个结构体变量 但是无法被复用
+    // 结构体实例作为 var 存入 varScope 而 tarScope 是存了一个模板
+    TagScope* tagScope;
 };
 
 
@@ -125,6 +146,17 @@ static VarInScope* pushVarScopeToScope(char* Name, Object* var) {
     return newVarScope;
 }
 
+// commit[52]: 存入 struct 类型模板
+static void pushTagScopeToScope(Token* tok, Type* tagType) {
+    TagScope* newTagScope = calloc(1, sizeof(TagScope));
+
+    newTagScope->tagType = tagType;
+    newTagScope->tagName = strndup(tok->place, tok->length);
+
+    newTagScope->next = HEADScope->tagScope;
+    HEADScope->tagScope = newTagScope;
+}
+
 static Object* findVar(Token* tok) {
     // commit[44]: 在使用域记录之后遍历域查找
     for (Scope* currScp = HEADScope; currScp ; currScp = currScp->next) {
@@ -132,6 +164,18 @@ static Object* findVar(Token* tok) {
         for (VarInScope* currVarScope = currScp->varScope; currVarScope; currVarScope = currVarScope->next) {
             if (equal(tok, currVarScope->scopeName))
                 return currVarScope->varList;
+        }
+    }
+
+    return NULL;
+}
+
+// commit[52]: 类似 findVar() 使用结构体标签定义变量时  结构体标签需要存在
+static Type* findStructTag(Token* tok) {
+    for (Scope* currScope = HEADScope; currScope; currScope = currScope->next) {
+        for (TagScope* currTagScope = currScope->tagScope; currTagScope; currTagScope = currTagScope->next) {
+            if (equal(tok, currTagScope->tagName))
+                return currTagScope->tagType;
         }
     }
 
@@ -366,7 +410,7 @@ static Type* declspec(Token** rest, Token* tok) {
         return TYCHAR_GLOBAL;
     }
 
-    // commit[49]: 支持对 struct 关键字的前缀判断
+    // commit[49]: 只是 struct 类型的前缀比较大而已
     if (equal(tok, "struct")) {
         return structDeclaration(rest, tok->next);
     }
@@ -497,9 +541,10 @@ static Object* newStringLiteral(char* strContent, Type* strType) {
 static void structMembers(Token** rest, Token* tok, Type* structType) {
     structMember HEAD = {};
     structMember* Curr = &HEAD;
-
-    while (!equal(tok, "}")) {  // 支持结构体的递归执行
-        Type* memberBaseType = declspec(&tok, tok);
+    
+    while (!equal(tok, "}")) {
+        // 支持结构体的递归执行
+        Type* memberType = declspec(&tok, tok);
 
         // 类似于变量 declaration 成员变量也可能是连续定义的
         int First = true;
@@ -507,15 +552,16 @@ static void structMembers(Token** rest, Token* tok, Type* structType) {
             if (!First)
                 tok = skip(tok, ",");
             First = false;
-            
+
             // 结构体中的每一个成员都作为 struct structMember 存储
             structMember* newStructMember = calloc(1, sizeof(structMember));
 
             // 使用 declarator 支持复杂的成员定义
-            newStructMember->memberType = declarator(&tok, tok, memberBaseType);
+            newStructMember->memberType = declarator(&tok, tok, memberType);
             // 后续对成员变量的访问通过 structName 判断
             newStructMember->memberName = newStructMember->memberType->Name;
 
+            // 此时的成员变量是顺序存在 structType 中  因为涉及后续的 Offset 的 maxOffset  所以必须是顺序的
             Curr->next = newStructMember;
             Curr = Curr->next;
         }
@@ -617,7 +663,7 @@ static Node* declaration(Token** rest, Token* tok) {
     Type* nd_base_type = declspec(&tok, tok);
     
     // commit[49]: 处理结构体的名称定义
-    
+
     Node HEAD = {};
     Node* Curr = &HEAD;
 
@@ -662,18 +708,39 @@ static Node* declaration(Token** rest, Token* tok) {
 // commit[49]: 对结构体的解析
 // commit[50]: 新增结构体的对齐
 static Type* structDeclaration(Token** rest, Token* tok) {
-    tok = skip(tok, "{");
+    // tok = skip(tok, "{");
+    // commit[52]: 增加结构体标签的判断后 tok->label 而不是 "{"
+    Token* newTag = NULL;
 
+    if (tok->token_kind == TOKEN_IDENT) {
+        // 记录结构体标签的 token
+        newTag = tok;
+        tok = tok->next;
+    }
+
+    // Tip: 结构体定义和使用结构体标签定义变量是相同的语法前缀  分叉点在 "{..}"  所以这里进行一次判断
+    if ((newTag != NULL) && !equal(tok, "{")) {
+        // 判断能否找到使用的结构体标签
+        Type* tagType = findStructTag(newTag);
+        if (tagType == NULL)
+            tokenErrorAt(newTag, "unknown struct type name");
+
+        *rest = tok;
+        return tagType;
+    }
+
+    // 如果进入这里 说明这是一个结构体定义 "{...}"
     // 分配记录结构体元数据的空间
     Type* structType = calloc(1, sizeof(Type));
     structType->Kind = TY_STRUCT;
 
     // 解析结构体成员
-    structMembers(rest, tok, structType);
+    // Tip: 这里在 commit[52] 添加结构体标签更新后 tok 要更新为 next
+    structMembers(rest, tok->next, structType);
 
     // 结构体对齐初始化 1B
     // Q: 如果改 0: 会发生 Floating point exception (core dumped)
-    // A: 在 test/struct.c 中有一个空结构体测试  导致在 BaseSize 更新中除零异常
+    // A: 在 test/struct.c 中有一个空结构体测试  导致在 BaseSize 更新中除零异常  但是空结构体在语法上是合法的
     structType->alignSize = 1;
 
     int totalOffset = 0;
@@ -696,6 +763,11 @@ static Type* structDeclaration(Token** rest, Token* tok) {
     // A: 比如 int-char 这种情况  最后的 char 也要单独留出 8B 否则 9B 中另外的 7B 读取会出问题
     structType->BaseSize = alignTo(totalOffset, structType->alignSize);
     // __structType->BaseSize = Offset;
+
+    // Q: 为什么在这里进行一次 newTag 判断
+    // A: 比如匿名结构体  没有办法复用也就不需要压栈
+    if (newTag)
+        pushTagScopeToScope(newTag, structType);
 
     return structType;
 }
@@ -1015,6 +1087,7 @@ static Node* primary_class_expr(Token** rest, Token* tok) {
         
         // Q: 为什么这里需要调用 addType() 如果注释掉会完全错误
         // A: 如果不去赋予类型的话 在后面的 numNode 使用 node_type 时会发生访问空指针的问题
+        // 本质上还是要把 Type 记录的元数据传递上来
         addType(ND);
         return numNode(ND->node_type->BaseSize, tok);
     }
