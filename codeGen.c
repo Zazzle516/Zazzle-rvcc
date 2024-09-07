@@ -46,7 +46,7 @@ static void Load(Type* type) {
     if (type->Kind == TY_ARRAY_LINER)
         return;
 
-    printLn("  # 读取 a0 储存的地址内容 并存入 a0");
+    printLn("  # 读取 a0 储存的地址的内容 并存入 a0");
 
     if (type->BaseSize == 1)
         // Tip: 在汇编代码部分 类型只能体现在大小  根据 Kind 区分没有意义
@@ -195,7 +195,10 @@ static void calcuGen(Node* AST) {
 
     case ND_VAR:
     {
+        // 把变量(指针)本身的地址加载到 reg-a0 中
         getAddr(AST);
+
+        // 把变量的内容(指针的指向)写入 reg-a0 中
         Load(AST->node_type);
         return;
     }
@@ -236,9 +239,10 @@ static void calcuGen(Node* AST) {
     case ND_DEREF:
     {
         // *(ptr) 中的 ptr 本身是地址 可能会进行计算 eg.*(ptr + 8) 所以先计算内部的具体地址写入 a0
+        // 此时 reg-a0 存储的是目标地址
         calcuGen(AST->LHS);
 
-        // 读取 a0 中的储存的值(地址) 访问该地址
+        // 读取 a0 中的储存的值(地址) 访问该地址  相比于 ND_VAR 加载了两次
         // 如果是数组 由于本身的 DEREF 结构 通过 newPtrXXX() 完成地址加载
         Load(AST->node_type);
         return;

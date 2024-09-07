@@ -183,11 +183,13 @@ void addType(Node* ND) {
         // 在 parser() 中 {int* ptr;} 的构造 指针的基类会被存在 LHS->node_type->Base 中 
         if (ND->LHS->node_type->Kind == TY_PTR) {
             ND->node_type = ND->LHS->node_type->Base;
+            return;
         }
 
         // commit[27]: 对数组的合法性进行额外判断
         if (ND->LHS->node_type->Base) {
             ND->node_type = ND->LHS->node_type->Base;
+            return;
         }
 
         // commit[22]: 新增对 DEREF 右侧变量合法性的判断
