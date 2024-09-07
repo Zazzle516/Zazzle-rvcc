@@ -10,6 +10,7 @@
     //       int      x;
 // 结构体声明和变量声明是同一个语法层次
 
+// commit[54]: 支持联合体的类型模板存储  因为语法和 struct 一样  所以可以复用
 typedef struct TagScope TagScope;
 struct TagScope {
     // 将函数可能定义的多个结构体类型模板作为链表存储
@@ -54,11 +55,18 @@ struct Scope {
 // parse() = (functionDefinition | globalVariable)*
 
 // commit[49]: 支持 struct 语法解析
-// declspec = "int" | "char" | structDeclaration
+// commit[54]: 支持 union 语法解析
+// declspec = "int" | "char" | structDeclaration | unionDeclaration
+// __declspec = "int" | "char" | structDeclaration
 // __declspec = "int" | "char"
 
-// commit[49]: struct StructName { variableDeclaration }
-// structDeclaration = "{" structMembers
+// __commit[49]: struct StructName { variableDeclaration }
+// commit[54]: 针对 struct 和 union 提取出抽象层
+// StructOrUnionDecl = ident ? (" {" structMembers)?
+
+// structDeclaration = StructOrUnionDecl
+// unionDeclaration = StructOrUnionDecl
+
 // structMembers = (declspec declarator ("," declarator)* ";")*
 
 // declarator = "*"* ident typeSuffix
@@ -231,7 +239,7 @@ static int getArrayNumber(Token* tok) {
 
 // commit[33]: 判断当前读取的类型是否符合变量声明的类型
 static bool isTypeName(Token* tok) {
-    return (equal(tok, "int") || equal(tok, "char")) || equal(tok, "struct");
+    return (equal(tok, "int") || equal(tok, "char")) || equal(tok, "struct") || equal(tok, "union");
 }
 
 static structMember* getStructMember(Type* structType, Token* tok) {
@@ -255,6 +263,8 @@ static Type* declspec(Token** rest, Token* tok);
 static Node* declaration(Token** rest, Token* tok);
 
 static Type* structDeclaration(Token** rest, Token* tok);
+static Type* unionDeclaration(Token** rest, Token* tok);
+static Type* StructOrUnionDecl(Token** rest, Token* tok);
 
 static Node* compoundStamt(Token** rest, Token* tok);
 static Node* stamt(Token** rest, Token* tok);
@@ -409,9 +419,14 @@ static Type* declspec(Token** rest, Token* tok) {
         return TYCHAR_GLOBAL;
     }
 
-    // commit[49]: 只是 struct 类型的前缀比较大而已
+    // commit[49]: struct 整体作为一个自定义类型
     if (equal(tok, "struct")) {
         return structDeclaration(rest, tok->next);
+    }
+
+    // commit[54]: 复用完成 union 的解析
+    if (equal(tok, "union")) {
+        return unionDeclaration(rest, tok->next);
     }
 
     tokenErrorAt(tok, "unexpected preFix declaration\n");
@@ -704,9 +719,58 @@ static Node* declaration(Token** rest, Token* tok) {
     return multi_declara;
 }
 
-// commit[49]: 对结构体的解析
 // commit[50]: 新增结构体的对齐
 static Type* structDeclaration(Token** rest, Token* tok) {
+    Type* structType = StructOrUnionDecl(rest, tok);
+    structType->Kind = TY_STRUCT;
+
+    int totalOffset = 0;
+    // int-char-int => 0-8-9-16-24
+    for (structMember* newStructMem = structType->structMemLink; newStructMem; newStructMem = newStructMem->next) {
+        // 确定当前变量的起始位置  判断是否会对齐  => 判断 realTotal 是否为 aimAlign 的倍数
+        // realTotal < 1.0 * aimAlign => 由小变大  填充字节  反之相反
+        totalOffset = alignTo(totalOffset, newStructMem->memberType->alignSize);
+        newStructMem->offset = totalOffset;
+
+        // 为下一个变量计算起始位置准备
+        totalOffset += newStructMem->memberType->BaseSize;
+
+        // 判断是否更新结构体对齐最大值  本质上 structType->alignSize = maxSingleOffset
+        if (structType->alignSize < newStructMem->memberType->alignSize)
+            structType->alignSize = newStructMem->memberType->alignSize;
+    }
+
+    // Q: 为什么这里需要额外一次对齐
+    // A: 比如 int-char 这种情况  最后的 char 也要单独留出 8B 否则 9B 中另外的 7B 读取会出问题
+    structType->BaseSize = alignTo(totalOffset, structType->alignSize);
+    // __structType->BaseSize = Offset;
+
+    return structType;
+}
+
+// commit[54]: 针对 union 的偏移量计算
+static Type* unionDeclaration(Token** rest, Token* tok) {
+    Type* unionType = StructOrUnionDecl(rest, tok);
+    unionType->Kind = TY_UNION;
+
+    // 相比于 struct, union 的偏移量设置为成员中最大的
+    // 并且由于空间共用  所有成员的偏移量都是 0
+    for (structMember* newUnionMem = unionType->structMemLink; newUnionMem; newUnionMem = newUnionMem->next) {
+        if (unionType->alignSize < newUnionMem->memberType->alignSize)
+            // 根据成员的最大对齐值更新 union 的对齐值
+            unionType->alignSize = newUnionMem->memberType->alignSize;
+
+        if (unionType->BaseSize < newUnionMem->memberType->BaseSize)
+            unionType->BaseSize = newUnionMem->memberType->BaseSize;
+    }
+
+    unionType->BaseSize = alignTo(unionType->BaseSize, unionType->alignSize);
+
+    return unionType;
+}
+
+// commit[54]: 基于 union 和 struct 共同的语法结构复用
+static Type* StructOrUnionDecl(Token** rest, Token* tok) {
     // tok = skip(tok, "{");
     // commit[52]: 增加结构体标签的判断后 tok->label 而不是 "{"
     Token* newTag = NULL;
@@ -731,7 +795,7 @@ static Type* structDeclaration(Token** rest, Token* tok) {
     // 如果进入这里 说明这是一个结构体定义 "{...}"
     // 分配记录结构体元数据的空间
     Type* structType = calloc(1, sizeof(Type));
-    structType->Kind = TY_STRUCT;
+    structType->Kind = TY_STRUCT;       // 虽然在后面被覆盖了  但是这里真的不删吗
 
     // 解析结构体成员
     // Tip: 这里在 commit[52] 添加结构体标签更新后 tok 要更新为 next
@@ -742,26 +806,7 @@ static Type* structDeclaration(Token** rest, Token* tok) {
     // A: 在 test/struct.c 中有一个空结构体测试  导致在 BaseSize 更新中除零异常  但是空结构体在语法上是合法的
     structType->alignSize = 1;
 
-    int totalOffset = 0;
-    // int-char-int => 0-8-9-16-24
-    for (structMember* newStructMem = structType->structMemLink; newStructMem; newStructMem = newStructMem->next) {
-        // 确定当前变量的起始位置  判断是否会对齐  => 判断 realTotal 是否为 aimAlign 的倍数
-        // realTotal < 1.0 * aimAlign => 由小变大  填充字节  反之相反
-        totalOffset = alignTo(totalOffset, newStructMem->memberType->alignSize);
-        newStructMem->offset = totalOffset;
-
-        // 为下一个变量计算起始位置准备
-        totalOffset += newStructMem->memberType->BaseSize;
-
-        // 判断是否更新结构体对齐最大值  本质上 structType->alignSize = maxSingleOffset
-        if (structType->alignSize < newStructMem->memberType->alignSize)
-            structType->alignSize = newStructMem->memberType->alignSize;
-    }
-
-    // Q: 为什么这里需要额外一次对齐
-    // A: 比如 int-char 这种情况  最后的 char 也要单独留出 8B 否则 9B 中另外的 7B 读取会出问题
-    structType->BaseSize = alignTo(totalOffset, structType->alignSize);
-    // __structType->BaseSize = Offset;
+    // 原本的成员偏移量计算由 structDeclaration() 和 unionDeclaration() 处理
 
     // Q: 为什么在这里进行一次 newTag 判断
     // A: 比如匿名结构体  没有办法复用也就不需要压栈
@@ -773,17 +818,18 @@ static Type* structDeclaration(Token** rest, Token* tok) {
 }
 
 // commit[49]: 构造访问结构体成员的 AST
-static Node* structRef(Node* VAR_STRUCT, Token* tok) {
+// commit[54]: union 的访问结构和 struct 相同
+static Node* structRef(Node* VAR_STRUCT_UNION, Token* tok) {
     // 判断该变量是结构体的合法性  比如说指针的情况  判断指针所指向的地址存储的的是否是结构体
     // 所以 addType().ND_DEREF 的处理是把 Base 的类型提取出来  而 addType().ND_VAR 是直接提取 var_type
-    addType(VAR_STRUCT);
+    addType(VAR_STRUCT_UNION);
     
-    if (VAR_STRUCT->node_type->Kind != TY_STRUCT)
-        tokenErrorAt(VAR_STRUCT->token, "not a struct");
+    if (VAR_STRUCT_UNION->node_type->Kind != TY_STRUCT && VAR_STRUCT_UNION->node_type->Kind != TY_UNION)
+        tokenErrorAt(VAR_STRUCT_UNION->token, "not a struct or a union");
 
     // 把 x.a 拆成两个结点构成的单叉树  所以 codeGen() 都是根据 ND_STRUCT_MEMEBER 去实现
-    Node* ND = createSingle(ND_STRUCT_MEMEBER, VAR_STRUCT, tok);
-    ND->structTargetMember = getStructMember(VAR_STRUCT->node_type, tok);
+    Node* ND = createSingle(ND_STRUCT_MEMEBER, VAR_STRUCT_UNION, tok);
+    ND->structTargetMember = getStructMember(VAR_STRUCT_UNION->node_type, tok);
 
     return ND;
 }

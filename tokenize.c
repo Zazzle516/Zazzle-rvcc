@@ -89,7 +89,7 @@ void charErrorAt(char* place, char* FMT, ...) {
 
 // 关键字声明 目前没用
 static bool isKeyWords(Token* input) {
-    static char* keywords[] = {"if", "else", "return", "for", "while", "sizeof", "char", "struct"};
+    static char* keywords[] = {"if", "else", "return", "for", "while", "sizeof", "char", "struct", "union"};
 
     for (int i = 0; i < sizeof(keywords) / sizeof(*keywords); i ++) {
         if (equal(input, keywords[i]))

@@ -205,6 +205,9 @@ typedef enum {
 
     // commit[49]: 结构体
     TY_STRUCT,
+
+    // commit[54]: 联合体定义
+    TY_UNION,
 } Typekind;
 
 
