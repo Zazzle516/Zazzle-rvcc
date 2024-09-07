@@ -1,7 +1,7 @@
 #include "zacc.h"
 
 // commit[1] - commit[22] 注释备份在 annotation-bak 中
-// commit[42]: 通过 checkout 查看注释
+// commit[42]: checkout 查看注释
 
 // commit[52]: 支持结构体标签的解析
 // 本质上和 TY_INT 没什么区分  只是 TY_INT 可以用字面量去提前定义  而结构体不能
@@ -20,12 +20,11 @@ struct TagScope {
     Type* tagType;
 };
 
-/* commit[44]: 从两个层次进行作用域的管理 {var} */
-// 类似于 Antlr4 对变量域通过 [[], [], ..] 的管理  这里使用 Scope 链表管理
+/* commit[44]: 类似于 Antlr4 对变量域通过 [[], [], ..] 的管理  这里使用 Scope 链表管理 */
 // 每个 Scope 中的变量同样构成了一个 VarInScope 链表存储
 
-// commit[44]: 针对局部变量和全局变量标记作用范围  根据这个变量在 Scope 的位置判断
-// 具体的域的层次都是由 Scope 来决定的  VarInScope 只是负责插入正确的 Scope 层次位置
+// commit[44]: 一个函数中可能有多个代码块  这些代码块中的内容也不能相互影响
+// 具体的代码块的层次都是由 Scope 来决定的  VarInScope 只是负责插入正确的 Scope 层次位置
 typedef struct VarInScope VarInScope;
 struct VarInScope {
     VarInScope* next;
@@ -97,7 +96,9 @@ struct Scope {
 // third_class_expr = (+|-|&|*)third_class_expr | postFix
 
 // commit[49]: 支持对结构体成员的访问
-// postFix = primary_calss_expr ("[" expr"]" | "." ident)*
+// commit[53]: 支持对结构体实例成员的访问  写入左子树结构  注意结构体可能是递归的 x->y->z
+// postFix = primary_calss_expr ("[" expr"]" | ("." ident)* | ("->" ident)*)
+// __postFix = primary_calss_expr ("[" expr"]" | "." ident)*
 // __postFix = primary_class_expr ("[" expr "]")*
 
 // commit[23]: 添加对零参函数名声明的支持
@@ -114,9 +115,9 @@ Object* Global;     // 全局变量 + 函数定义(因为 C 不能发生函数�
 // 复合字面量: 在代码中直接创建一个结构体或数组的匿名实例
 // static: 文件作用域  只能在定义它的文件中访问   对比 type 的非静态定义  很适合需要临时对象的类型
 // HEADScope: 指向零初始化的 Scope 结构体指针  每次访问 HEADScope 仍然指向同一块静态分配的空间  并且保持上一次修改后的状态
-// 类似于链表操作的头结点  本身不储存实际内容  只是为了方便操作比如头插法
+// 类似于链表操作的头结点  本身不储存实际内容  只是为了方便操作比如头插法  在默认初始化的时候 NODE_KIND 会被默认化为 ND_NUM
 
-// 还有一个功能是储存全局变量  或许可以把这个 HEADScope 看成这个程序函数
+// 一个 HEADScope 只能存储一个函数 但是可以有任意多个代码块
 static Scope *HEADScope = &(Scope){};
 
 /* 变量域的操作定义 */
@@ -158,9 +159,8 @@ static void pushTagScopeToScope(Token* tok, Type* tagType) {
 }
 
 static Object* findVar(Token* tok) {
-    // commit[44]: 在使用域记录之后遍历域查找
+    // commit[44]: 在嵌套的代码块遍历查找
     for (Scope* currScp = HEADScope; currScp ; currScp = currScp->next) {
-        // 类似于 Antlr4 中通过逆序查找  必须找到当前或者最近 Scope 中的对应变量
         for (VarInScope* currVarScope = currScp->varScope; currVarScope; currVarScope = currVarScope->next) {
             if (equal(tok, currVarScope->scopeName))
                 return currVarScope->varList;
@@ -170,7 +170,7 @@ static Object* findVar(Token* tok) {
     return NULL;
 }
 
-// commit[52]: 类似 findVar() 使用结构体标签定义变量时  结构体标签需要存在
+// commit[52]: 类似 findVar() 找到目标结构体类型模板
 static Type* findStructTag(Token* tok) {
     for (Scope* currScope = HEADScope; currScope; currScope = currScope->next) {
         for (TagScope* currTagScope = currScope->tagScope; currTagScope; currTagScope = currTagScope->next) {
@@ -178,7 +178,6 @@ static Type* findStructTag(Token* tok) {
                 return currTagScope->tagType;
         }
     }
-
     return NULL;
 }
 
@@ -541,7 +540,7 @@ static Object* newStringLiteral(char* strContent, Type* strType) {
 static void structMembers(Token** rest, Token* tok, Type* structType) {
     structMember HEAD = {};
     structMember* Curr = &HEAD;
-    
+
     while (!equal(tok, "}")) {
         // 支持结构体的递归执行
         Type* memberType = declspec(&tok, tok);
@@ -609,6 +608,7 @@ static Token* gloablDefinition(Token* tok, Type* globalBaseType) {
     // 如果连续的变量定义 第一个变量不会从 ", var" 开始判断
     bool isLast = true;
 
+    // Tip: 全局的结构体标签不会进入该分支  如果有匿名实例 会进入 newGlobal() 声明
     while (!consume(&tok, tok, ";")) {
         // 判断是否为连续的全局变量的定义  同时正确解析第一个变量
         if (!isLast)
@@ -631,7 +631,6 @@ static Node* compoundStamt(Token** rest, Token* tok) {
     Node* Curr = &HEAD;
 
     // commit[44]: 每次进入一个新的 {} 范围执行 enter
-    // Q: 在函数后面紧跟着算是无效层次吗  现在看起来没影响
     enterScope();
 
     while (!equal(tok, "}")) {
@@ -640,7 +639,7 @@ static Node* compoundStamt(Token** rest, Token* tok) {
             Curr->next = declaration(&tok, tok);
         else
             Curr->next = stamt(&tok, tok);
-        
+
         Curr = Curr->next;
         addType(Curr);
     }
@@ -662,7 +661,7 @@ static Node* declaration(Token** rest, Token* tok) {
     // commit[49]: 在 declspec 中完成对结构体的解析
     Type* nd_base_type = declspec(&tok, tok);
     
-    // commit[49]: 处理结构体的名称定义
+    // commit[49]: 处理结构体的定义匿名实例变量名
 
     Node HEAD = {};
     Node* Curr = &HEAD;
@@ -713,7 +712,7 @@ static Type* structDeclaration(Token** rest, Token* tok) {
     Token* newTag = NULL;
 
     if (tok->token_kind == TOKEN_IDENT) {
-        // 记录结构体标签的 token
+        // 存在记录结构体标签的 token
         newTag = tok;
         tok = tok->next;
     }
@@ -766,6 +765,7 @@ static Type* structDeclaration(Token** rest, Token* tok) {
 
     // Q: 为什么在这里进行一次 newTag 判断
     // A: 比如匿名结构体  没有办法复用也就不需要压栈
+    // 实际上使用结构体标签定义变量的时候  newTag 也会被赋值存在  所以要在判断为变量定义的时候即使退出  不然就会走到这里
     if (newTag)
         pushTagScopeToScope(newTag, structType);
 
@@ -774,18 +774,15 @@ static Type* structDeclaration(Token** rest, Token* tok) {
 
 // commit[49]: 构造访问结构体成员的 AST
 static Node* structRef(Node* VAR_STRUCT, Token* tok) {
-    // 把 ND_VAR.node_type 根据 var.var_type 更新为 ND_STRUCT  同时记录一些 size 相关的元数据
-    // 本质上是把存储在 Local 链表变量的内容传递到 Node 成为一个结构体结点
+    // 判断该变量是结构体的合法性  比如说指针的情况  判断指针所指向的地址存储的的是否是结构体
+    // 所以 addType().ND_DEREF 的处理是把 Base 的类型提取出来  而 addType().ND_VAR 是直接提取 var_type
     addType(VAR_STRUCT);
-
-    // 判断该变量是结构体的合法性
+    
     if (VAR_STRUCT->node_type->Kind != TY_STRUCT)
         tokenErrorAt(VAR_STRUCT->token, "not a struct");
 
     // 把 x.a 拆成两个结点构成的单叉树  所以 codeGen() 都是根据 ND_STRUCT_MEMEBER 去实现
     Node* ND = createSingle(ND_STRUCT_MEMEBER, VAR_STRUCT, tok);
-    // Q: 为什么传递 Type
-    // A: 同样因为成员变量只是变量声明  并不会存储在 AST 结构中  只能存在 Type 中
     ND->structTargetMember = getStructMember(VAR_STRUCT->node_type, tok);
 
     return ND;
@@ -1037,6 +1034,7 @@ static Node* third_class_expr(Token** rest, Token* tok) {
 }
 
 // commit[28]: preFix = primary_class_expr ("[" expr "]")*  eg. x[y] 先解析 x 再是 y
+// commit[53]: 递归性支持结构体实例成员的访问
 static Node* preFix(Token** rest, Token* tok) {
     Node* ND = primary_class_expr(&tok, tok);
 
@@ -1049,10 +1047,23 @@ static Node* preFix(Token** rest, Token* tok) {
             continue;
         }
 
-        // 从 primary_class_expr 中变量访问返回 (优先级还挺高的
+        // 访问结构体成员: 使用 "->" 的变量是指针  结构体实例使用 "."
+
         if (equal(tok, ".")) {
             ND = structRef(ND, tok->next);
             tok = tok->next->next;
+            continue;
+        }
+
+        if (equal(tok, "->")) {
+            // 本质是把 structInstancePtr->member 解析为 *(&structInstance + memberOffset)
+            // 相比于结构体实例直接访问  结构体要先通过指针指向的地址找到实例的首地址  所以多了一层 DEREF 结构  然后同理计算偏移量
+            ND = createSingle(ND_DEREF, ND, tok);
+            ND = structRef(ND, tok->next);
+
+            tok = tok->next->next;
+
+            // 通过 continue 支持 a->b->c 的递归访问
             continue;
         }
 

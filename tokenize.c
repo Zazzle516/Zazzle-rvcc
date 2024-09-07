@@ -308,9 +308,15 @@ static bool strCmp(char* input_ptr, char* target) {
 
 static int readPunct(char* input_ptr) {
     // 同理通过比较内存的方式   优先判断长度更长的运算符
-    if (strCmp(input_ptr, "==") || strCmp(input_ptr, "!=") || strCmp(input_ptr, ">=") || strCmp(input_ptr, "<=")) {
-        return 2;
+
+    // commit[53]: 类似于关键字判断 虽然目前这些符号本身是等长的  但是后面可能不一定
+    static char* keyPunct[] = {"==", "!=", "<=", ">=", "->"};
+
+    for (int I = 0; I < sizeof(keyPunct) / sizeof(*keyPunct); ++I) {
+        if (strCmp(input_ptr, keyPunct[I]))
+            return strlen(keyPunct[I]);
     }
+
     return (ispunct(*input_ptr) ? 1: 0);
 }
 
