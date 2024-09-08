@@ -42,8 +42,11 @@ static void pop_stack(char* reg) {
 // commit[27]: 把 exprGen() 中的 ld 和 sd 提取出来(提高代码可读性
 
 static void Load(Type* type) {
-    // 数组的 AST 结构本身就是 ND_DEREF  通过 calcuGen(DEREF->LHS) 已经可以得到数组的地址
     if (type->Kind == TY_ARRAY_LINER)
+        // 数组的 AST 结构本身就是 ND_DEREF  通过 calcuGen(DEREF->LHS) 已经可以得到数组的地址
+        return;
+
+    if (type->Kind == TY_STRUCT || type->Kind == TY_UNION)
         return;
 
     printLn("  # 读取 a0 储存的地址的内容 并存入 a0");
@@ -55,10 +58,33 @@ static void Load(Type* type) {
         printLn("  ld a0, 0(a0)");
 }
 
+// Tip: 在 C 中无论是 struct 还是 Union 都只支持相同 Tag 之间的赋值  现在的 zacc 不支持
 static void Store(Type* type) {
     pop_stack("a1");
-    printLn("  # 将 a0 的值写入 a1 存储的地址");
+    // commit[55]: 实现结构体实例之间完整的赋值
+    if (type->Kind == TY_STRUCT || type->Kind == TY_UNION) {
+        // 类型在 codeGen() 中只能用来辅助判断 任何读写都是字节角度
+        printLn("  # 对 %s 赋值", type->Kind == TY_STRUCT ? "Struct" : "Union");
 
+        for (int I = 0; I < type->BaseSize; I++) {
+            // 读取 RHS 的起始地址 + 偏移量 => RHS 目标地址
+            printLn("  li t0, %d", I);
+            printLn("  add t0, a0, t0");
+
+            // 将 RHS 目标地址的内容写入 reg-t1 中
+            printLn("  lb t1, 0(t0)");
+
+            // 读取 LHS 的起始地址 + 偏移量 => LHS 目标地址
+            printLn("  li t0, %d", I);
+            printLn("  add t0, a1, t0");
+
+            printLn("  sb t1, 0(t0)");
+        }
+
+        return;
+    }
+
+    printLn("  # 将 a0 的值写入 a1 存储的地址");
     if (type->BaseSize == 1)
         printLn("  sb a0, 0(a1)");
     else
@@ -144,8 +170,8 @@ static void getAddr(Node* nd_assign) {
         getAddr(nd_assign->LHS);
 
         printLn("  # 计算成员变量的地址偏移");
-        printLn("  li t0, %d", nd_assign->structTargetMember->offset);      // 把偏移量结果放到 t~ 临时寄存器中
-        printLn("  add a0, a0, t0");        // 计算偏移结果
+        printLn("  li t0, %d", nd_assign->structTargetMember->offset);
+        printLn("  add a0, a0, t0");
         return;
     }
 
@@ -214,6 +240,8 @@ static void calcuGen(Node* AST) {
     }
 
     case ND_ASSIGN:
+    // Q: 如果是 union 和 struct 之间的赋值  可以判断是合法还是非法吗
+    // A: 截至 commit[55] 无法判断出是非法操作  并且以 LHS 为基准进行赋值
     {
         // 得到左值的存储地址
         getAddr(AST->LHS);
@@ -223,7 +251,7 @@ static void calcuGen(Node* AST) {
         // 进行右侧表达式的计算
         calcuGen(AST->RHS);
 
-        Store(AST->node_type);
+        Store(AST->node_type);  // AST 的 node_type 肯定是来自 LHS 所以理论是无法判断出错的
 
         return;
     }
