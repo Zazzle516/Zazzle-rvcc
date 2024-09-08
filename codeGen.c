@@ -54,6 +54,8 @@ static void Load(Type* type) {
     if (type->BaseSize == 1)
         // Tip: 在汇编代码部分 类型只能体现在大小  根据 Kind 区分没有意义
         printLn("  lb a0, 0(a0)");
+    else if (type->BaseSize == 4)
+        printLn("  lw a0, 0(a0)");
     else
         printLn("  ld a0, 0(a0)");
 }
@@ -87,8 +89,31 @@ static void Store(Type* type) {
     printLn("  # 将 a0 的值写入 a1 存储的地址");
     if (type->BaseSize == 1)
         printLn("  sb a0, 0(a1)");
+    else if (type->BaseSize == 4)
+        printLn("  sw a0, 0(a1)");
     else
         printLn("  sd a0, 0(a1)");
+}
+
+// commit[56]: 将整形寄存器的值写入栈中
+static void storeGenral(int sourceReg, int offset, int targetSize) {
+    printLn("  # 将 %s 寄存器的内容写入 %d(fp) 的栈地址中", ArgReg[sourceReg], offset);
+
+    switch (targetSize) {
+    case 1:
+        printLn("  sb %s, %d(fp)", ArgReg[sourceReg], offset);
+        return;
+
+    case 4:
+        printLn("  sw %s, %d(fp)", ArgReg[sourceReg], offset);
+        return;
+
+    case 8:
+        printLn("  sd %s, %d(fp)", ArgReg[sourceReg], offset);
+        return;
+    }
+
+    unreachable();
 }
 
 // commit[50]: 修改为 public 函数调用
@@ -517,12 +542,18 @@ void emitText(Object* Global) {
 
         // commot[26]: 支持函数传参
         int I = 0;
+
+        // for (Object* obj = currFunc->formalParam; obj; obj = obj->next) {
+        //     printLn("  # 将 %s 寄存器存入 %s 栈地址", ArgReg[I], obj->var_name);
+        //     if (obj->var_type->BaseSize == 1)
+        //         printLn("  sb %s, %d(fp)", ArgReg[I++], obj->offset);
+        //     else
+        //         printLn("  sd %s, %d(fp)", ArgReg[I++], obj->offset);
+        // }
+
+        // commit[56]: 针对函数传参抽象函数 storeGenral
         for (Object* obj = currFunc->formalParam; obj; obj = obj->next) {
-            printLn("  # 将 %s 寄存器存入 %s 栈地址", ArgReg[I], obj->var_name);
-            if (obj->var_type->BaseSize == 1)
-                printLn("  sb %s, %d(fp)", ArgReg[I++], obj->offset);
-            else
-                printLn("  sd %s, %d(fp)", ArgReg[I++], obj->offset);
+            storeGenral(I++, obj->offset, obj->var_type->BaseSize);
         }
 
         // commit[13]: 现在的 AST-root 是单节点不是链表了

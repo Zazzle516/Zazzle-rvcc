@@ -67,6 +67,10 @@ bool equal(Token* input_token, char* target);
 Token* skip(Token* input_token, char* target);
 bool consume(Token** rest, Token* tok, char* str);
 
+// commit[56]: 显示源文件的报错位置 __FILE__: 报错文件名    __LINE__: 报错行号
+#define unreachable() \
+    errorHint("internal error at %s:%d", __FILE__, __LINE__)
+
 Token* tokenizeFile(char* filePath);
 
 /* 语法分析 parse() 数据结构和函数声明 */
@@ -188,6 +192,7 @@ struct Node {
 
 
 Object* parse(Token* tok);
+
 
 /* 类型定义 */
 typedef enum {

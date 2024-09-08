@@ -1,7 +1,7 @@
 #include "zacc.h"
 
 // commit[50]: 更新不同类型需要的对齐长度
-Type* TYINT_GLOBAL = &(Type){.Kind = TY_INT, .BaseSize = 8, .alignSize = 8};
+Type* TYINT_GLOBAL = &(Type){.Kind = TY_INT, .BaseSize = 4, .alignSize = 4};
 Type* TYCHAR_GLOBAL = &(Type){.Kind = TY_CHAR, .BaseSize = 1, .alignSize = 1};
 
 // commit[50]: 对每个类型新增 typeAlign 保证 codeGen().alignTo() 计算正确性
