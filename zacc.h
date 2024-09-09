@@ -17,6 +17,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <errno.h>
+#include <stdint.h>
 
 // 提前声明
 typedef struct Node Node;
@@ -46,7 +47,10 @@ typedef struct Token Token;
 struct Token {
     TokenKind token_kind;
     Token* next;
-    int value;
+
+    // commit[57]: 支持 long 类型后需要扩大
+    int64_t value;
+    // int value;
 
     char* place;
     unsigned int length;
@@ -152,7 +156,9 @@ typedef enum {
 // 定义函数内部 AST 结构
 struct Node {
     NODE_KIND node_kind;
-    int val;                // 针对 ND_NUM 记录大小
+
+    // commit[57]: 同理在 long 支持后扩容
+    int64_t val;                // 针对 ND_NUM 记录大小
     Node* LHS;
     Node* RHS;
 
@@ -213,6 +219,9 @@ typedef enum {
 
     // commit[54]: 联合体定义
     TY_UNION,
+
+    // commit[57]: 基础 long 类型
+    TY_LONG,
 } Typekind;
 
 
@@ -256,6 +265,7 @@ struct structMember {
 // 使用在 type.c 中定义的全局变量 (用于对 int 类型的判断)
 extern Type* TYINT_GLOBAL;
 extern Type* TYCHAR_GLOBAL;
+extern Type* TYLONG_GLOBAL;
 
 // 判断变量类型
 bool isInteger(Type* TY);

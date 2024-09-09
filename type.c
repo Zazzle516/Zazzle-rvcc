@@ -3,6 +3,7 @@
 // commit[50]: 更新不同类型需要的对齐长度
 Type* TYINT_GLOBAL = &(Type){.Kind = TY_INT, .BaseSize = 4, .alignSize = 4};
 Type* TYCHAR_GLOBAL = &(Type){.Kind = TY_CHAR, .BaseSize = 1, .alignSize = 1};
+Type* TYLONG_GLOBAL = &(Type){.Kind = TY_LONG, .BaseSize = 8, .alignSize = 8};
 
 // commit[50]: 对每个类型新增 typeAlign 保证 codeGen().alignTo() 计算正确性
 static Type* newType(Typekind typeKind, int typeSize, int typeAlign) {
@@ -16,10 +17,10 @@ static Type* newType(Typekind typeKind, int typeSize, int typeAlign) {
 }
 
 
-// 判断变量类型
+// 判断是否是基础类型
 bool isInteger(Type* TY) {
-    // commit[33]: char 也被算为 TY_INT 的一种特殊情况
-    return (TY->Kind == TY_INT || TY->Kind == TY_CHAR);
+    Typekind KIND = TY->Kind;
+    return KIND == TY_INT || KIND == TY_CHAR || KIND == TY_LONG;
 }
 
 // 新建指针变量结点 根据 Base 定义指向
@@ -129,7 +130,7 @@ void addType(Node* ND) {
     // Q: 而且不是所有结点都需要一个类型 比如 ND_STAMT 的类型就空置了 那 FUNCALL 为什么一定需要一个类型
     // 现在 commit[50] 也没有对 ND_FUNCALL 使用 newType() 函数  emm.. 挺迷惑的
     case ND_FUNCALL:
-        ND->node_type = TYINT_GLOBAL;
+        ND->node_type = TYLONG_GLOBAL;
         return;
     case ND_VAR:
         ND->node_type = ND->var->var_type;

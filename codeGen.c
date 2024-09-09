@@ -232,7 +232,8 @@ static void calcuGen(Node* AST) {
     case ND_NUM:
     {
         printLn("  # 加载立即数 %d 到 a0", AST->val);
-        printLn("  li a0, %d", AST->val);
+        // commit[57]: 支持 long / double word 的立即数
+        printLn("  li a0, %ld", AST->val);
         return;
     }
 

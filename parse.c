@@ -56,7 +56,7 @@ struct Scope {
 
 // commit[49]: 支持 struct 语法解析
 // commit[54]: 支持 union 语法解析
-// declspec = "int" | "char" | structDeclaration | unionDeclaration
+// declspec = "int" | "char" | "long" | structDeclaration | unionDeclaration
 // __declspec = "int" | "char" | structDeclaration
 // __declspec = "int" | "char"
 
@@ -231,7 +231,7 @@ static char* getVarName(Token* tok) {
 }
 
 // commit[27]: 获取数组定义中括号中的数字
-static int getArrayNumber(Token* tok) {
+static long getArrayNumber(Token* tok) {
     if (tok->token_kind != TOKEN_NUM)
         tokenErrorAt(tok, "need a number for array declaration");
     return tok->value;
@@ -239,7 +239,8 @@ static int getArrayNumber(Token* tok) {
 
 // commit[33]: 判断当前读取的类型是否符合变量声明的类型
 static bool isTypeName(Token* tok) {
-    return (equal(tok, "int") || equal(tok, "char")) || equal(tok, "struct") || equal(tok, "union");
+    return (equal(tok, "int") || equal(tok, "char")) || equal(tok, "long") 
+            || equal(tok, "struct") || equal(tok, "union");
 }
 
 static structMember* getStructMember(Type* structType, Token* tok) {
@@ -294,7 +295,7 @@ static Node* createNode(NODE_KIND node_kind, Token* tok) {
 }
 
 // 针对数字结点的额外的值定义(数字节点相对特殊 但是在 AST 扮演的角色没区别)
-static Node* numNode(int val, Token* tok) {
+static Node* numNode(int64_t val, Token* tok) {
     Node* newNode = createNode(ND_NUM, tok);
     newNode->val = val;
     return newNode;
@@ -414,9 +415,15 @@ static Type* declspec(Token** rest, Token* tok) {
         *rest = skip(tok, "int");
         return TYINT_GLOBAL;
     }
+
     if (equal(tok, "char")) {
         *rest = skip(tok, "char");
         return TYCHAR_GLOBAL;
+    }
+
+    if (equal(tok, "long")) {
+        *rest = skip(tok, "long");
+        return TYLONG_GLOBAL;
     }
 
     // commit[49]: struct 整体作为一个自定义类型
