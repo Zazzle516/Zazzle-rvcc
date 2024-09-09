@@ -54,6 +54,8 @@ static void Load(Type* type) {
     if (type->BaseSize == 1)
         // Tip: 在汇编代码部分 类型只能体现在大小  根据 Kind 区分没有意义
         printLn("  lb a0, 0(a0)");
+    else if (type->BaseSize == 2)
+        printLn("  lh a0, 0(a0)");
     else if (type->BaseSize == 4)
         printLn("  lw a0, 0(a0)");
     else
@@ -89,6 +91,8 @@ static void Store(Type* type) {
     printLn("  # 将 a0 的值写入 a1 存储的地址");
     if (type->BaseSize == 1)
         printLn("  sb a0, 0(a1)");
+    else if (type->BaseSize == 2)
+        printLn("  sh a0, 0(a1)");
     else if (type->BaseSize == 4)
         printLn("  sw a0, 0(a1)");
     else
@@ -102,6 +106,10 @@ static void storeGenral(int sourceReg, int offset, int targetSize) {
     switch (targetSize) {
     case 1:
         printLn("  sb %s, %d(fp)", ArgReg[sourceReg], offset);
+        return;
+
+    case 2:
+        printLn("  sh %s, %d(fp)", ArgReg[sourceReg], offset);
         return;
 
     case 4:

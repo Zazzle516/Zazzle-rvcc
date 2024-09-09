@@ -222,6 +222,9 @@ typedef enum {
 
     // commit[57]: 基础 long 类型
     TY_LONG,
+
+    // commit[58]: 基础 short 类型
+    TY_SHORT,
 } Typekind;
 
 
@@ -262,10 +265,11 @@ struct structMember {
 };
 
 
-// 使用在 type.c 中定义的全局变量 (用于对 int 类型的判断)
+// 使用在 type.c 中定义的全局变量
 extern Type* TYINT_GLOBAL;
 extern Type* TYCHAR_GLOBAL;
 extern Type* TYLONG_GLOBAL;
+extern Type* TYSHORT_GLOBAL;
 
 // 判断变量类型
 bool isInteger(Type* TY);

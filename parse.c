@@ -239,7 +239,7 @@ static long getArrayNumber(Token* tok) {
 
 // commit[33]: 判断当前读取的类型是否符合变量声明的类型
 static bool isTypeName(Token* tok) {
-    return (equal(tok, "int") || equal(tok, "char")) || equal(tok, "long") 
+    return (equal(tok, "int") || equal(tok, "char")) || equal(tok, "long") || equal(tok, "short")
             || equal(tok, "struct") || equal(tok, "union");
 }
 
@@ -410,6 +410,11 @@ static Node* newPtrSub(Node* LHS, Node* RHS, Token* tok) {
 
 // 类型前缀判断
 static Type* declspec(Token** rest, Token* tok) {
+    if (equal(tok, "short")) {
+        *rest = skip(tok, "short");
+        return TYSHORT_GLOBAL;
+    }
+
     // commit[33]: 对类型分别进行处理
     if (equal(tok, "int")) {
         *rest = skip(tok, "int");

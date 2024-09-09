@@ -4,6 +4,7 @@
 Type* TYINT_GLOBAL = &(Type){.Kind = TY_INT, .BaseSize = 4, .alignSize = 4};
 Type* TYCHAR_GLOBAL = &(Type){.Kind = TY_CHAR, .BaseSize = 1, .alignSize = 1};
 Type* TYLONG_GLOBAL = &(Type){.Kind = TY_LONG, .BaseSize = 8, .alignSize = 8};
+Type* TYSHORT_GLOBAL = &(Type){.Kind = TY_SHORT, .BaseSize = 2, .alignSize = 2};
 
 // commit[50]: 对每个类型新增 typeAlign 保证 codeGen().alignTo() 计算正确性
 static Type* newType(Typekind typeKind, int typeSize, int typeAlign) {
@@ -20,7 +21,7 @@ static Type* newType(Typekind typeKind, int typeSize, int typeAlign) {
 // 判断是否是基础类型
 bool isInteger(Type* TY) {
     Typekind KIND = TY->Kind;
-    return KIND == TY_INT || KIND == TY_CHAR || KIND == TY_LONG;
+    return KIND == TY_INT || KIND == TY_CHAR || KIND == TY_LONG || KIND == TY_SHORT;
 }
 
 // 新建指针变量结点 根据 Base 定义指向

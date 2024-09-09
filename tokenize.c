@@ -91,7 +91,7 @@ void charErrorAt(char* place, char* FMT, ...) {
 static bool isKeyWords(Token* input) {
     static char* keywords[] = {"if", "else", "return", "for", "while",
                                 "sizeof", "char", "struct", "union",
-                                "long"
+                                "long", "short"
                             };
 
     for (int i = 0; i < sizeof(keywords) / sizeof(*keywords); i ++) {
@@ -133,17 +133,6 @@ bool consume(Token** rest, Token* tok, char* str) {
     *rest = tok;
     return false;
 }
-
-// commit[57]: 终于删掉了
-// 这个 getNumber() 函数本身是 commit[3] 还是全局的时候使用  用来获取 TK_NUM 的值
-// 文件拆分之后就没用了  在 parse 中用其他函数替代了  只是现在才删...
-// static int getNumber(Token* input_token) {
-//     if (input_token->token_kind != TOKEN_NUM) {
-//         tokenErrorAt(input_token, "expected number");
-//     }
-//     // 把在 newToken() 中构造好的值取出
-//     return input_token->value;
-// }
 
 // 定义一个新的 Token 结点挂载到链表上
 static Token* newToken(TokenKind token_kind, char* start, char* end) {
