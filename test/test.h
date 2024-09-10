@@ -17,3 +17,6 @@
     assert(5, 2 + 3, "2 + 3");
 */
 #define ASSERT(x, y) assert(x, y, #y)
+
+// commit[60]: 支持函数声明
+int printf();

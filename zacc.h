@@ -83,6 +83,7 @@ struct Object {
     // commit[31]: 新增对函数和变量的判断
     bool IsLocal;
     bool IsFunction;
+    bool IsFuncDefinition;      // 判断函数声明
 
     /* 针对全局 包括变量和函数 */
     char* var_name;

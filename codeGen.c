@@ -520,7 +520,8 @@ static void exprGen(Node* AST) {
 // commit[32]: 完成汇编的 .text 段
 void emitText(Object* Global) {
     for (Object* currFunc = Global; currFunc; currFunc = currFunc->next) {
-        if (!currFunc->IsFunction)
+        if (!currFunc->IsFunction || !currFunc->IsFuncDefinition)
+            // 对于数据和函数声明不进行任何处理
             continue;
 
         printLn("  .global %s", currFunc->var_name);
@@ -599,7 +600,7 @@ void emitGlobalData(Object* Global) {
     for (Object* globalVar = Global; globalVar != NULL; globalVar = globalVar->next) {
         if (globalVar->IsFunction == true)
             continue;
-        
+
         // 关于 .data 段的汇编生成参考 
 
         // 这里针对每一个 GlobalVar 都声明了 .data

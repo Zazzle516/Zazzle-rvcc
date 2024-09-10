@@ -127,7 +127,7 @@ Object* Global;     // 全局变量 + 函数定义(因为 C 不能发生函数�
 // HEADScope: 指向零初始化的 Scope 结构体指针  每次访问 HEADScope 仍然指向同一块静态分配的空间  并且保持上一次修改后的状态
 // 类似于链表操作的头结点  本身不储存实际内容  只是为了方便操作比如头插法  在默认初始化的时候 NODE_KIND 会被默认化为 ND_NUM
 
-// 一个 HEADScope 只能存储一个函数 但是可以有任意多个代码块
+// 一个 Scope 就是一个变量生命范围  代码块的递归 => Scope.next  全局存储的层面转移到 static HEADScope.varScope
 static Scope *HEADScope = &(Scope){};
 
 /* 变量域的操作定义 */
@@ -168,6 +168,7 @@ static void pushTagScopeToScope(Token* tok, Type* tagType) {
     HEADScope->tagScope = newTagScope;
 }
 
+// 函数执行 newLocal() 和 newGlobal() 的时候会同时 pushVarScope
 static Object* findVar(Token* tok) {
     // commit[44]: 在嵌套的代码块遍历查找
     for (Scope* currScp = HEADScope; currScp ; currScp = currScp->next) {
@@ -202,6 +203,8 @@ static Object* newVariable(char* varName, Type* varType) {
 
     return obj;
 }
+
+/* 无论是 Local 还是 Global 都会更新 HEADScope 的 VarScope */
 
 // 未定义的局部变量通过头插法新增到 Local 链表中
 static Object* newLocal(char* varName, Type* localVarType) {
@@ -634,15 +637,20 @@ static void structMembers(Token** rest, Token* tok, Type* structType) {
 static Token* functionDefinition(Token* tok, Type* funcReturnBaseType) {
     Type* funcType = declarator(&tok, tok, funcReturnBaseType);
 
-    // commit[31]: 构造函数结点
+    // commit[31]: 构造函数结点本身
     Object* function = newGlobal(getVarName(funcType->Name), funcType);
     function->IsFunction = true;
+
+    // commit[60]: 判断函数定义
+    function->IsFuncDefinition = !consume(&tok, tok, ";");
+    if (!function->IsFuncDefinition)
+        return tok;
 
     // 初始化函数帧内部变量
     Local = NULL;
 
-    // Q: 这里结合函数本身定义的 {} 同样会在 compoundStamt() 中声明 是无效的
-    // 截至 commit[44] 即使是注释掉也 ok  看看后面是否一定需要
+    // 从这个位置进入了函数的生命周期
+    // 对于 funcDefin() 和 compundStamt() 中 enterScope() 的重复调用  是为了处理代码块情况
     enterScope();
 
     // 第一次更新 Local: 函数形参
@@ -1229,6 +1237,7 @@ static Node* primary_class_expr(Token** rest, Token* tok) {
 }
 
 // commit[24]: 处理含参函数调用
+// Tip: 函数调用的真正查找是在 codeGen() 中的汇编标签实现的  和 parse 无关  只负责把 call funcLabel 结点插入 AST
 static Node* funcall(Token** rest, Token* tok) {
     // 在测试 commit[48] 突发了报错  经过 3h 的排查找到是 funcall 的问题(吐血...
 
