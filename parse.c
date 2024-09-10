@@ -69,7 +69,9 @@ struct Scope {
 
 // structMembers = (declspec declarator ("," declarator)* ";")*
 
-// declarator = "*"* ident typeSuffix
+// commit[59]: 支持类型的嵌套定义
+// declarator = "*"* ("(" ident ")" | "(" declarator ")" | ident) typeSuffix
+// __declarator = "*"* ident typeSuffix
 
 // commit[22]: 声明语句的语法定义 支持连续定义
 // commit[25]: 函数定义 目前只支持 'int' 并且无参  eg. int* funcName() {...}
@@ -497,10 +499,38 @@ static Type* typeSuffix(Token** rest, Token* tok, Type* BaseType) {
 
 // 对类型进行完整判断
 static Type* declarator(Token** rest, Token* tok, Type* Base) {
+    // Tip: 多重指针 != 嵌套定义
     while (consume(&tok, tok, "*")) {
         Base = newPointerTo(Base);
     }
-    // 此时的 Base 已经是最终的返回值类型 或 变量类型 因为全部的 (int**...) 已经解析完成了
+    // 此时的 Base 已经是不完整的外层返回值类型
+
+    // commit[59]: 完成嵌套类型定义的时候  首先明确 C 作为一个强类型语言  类型和内存的空间分配强绑定
+    // 指向数组的首地址 != 指向数组的第一个元素的地址  虽然指针存储的内容相同  但是指向的空间范围不同  gcc 会警告
+    // 对例如 char* (*x)[3] 这样的类型分析可以从内外两层入手  但是无论是外层还是内层  类型的 BaseSize 一定是相同的
+    // 外层: char* [3]
+    // 内层: (*x): 虽然内层看起来只是一个指针  但该指针指向的空间依赖于外层类型的空间
+
+    // commit[59]: 除了嵌套的结构体和多维数组  其余的嵌套情况基本都是通过 (ptr) 实现
+    // 在外层定义指针指向的空间大小  内层定义一个指针指向
+    if (equal(tok, "(")) {
+        // Q: 为什么保存左括号作为断点
+        // A: 在后续的外层类型的传递中需要重新解析内层类型  通过 Start 记录该断点
+        Token* Start = tok;
+
+        // Q: 为什么使用 Dummy 记录
+        // A: 因为外层没有解析完  所以这里给内层类型一个默认值  虽然这里可以正常解析内部类型  但是没有任何意义  最后丢弃掉
+        Type Dummy = {};
+        declarator(&tok, Start->next, &Dummy);
+
+        // 当右括号解析完成  需要读取剩余的外层类型确定内层类型的大小
+        tok = skip(tok, ")");
+        Base = typeSuffix(rest, tok, Base);
+
+        // Q: 为什么返回重新调用 declarator()
+        // 此时已经得到外层完整的类型大小  把外层类型作为 Base 传入内层重新解析内层类型  通过 Start 重置到内层类型的开始
+        return declarator(&tok, Start->next, Base);
+    }
 
     // 接下来要读取 funcName | identName
     if (tok->token_kind != TOKEN_IDENT) {
