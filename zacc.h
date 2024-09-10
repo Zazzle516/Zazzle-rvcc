@@ -203,6 +203,8 @@ Object* parse(Token* tok);
 
 /* 类型定义 */
 typedef enum {
+    // commit[61]: 支持 void 类型  更新在首位方便初始化
+    TY_VOID,
     TY_INT,         // 整数类型变量
     TY_PTR,         // 指针
 
@@ -271,6 +273,7 @@ extern Type* TYINT_GLOBAL;
 extern Type* TYCHAR_GLOBAL;
 extern Type* TYLONG_GLOBAL;
 extern Type* TYSHORT_GLOBAL;
+extern Type* TYVOID_GLOBAL;
 
 // 判断变量类型
 bool isInteger(Type* TY);

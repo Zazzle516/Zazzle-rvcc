@@ -244,8 +244,16 @@ static long getArrayNumber(Token* tok) {
 
 // commit[33]: 判断当前读取的类型是否符合变量声明的类型
 static bool isTypeName(Token* tok) {
-    return (equal(tok, "int") || equal(tok, "char")) || equal(tok, "long") || equal(tok, "short")
-            || equal(tok, "struct") || equal(tok, "union");
+    static char* typeNameKeyWord[] = {
+        "void", "char", "int", "long", "struct", "union", "short"
+    };
+
+    for (int I = 0; I < sizeof(typeNameKeyWord) / sizeof(*typeNameKeyWord); I++) {
+        if (equal(tok, typeNameKeyWord[I]))
+            return true;
+    }
+
+    return false;
 }
 
 static structMember* getStructMember(Type* structType, Token* tok) {
@@ -415,6 +423,11 @@ static Node* newPtrSub(Node* LHS, Node* RHS, Token* tok) {
 
 // 类型前缀判断
 static Type* declspec(Token** rest, Token* tok) {
+    if (equal(tok, "void")) {
+        *rest = skip(tok, "void");
+        return TYVOID_GLOBAL;
+    }
+
     if (equal(tok, "short")) {
         *rest = skip(tok, "short");
         return TYSHORT_GLOBAL;
@@ -741,6 +754,11 @@ static Node* declaration(Token** rest, Token* tok) {
 
         // 单纯的变量声明不会写入 AST 结构  只是更新了 Local | Global 链表
         Type* isPtr = declarator(&tok, tok, nd_base_type);
+
+        // commit[61]: 在 declarator() 解析完整类型后判断 void 非法
+        if (isPtr->Kind == TY_VOID)
+            tokenErrorAt(tok, "variable declared void");
+
         Object* var = newLocal(getVarName(isPtr->Name), isPtr);
 
         // 3. 如果存在赋值那么解析赋值部分

@@ -6,6 +6,12 @@ Type* TYCHAR_GLOBAL = &(Type){.Kind = TY_CHAR, .BaseSize = 1, .alignSize = 1};
 Type* TYLONG_GLOBAL = &(Type){.Kind = TY_LONG, .BaseSize = 8, .alignSize = 8};
 Type* TYSHORT_GLOBAL = &(Type){.Kind = TY_SHORT, .BaseSize = 2, .alignSize = 2};
 
+// Q: 为什么给 void 大小和对齐  这里定义为 1 和后面的 void* 任意类型定义有关吗
+// A: 在 commit[61] 的测试改 0 是可以的  我一开始猜想可能和 BaseSize 的运算有关
+// 但是合法的 void* 在 newptr() 的执行中指针大小是通过常量赋值的  和 TY_VOID.BaseSize 无关 所以我也不知道了
+// commit[61]: 只是定义了 (void*) 这个任意类型  而不是 void 传参
+Type* TYVOID_GLOBAL = &(Type){.Kind = TY_VOID, .BaseSize = 1, .alignSize = 1};
+
 // commit[50]: 对每个类型新增 typeAlign 保证 codeGen().alignTo() 计算正确性
 static Type* newType(Typekind typeKind, int typeSize, int typeAlign) {
     Type* returnType = calloc(1, sizeof(Type));
@@ -182,6 +188,11 @@ void addType(Node* ND) {
 
     case ND_DEREF:
     {
+        // commit[61]: 对 void 进行类型检查  void* 类型在使用时(比如解引用)  必须显示转换为具体类型
+        if (ND->LHS->node_type->Base->Kind == TY_VOID) {
+            tokenErrorAt(ND->token, "deRefing a void pointer");
+        }
+
         // 在 parser() 中 {int* ptr;} 的构造 指针的基类会被存在 LHS->node_type->Base 中 
         if (ND->LHS->node_type->Kind == TY_PTR) {
             ND->node_type = ND->LHS->node_type->Base;
