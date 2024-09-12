@@ -56,7 +56,7 @@ struct Scope {
 
 // commit[49]: 支持 struct 语法解析
 // commit[54]: 支持 union 语法解析
-// declspec = "int" | "char" | "long" | structDeclaration | unionDeclaration
+// declspec = ("int" | "char" | "long" | "short" | "void" | structDeclaration | unionDeclaration)+
 // __declspec = "int" | "char" | structDeclaration
 // __declspec = "int" | "char"
 
@@ -423,44 +423,81 @@ static Node* newPtrSub(Node* LHS, Node* RHS, Token* tok) {
 
 // 类型前缀判断
 static Type* declspec(Token** rest, Token* tok) {
-    if (equal(tok, "void")) {
-        *rest = skip(tok, "void");
-        return TYVOID_GLOBAL;
+    // commit[62]: 支持组合类型的声明  比如 long int | int long 类型声明
+    enum {
+        // Tip: 这里的 void 必须给出一个值  因为连续定义 void 或者穿插 void 定义也是错误的
+        VOID = 1 << 0,
+        CHAR = 1 << 2,
+        SHORT = 1 << 4,
+        INT = 1 << 6,
+        LONG = 1 << 8,
+        OTHER = 1 << 10,
+    };
+    
+    // Q: 为什么初始化是 INT 类型struct 和 union 解析覆盖
+    // A: 这里应该就是随便选了一个  反之后面会被 
+    Type* BaseType = TYVOID_GLOBAL;
+    int typeCounter = 0;
+
+    // Q: 这样的循环定义一定能控制在两层吗
+    // A: 因为每增加一次类型解析都会进行一次合法判断  所以如果不是两层会报错
+    while (isTypeName(tok)) {
+        if (equal(tok, "struct") || equal(tok, "union")) {
+            if (equal(tok, "struct"))
+                BaseType = structDeclaration(&tok, tok->next);
+            else
+                BaseType = unionDeclaration(&tok, tok->next);
+
+            // Q: 这里 +=other 的操作意义是
+            // Q: 反而是把 comtinue 注释掉后 针对 int struct 语句会调用到 unreachable() 错误提示
+            // 但是如果是这样 面对合法的 struct 声明也会报错  所以 += other 的操作应该是与合法性判断相关的  但是目前看不出来
+            typeCounter += OTHER;
+            continue;
+        }
+
+        if (equal(tok, "void"))
+            typeCounter += VOID;
+        else if (equal(tok, "char"))
+            typeCounter += CHAR;
+        else if (equal(tok, "short"))
+            typeCounter += SHORT;
+        else if (equal(tok, "int"))
+            typeCounter += INT;
+        else if (equal(tok, "long"))
+            typeCounter += LONG;
+        else
+            unreachable();
+
+        // 根据 typeCounter 值进行映射
+        switch (typeCounter)
+        {
+        case VOID:
+            BaseType = TYVOID_GLOBAL;
+            break;
+        case CHAR:
+            BaseType = TYCHAR_GLOBAL;
+            break;
+
+        case SHORT:
+        case SHORT + INT:
+            BaseType = TYSHORT_GLOBAL;
+            break;
+        case INT:
+            BaseType = TYINT_GLOBAL;
+            break;
+        case LONG:
+        case LONG + INT:
+            BaseType = TYLONG_GLOBAL;
+            break;
+        default:
+            tokenErrorAt(tok, "unexpected preFix declaration\n");
+        }
+
+        tok = tok->next;
     }
 
-    if (equal(tok, "short")) {
-        *rest = skip(tok, "short");
-        return TYSHORT_GLOBAL;
-    }
-
-    // commit[33]: 对类型分别进行处理
-    if (equal(tok, "int")) {
-        *rest = skip(tok, "int");
-        return TYINT_GLOBAL;
-    }
-
-    if (equal(tok, "char")) {
-        *rest = skip(tok, "char");
-        return TYCHAR_GLOBAL;
-    }
-
-    if (equal(tok, "long")) {
-        *rest = skip(tok, "long");
-        return TYLONG_GLOBAL;
-    }
-
-    // commit[49]: struct 整体作为一个自定义类型
-    if (equal(tok, "struct")) {
-        return structDeclaration(rest, tok->next);
-    }
-
-    // commit[54]: 复用完成 union 的解析
-    if (equal(tok, "union")) {
-        return unionDeclaration(rest, tok->next);
-    }
-
-    tokenErrorAt(tok, "unexpected preFix declaration\n");
-    return NULL;
+    *rest = tok;
+    return BaseType;
 }
 
 // 解析函数传参
@@ -534,7 +571,7 @@ static Type* declarator(Token** rest, Token* tok, Type* Base) {
         // A: 在后续的外层类型的传递中需要重新解析内层类型  通过 Start 记录该断点
         Token* Start = tok;
 
-        // Q: 为什么使用 Dummy 记录
+        // Q: 为什么使用 Dummy
         // A: 因为外层没有解析完  所以这里给内层类型一个默认值  虽然这里可以正常解析内部类型  但是没有任何意义  最后丢弃掉
         Type Dummy = {};
         declarator(&tok, Start->next, &Dummy);
