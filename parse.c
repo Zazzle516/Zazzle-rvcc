@@ -17,6 +17,7 @@ struct TagScope {
     TagScope* next;
 
     char* tagName;
+
     // 利用 Type 记录该结构体的一些元数据  比如成员 对齐值 大小...
     Type* tagType;
 };
@@ -30,12 +31,14 @@ typedef struct VarInScope VarInScope;
 struct VarInScope {
     VarInScope* next;
 
-    // Q: 在 findVar() 查找变量通过这里判断  为什么不是 Object 中的 name  目前这个 scopeName 完全就是 Object.name
-    // A: 目前猜测有一些匿名变量的考虑  需要结合后面的实现
+    // 在 commit[64] 添加了新的 typedefType 之后  有一个共通的 scopeName 就很重要
     char* scopeName;
 
     // 标记变量作用范围的同时指向该变量
     Object* varList;
+
+    // commit[64]: 类似于 tagScope 存储类型模板  这里存储类型别名
+    Type* typeDefined;
 };
 
 // 每个 {} 构成一个生效 Scope 范围
@@ -50,13 +53,22 @@ struct Scope {
     TagScope* tagScope;
 };
 
+// commit[64]: 判断该变量是否是类型别名  结合 typedef 使用 VarAttr 定义
+// VarAttr Attr = {} 会默认初始化为 0 false
+typedef struct {
+    bool isTypeDef;
+} VarAttr;
+
 
 // commit[31]: 把函数作为 Global Object 进行处理
-// parse() = (functionDefinition | globalVariable)*
+// parse() = (functionDefinition | globalVariable | typedef)*
 
 // commit[49]: 支持 struct 语法解析
 // commit[54]: 支持 union 语法解析
-// declspec = ("int" | "char" | "long" | "short" | "void" | structDeclaration | unionDeclaration)+
+// commit[64]: 支持 typedef 解析        Q: typedefName 是什么
+// declspec = ("int" | "char" | "long" | "short" | "void" | structDeclaration | unionDeclaration
+//             | "typedef" | "typedefName"
+//            )+
 // __declspec = "int" | "char" | structDeclaration
 // __declspec = "int" | "char"
 
@@ -77,7 +89,8 @@ struct Scope {
 // commit[25]: 函数定义 目前只支持 'int' 并且无参  eg. int* funcName() {...}
 // functionDefinition = declspec declarator "{" compoundStamt*
 
-// compoundStamt = (declaration | stamt)* "}"
+// Q: typedef 的优先级为什么传递到下层了  其他的语法解析都是在本层结束的
+// compoundStamt = (typedef | declaration | stamt)* "}"
 
 // commit[26]: 含参的函数定义
 // commit[27]: 新增对数组变量定义的支持(修改了 typeSuffix 的语法 把结束位置移动到下一层)
@@ -145,11 +158,15 @@ static void leaveScope() {
     HEADScope = HEADScope->next;
 }
 
-static VarInScope* pushVarScopeToScope(char* Name, Object* var) {
+// commit[64]: 修改了传参
+static VarInScope* pushVarScopeToScope(char* Name) {
     VarInScope* newVarScope = calloc(1, sizeof(VarInScope));
 
     newVarScope->scopeName = Name;
-    newVarScope->varList = var;
+
+    // Q: 为什么把这里注释掉
+    // A: 因为在 commit[64] 增加了 typedef 判断后  varList 和 typeDefType 存储的成员位置不同  所以由调用函数自己判断
+    // newVarScope->varList = var;
 
     newVarScope->next = HEADScope->varScope;
     HEADScope->varScope = newVarScope;
@@ -169,13 +186,28 @@ static void pushTagScopeToScope(Token* tok, Type* tagType) {
 }
 
 // 函数执行 newLocal() 和 newGlobal() 的时候会同时 pushVarScope
-static Object* findVar(Token* tok) {
+// commit[64]: 修改返回类型  因为 definedType 和 varList 类型不同
+static VarInScope* findVar(Token* tok) {
     // commit[44]: 在嵌套的代码块遍历查找
     for (Scope* currScp = HEADScope; currScp ; currScp = currScp->next) {
         for (VarInScope* currVarScope = currScp->varScope; currVarScope; currVarScope = currVarScope->next) {
             if (equal(tok, currVarScope->scopeName))
-                return currVarScope->varList;
+                return currVarScope;
         }
+    }
+
+    return NULL;
+}
+
+// commit[64]: 针对 typedef 判断  返回类型 Type 如果是标准类型则是 NULL
+static Type* findTypeDef(Token* tok) {
+    if (tok->token_kind == TOKEN_IDENT) {
+        // Q: 为什么不直接找目标变量  而是返回 varInScope
+        // A: 因为 varList 和 typeDefined 在 varInScope 中是平级的存在  不能确定返回类型  所以包装一层
+        VarInScope* newVarScope = findVar(tok);
+
+        if (newVarScope)
+            return newVarScope->typeDefined;
     }
 
     return NULL;
@@ -199,7 +231,8 @@ static Object* newVariable(char* varName, Type* varType) {
     obj->var_name = varName;
 
     // commit[44]: 压入 newVarScope 中
-    pushVarScopeToScope(varName, obj);
+    // commit[64]: 配合 pushVarScopeToScope 的传参修改进行修改
+    pushVarScopeToScope(varName)->varList = obj;
 
     return obj;
 }
@@ -245,7 +278,7 @@ static long getArrayNumber(Token* tok) {
 // commit[33]: 判断当前读取的类型是否符合变量声明的类型
 static bool isTypeName(Token* tok) {
     static char* typeNameKeyWord[] = {
-        "void", "char", "int", "long", "struct", "union", "short"
+        "void", "char", "int", "long", "struct", "union", "short", "typedef"
     };
 
     for (int I = 0; I < sizeof(typeNameKeyWord) / sizeof(*typeNameKeyWord); I++) {
@@ -253,7 +286,8 @@ static bool isTypeName(Token* tok) {
             return true;
     }
 
-    return false;
+    // 判断变量类型定义的时候  考虑到 typedef 别名的可能性
+    return findTypeDef(tok);
 }
 
 static structMember* getStructMember(Type* structType, Token* tok) {
@@ -271,27 +305,28 @@ static structMember* getStructMember(Type* structType, Token* tok) {
 
 static Token* functionDefinition(Token* tok, Type* funcReturnBaseType);
 static Token* gloablDefinition(Token* tok, Type* globalBaseType);
+static Token* parseTypeDef(Token* tok, Type* BaseType);
 
+// commit[64]: 增加了 BaseType 的传参  因为 typedef 提前了 declspec()
+static Type* declspec(Token** rest, Token* tok, VarAttr* varAttr);
 static Type* declarator(Token** rest, Token* tok, Type* Base);
-static Type* declspec(Token** rest, Token* tok);
-static Node* declaration(Token** rest, Token* tok);
+static Node* declaration(Token** rest, Token* tok, Type* BaseType);
 
+static Type* StructOrUnionDecl(Token** rest, Token* tok);
 static Type* structDeclaration(Token** rest, Token* tok);
 static Type* unionDeclaration(Token** rest, Token* tok);
-static Type* StructOrUnionDecl(Token** rest, Token* tok);
 
 static Node* compoundStamt(Token** rest, Token* tok);
 static Node* stamt(Token** rest, Token* tok);
 static Node* exprStamt(Token** rest, Token* tok);
 static Node* expr(Token** rest, Token* tok);
-
 static Node* assign(Token** rest, Token* tok);
-
 static Node* equality_expr(Token** rest, Token* tok);
 static Node* relation_expr(Token** rest, Token* tok);
 static Node* first_class_expr(Token** rest, Token* tok);
 static Node* second_class_expr(Token** rest, Token* tok);
 static Node* third_class_expr(Token** rest, Token* tok);
+
 static Node* preFix(Token** rest, Token* tok);
 static Node* primary_class_expr(Token** rest, Token* tok);
 static Node* funcall(Token** rest, Token* tok);
@@ -422,7 +457,7 @@ static Node* newPtrSub(Node* LHS, Node* RHS, Token* tok) {
 
 
 // 类型前缀判断
-static Type* declspec(Token** rest, Token* tok) {
+static Type* declspec(Token** rest, Token* tok, VarAttr* varAttr) {
     // commit[62]: 支持组合类型的声明  比如 long int | int long 类型声明
     enum {
         // Tip: 这里的 void 必须给出一个值  因为连续定义 void 或者穿插 void 定义也是错误的
@@ -434,23 +469,51 @@ static Type* declspec(Token** rest, Token* tok) {
         OTHER = 1 << 10,
     };
     
-    // Q: 为什么初始化是 INT 类型struct 和 union 解析覆盖
-    // A: 这里应该就是随便选了一个  反之后面会被 
-    Type* BaseType = TYVOID_GLOBAL;
+    // Q: 为什么初始化是 INT 类型 在 commit[64] 之前换成其他任意类型都不会报错  因为会被覆盖
+    // A: commit[64] 证明了这里只能写 TYINT 不然在 {typedef a;} 的测试中报错  因为默认 TYINT
+    Type* BaseType = TYINT_GLOBAL;
     int typeCounter = 0;
 
     // Q: 这样的循环定义一定能控制在两层吗
-    // A: 因为每增加一次类型解析都会进行一次合法判断  所以如果不是两层会报错
+    // A: 因为每增加一次类型解析都会进行一次合法判断  和类型声明的层数无关
+    // 同时处理 typedef 的链式声明 {typedef int a; typedef a b;}
     while (isTypeName(tok)) {
-        if (equal(tok, "struct") || equal(tok, "union")) {
-            if (equal(tok, "struct"))
+
+        if (equal(tok, "typedef")) {
+            if (!varAttr)
+                // Q: 判断 varAttr 是否为空的
+                // A: 人为表示 typedef 是否可以使用
+                tokenErrorAt(tok, "storage class specifier is not allowed in this context");
+
+            varAttr->isTypeDef = true;
+            tok = tok->next;
+            continue;
+        }
+
+        // 处理 struct | union 类型  & 判断当前的类型声明是否是 typedef 重声明的
+        // 结构体内部不可以使用 typedef  但是可以在外部使用  针对结构体变量本身不可以用 typedef
+        Type* definedType = findTypeDef(tok);
+        if (equal(tok, "struct") || equal(tok, "union") || definedType) {
+            if (typeCounter)
+                // case1: 针对已经被 typedef 修饰的别名  如果重新被 typedef 修饰覆盖  需要 typeCounter 判断
+                // case2: 对非 typedef 的情况进行多类型声明的报错  比如 {int struct}
+                break;
+
+            if (equal(tok, "struct")) {
                 BaseType = structDeclaration(&tok, tok->next);
-            else
+            }
+
+            else if (equal(tok, "union")) {
                 BaseType = unionDeclaration(&tok, tok->next);
+            }
+
+            else {
+                BaseType = definedType;
+                tok = tok->next;
+            }
 
             // Q: 这里 +=other 的操作意义是
-            // Q: 反而是把 comtinue 注释掉后 针对 int struct 语句会调用到 unreachable() 错误提示
-            // 但是如果是这样 面对合法的 struct 声明也会报错  所以 += other 的操作应该是与合法性判断相关的  但是目前看不出来
+            // A: 针对 case1 的情况  {typedef int t; t t=1;} 第二个 t 的判断需要退出
             typeCounter += OTHER;
             continue;
         }
@@ -512,7 +575,8 @@ static Type* funcFormalParams(Token** rest, Token* tok, Type* returnType) {
         if (Curr != &HEAD)
             tok = skip(tok, ",");
         // commit[26]: 复用函数定义的规则
-        Type* formalBaseType = declspec(&tok, tok);
+        // Tip: 也不能在函数参数中使用
+        Type* formalBaseType = declspec(&tok, tok, NULL);
         Type* isPtr = declarator(&tok, tok, formalBaseType);
         
         Curr->formalParamNext = copyType(isPtr);
@@ -551,7 +615,7 @@ static Type* typeSuffix(Token** rest, Token* tok, Type* BaseType) {
     return BaseType;
 }
 
-// 对类型进行完整判断
+// 类型后缀判断
 static Type* declarator(Token** rest, Token* tok, Type* Base) {
     // Tip: 多重指针 != 嵌套定义
     while (consume(&tok, tok, "*")) {
@@ -559,17 +623,10 @@ static Type* declarator(Token** rest, Token* tok, Type* Base) {
     }
     // 此时的 Base 已经是不完整的外层返回值类型
 
-    // commit[59]: 完成嵌套类型定义的时候  首先明确 C 作为一个强类型语言  类型和内存的空间分配强绑定
-    // 指向数组的首地址 != 指向数组的第一个元素的地址  虽然指针存储的内容相同  但是指向的空间范围不同  gcc 会警告
-    // 对例如 char* (*x)[3] 这样的类型分析可以从内外两层入手  但是无论是外层还是内层  类型的 BaseSize 一定是相同的
-    // 外层: char* [3]
-    // 内层: (*x): 虽然内层看起来只是一个指针  但该指针指向的空间依赖于外层类型的空间
-
     // commit[59]: 除了嵌套的结构体和多维数组  其余的嵌套情况基本都是通过 (ptr) 实现
-    // 在外层定义指针指向的空间大小  内层定义一个指针指向
     if (equal(tok, "(")) {
         // Q: 为什么保存左括号作为断点
-        // A: 在后续的外层类型的传递中需要重新解析内层类型  通过 Start 记录该断点
+        // A: 在后续的外层类型完成后需要重新解析内层类型  通过 Start 记录该断点
         Token* Start = tok;
 
         // Q: 为什么使用 Dummy
@@ -587,12 +644,12 @@ static Type* declarator(Token** rest, Token* tok, Type* Base) {
     }
 
     // 接下来要读取 funcName | identName
+    // commit[64]: 修正了 commit[62] 中 {int struct} 的错误
     if (tok->token_kind != TOKEN_IDENT) {
         tokenErrorAt(tok, "expected a variable name or a function name");
     }
 
     // commit[25]: 这里同时有变量声明 | 函数定义两个可能性 所以后续交给 typeSuffix 判断
-    // 调用 typeSuffix() 传递的是 rest 所以这里 tok 没有更新
     Base = typeSuffix(rest, tok->next, Base);
 
     // case1: 函数定义 & 读取函数名
@@ -653,8 +710,9 @@ static void structMembers(Token** rest, Token* tok, Type* structType) {
     structMember* Curr = &HEAD;
 
     while (!equal(tok, "}")) {
-        // 支持结构体的递归执行
-        Type* memberType = declspec(&tok, tok);
+        // 支持结构体的递归执行  解析类型前缀
+        // Tip: typedef 不可以在 struct 定义内部使用  必须是标准类型
+        Type* memberType = declspec(&tok, tok, NULL);
 
         // 类似于变量 declaration 成员变量也可能是连续定义的
         int First = true;
@@ -666,7 +724,7 @@ static void structMembers(Token** rest, Token* tok, Type* structType) {
             // 结构体中的每一个成员都作为 struct structMember 存储
             structMember* newStructMember = calloc(1, sizeof(structMember));
 
-            // 使用 declarator 支持复杂的成员定义
+            // 根据 declspec 类型前缀 使用 declarator 解析各自的类型后缀
             newStructMember->memberType = declarator(&tok, tok, memberType);
             // 后续对成员变量的访问通过 structName 判断
             newStructMember->memberName = newStructMember->memberType->Name;
@@ -682,6 +740,26 @@ static void structMembers(Token** rest, Token* tok, Type* structType) {
 }
 
 /* 语法规则的递归解析 */
+
+// commit[64]: 把定义的别名写到 varScope.definedType 中   集合了类型后缀解析 + 写入变量
+static Token* parseTypeDef(Token* tok, Type* BaseType){
+    bool First = true;
+
+    // typedef 的别名可以连续定义  {typedef int a, *b;}
+    while (!consume(&tok, tok, ";")) {
+        if (!First)
+            tok = skip(tok, ",");   // 在这里发生定义别名时赋值的报错
+        First = false;
+
+        // 根据 declspec() 解析的 BaseType 前缀解析完整类型
+        Type* definedType = declarator(&tok, tok, BaseType);
+
+        pushVarScopeToScope(getVarName(definedType->Name))->typeDefined = definedType;
+    }
+
+    return tok;
+}
+// 这里针对别名定义的类型  只是加载了别名
 
 // Q: commit[31] 的修改为什么传递 Token 回去
 // A: 因为函数已经作为一种特殊的变量被写入 Global 了
@@ -750,11 +828,28 @@ static Node* compoundStamt(Token** rest, Token* tok) {
     enterScope();
 
     while (!equal(tok, "}")) {
-        // 针对定义语句和表达式语句分别处理
-        if (isTypeName(tok))
-            Curr->next = declaration(&tok, tok);
-        else
+
+        if (isTypeName(tok)) {
+            // Q: 为什么 commit[64] 把 declspec 前缀判断拆出来
+            // A: 因为需要针对 typedef 进行预判断  并不会更新 tok 的位置
+            VarAttr Attr = {};
+            Type* BaseType = declspec(&tok, tok, &Attr);
+
+            if (Attr.isTypeDef) {
+                // 确认这是一个 typedef 的别名定义  存储该别名对应的类型 definedType
+                tok = parseTypeDef(tok, BaseType);
+
+                // Tip: typedef 别名定义 与 变量定义赋值不能同时发生
+                continue;
+            }
+
+            // 在这里通过 BaseType 进行传参  相应在 declaration() 里面删掉前缀判断
+            Curr->next = declaration(&tok, tok, BaseType);
+        }
+
+        else {
             Curr->next = stamt(&tok, tok);
+        }
 
         Curr = Curr->next;
         addType(Curr);
@@ -772,10 +867,12 @@ static Node* compoundStamt(Token** rest, Token* tok) {
 
 // 对变量定义语句的解析
 // declaration = declspec (declarator ("=" expr)? ("," declarator ("=" expr)?)*)? ";"
-static Node* declaration(Token** rest, Token* tok) {
+static Node* declaration(Token** rest, Token* tok, Type* BaseType) {
     // 1. 解析 declspec 类型语法  放在循环外面应用于所有的声明变量
     // commit[49]: 在 declspec 中完成对结构体的解析
-    Type* nd_base_type = declspec(&tok, tok);
+
+    // commit[64]: 为了 typedef 的提前判断  在 compoundStamt 中已经获得
+    // Type* nd_base_type = declspec(&tok, tok);
     
     // commit[49]: 处理结构体的定义匿名实例变量名
 
@@ -784,14 +881,14 @@ static Node* declaration(Token** rest, Token* tok) {
 
     // 连续定义的合法性判断
     int variable_count = 0;
-    // 2. 如果存在连续声明  需要通过 for-loop 完成
+    // 2. 如果存在连续声明  需要通过 loop 完成
     while(!equal(tok, ";")) {
         if ((variable_count ++) > 0)
             // Tip: 函数嵌套定义报错位置
             tok = skip(tok, ",");
 
         // 单纯的变量声明不会写入 AST 结构  只是更新了 Local | Global 链表
-        Type* isPtr = declarator(&tok, tok, nd_base_type);
+        Type* isPtr = declarator(&tok, tok, BaseType);
 
         // commit[61]: 在 declarator() 解析完整类型后判断 void 非法
         if (isPtr->Kind == TY_VOID)
@@ -1277,12 +1374,13 @@ static Node* primary_class_expr(Token** rest, Token* tok) {
         }
 
         // 先检查变量是否已经定义过 根据结果执行
-        Object* varObj = findVar(tok);
-        if (!varObj) {
+        VarInScope* varScope = findVar(tok);
+        // Q: 为什么这里是根据 VarInScope 判断的
+        if (!varScope || !varScope->varList) {
             tokenErrorAt(tok, "undefined variable");
         }
         // 初始化变量结点
-        Node* ND = singleVarNode(varObj, tok);
+        Node* ND = singleVarNode(varScope->varList, tok);
         *rest = tok->next;
         return ND;
     }
@@ -1334,11 +1432,18 @@ Object* parse(Token* tok) {
     // commit[31]: 使用全局变量 Global 来记录函数定义
     Global = NULL;
 
+    // commit[64]: 因为 typedef 提前了类型前缀的解析
     while (tok->token_kind !=TOKEN_EOF) {
-        Type* BaseType = declspec(&tok, tok);
+        VarAttr Attr = {};
+        Type* BaseType = declspec(&tok, tok, &Attr);
 
         // commit[32]: 判断全局变量或者函数 进行不同的处理
-        if (!GlobalOrFunction(tok)) {
+        if (Attr.isTypeDef) {
+            tok = parseTypeDef(tok, BaseType);
+            continue;
+        }
+
+        else if (!GlobalOrFunction(tok)) {
             Type* funcReturnBaseType = copyType(BaseType);
             tok = functionDefinition(tok, funcReturnBaseType);
             continue;

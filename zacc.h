@@ -19,7 +19,9 @@
 #include <errno.h>
 #include <stdint.h>
 
-// 提前声明
+// 替换声明  在后续的变量声明中省略 struct 关键字
+// Q: 为什么 typedef 可以作为一个组合识别到 (struct structName)
+// A: 因为 typedef 关键字(非宏处理) 和编译器强绑定          Q: 可以看看 commit[64] 是怎么实现的
 typedef struct Node Node;
 typedef struct Type Type;
 typedef struct Object Object;

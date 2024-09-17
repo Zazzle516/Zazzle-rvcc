@@ -91,7 +91,7 @@ void charErrorAt(char* place, char* FMT, ...) {
 static bool isKeyWords(Token* input) {
     static char* keywords[] = {"if", "else", "return", "for", "while",
                                 "sizeof", "char", "struct", "union",
-                                "long", "short", "void"
+                                "long", "short", "void", "typedef"
                             };
 
     for (int i = 0; i < sizeof(keywords) / sizeof(*keywords); i ++) {
@@ -391,6 +391,7 @@ Token* tokenize(char* fileName, char* P) {
             } while (isIdentIndex(*P));
             
             // 当时这里因为判断条件的限制   只能分辨小写字符    如果是大写的就判断不了了
+            // 这里无论是变量名称还是类型  都会是 TOKEN_IDENT 定义
             currToken->next = newToken(TOKEN_IDENT, start, P);
             currToken = currToken->next;
             continue;
