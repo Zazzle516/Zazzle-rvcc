@@ -98,7 +98,14 @@ typedef struct {
 // postFix = primary_calss_expr ("[" expr"]" | ("." ident)* | ("->" ident)*)
 
 // commit[23] [30] [39]: 添加对零参函数名 | "sizeof" | ND_GNU_EXPR 声明的支持
-// primary_class_expr = "(" "{" stamt+ "}" ")" |'(' expr ')' | num | ident fun_args? | "sizeof" third_class_expr | str
+// primary_class_expr = "(" "{" stamt+ "}" ")" |
+//                      "(" expr ")" | num | ident fun_args? | str |
+//                      "sizeof" third_class_expr |
+//                      "sizeof" "(" typeName")"
+
+// commit[65]: 在编译阶段解析 sizeof 对类型的求值
+// typeName = declspec abstractDeclarator   // Q: 这是什么东西...  这个 typeName 为什么是拆成两个部分的
+// abstractDeclarator = "*"* ("(" abstractDeclarator ")")? typeSuffix
 
 // commit[24]: 函数调用 在 primary_class_expr 前看一个字符确认是函数声明后的定义
 // funcall = ident "(" (expr ("," expr)*)? ")"
@@ -264,8 +271,8 @@ static Token* parseTypeDef(Token* tok, Type* BaseType);
 
 static Type* declspec(Token** rest, Token* tok, VarAttr* varAttr);
 static Type* declarator(Token** rest, Token* tok, Type* Base);
-static Node* declaration(Token** rest, Token* tok, Type* BaseType);
 static Type* typeSuffix(Token** rest, Token* tok, Type* BaseType);
+static Type *abstractDeclarator(Token **rest, Token *tok, Type* BaseType);
 static Type* funcFormalParams(Token** rest, Token* tok, Type* returnType);
 
 static Type* StructOrUnionDecl(Token** rest, Token* tok);
@@ -273,6 +280,7 @@ static Type* structDeclaration(Token** rest, Token* tok);
 static Type* unionDeclaration(Token** rest, Token* tok);
 
 static Node* compoundStamt(Token** rest, Token* tok);
+static Node* declaration(Token** rest, Token* tok, Type* BaseType);
 static Node* stamt(Token** rest, Token* tok);
 static Node* exprStamt(Token** rest, Token* tok);
 static Node* expr(Token** rest, Token* tok);
@@ -563,6 +571,39 @@ static Type* typeSuffix(Token** rest, Token* tok, Type* BaseType) {
     // 变量定义处理    BaseType: 变量类型
     *rest = tok;
     return BaseType;
+}
+
+// commit[65]: 参考 declarator 的结构  只不过是匿名嵌套类型声明
+static Type* abstractDeclarator(Token **rest, Token *tok, Type* BaseType) {
+    while (equal(tok, "*")) {
+        BaseType = newPointerTo(BaseType);
+        tok = tok->next;
+    }
+
+    // 等待外层类型解析后再重新解析内层类型
+    if (equal(tok, "(")) {
+        Token* Start = tok;
+
+        Type Dummy = {};
+        abstractDeclarator(&tok, Start->next, &Dummy);
+        tok = skip(tok,")");
+
+        // 解析外层类型后缀  重新解析内层类型的  通过 &tok 更新 tok 位置
+        BaseType = typeSuffix(rest, tok, BaseType);
+        return abstractDeclarator(&tok, Start->next, BaseType);
+    }
+
+    // case1: 完整解析内层类型的后缀丢弃 | 二次解析内层类型后缀
+    // case2: 解析外层类型后缀  返回完整的 BaseSize 大小
+    return typeSuffix(rest, tok, BaseType);
+}
+
+// commit[65]: 针对 sizeof 的类型求值获取类型信息
+static Type* getTypeInfo(Token** rest, Token* tok) {
+    // Q: 为什么需要 abstractDeclarator 这个新的解析函数  而不是调用 declarator + typeSuffix
+    // A: 这里的语法规则是匿名变量  所以和 declarator 有一点差别  但是结构类似
+    Type* BaseType = declspec(&tok, tok, NULL);
+    return abstractDeclarator(rest, tok, BaseType);
 }
 
 // commit[26]: 利用 Type 结构定义存储形参的链表
@@ -1202,6 +1243,9 @@ static Node* preFix(Token** rest, Token* tok) {
 
 // 判断子表达式或者数字
 static Node* primary_class_expr(Token** rest, Token* tok) {
+    // commit[65]: 记录报错断点
+    Token* Start = tok;
+
     // 优先判定 GNU 的语句表达式
     if (equal(tok, "(") && equal(tok->next, "{")) {
         Node* ND = createNode(ND_GNU_EXPR, tok);
@@ -1216,6 +1260,16 @@ static Node* primary_class_expr(Token** rest, Token* tok) {
         Node* ND = expr(&tok, tok->next);
         *rest = skip(tok, ")");
         return ND;
+    }
+
+    if (equal(tok, "sizeof") && equal(tok->next, "(") && isTypeName(tok->next->next)) {
+        // commit[65]: 针对匿名类型声明进行 sizeof(type) 的求值
+        // Tip: 类型可以是复合的  又因为判断用的是 isTypeName 所以可以判断别名
+        Type* targetType = getTypeInfo(&tok, tok->next->next);
+        *rest = skip(tok, ")");
+
+        // sizeof 在编译器阶段直接进行处理  不需要 codeGen 的额外操作
+        return numNode(targetType->BaseSize, Start);
     }
 
     if (equal(tok, "sizeof")) {

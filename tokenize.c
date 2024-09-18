@@ -87,11 +87,11 @@ void charErrorAt(char* place, char* FMT, ...) {
     errorAt(errorLineNum, place, FMT, VA);
 }
 
-// 关键字声明 目前没用
+// 关键字声明
 static bool isKeyWords(Token* input) {
     static char* keywords[] = {"if", "else", "return", "for", "while",
                                 "sizeof", "char", "struct", "union",
-                                "long", "short", "void", "typedef"
+                                "long", "short", "void", "typedef", "int"
                             };
 
     for (int i = 0; i < sizeof(keywords) / sizeof(*keywords); i ++) {
