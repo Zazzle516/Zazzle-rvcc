@@ -12,7 +12,6 @@ static Object* currFuncFrame;
 // commit[42]: 声明当前解析结果的输出文件
 static FILE* compileResult;
 
-// 提前声明 后续会用到
 static void calcuGen(Node* AST);
 static void exprGen(Node* AST);
 static void printLn(char* Fmt, ...);
@@ -37,9 +36,12 @@ static void pop_stack(char* reg) {
     StackDepth--;
 }
 
-// commit[33]: 在新增 char 类型后 不同类型读写的字节数量不同 需要进行判断 byte word ddouble
+// commit[66]: 支持 32 位指令
+// Tip: RV64 的环境并不能完全兼容 RV32  eg. 前 32 位会被截断而在 64 位则不会  在反转数字的过程中  前 32 位会被反转到后 32 位中
+// 导致反转的错位  所以在计算操作的时候要控制反转的数字长度
+// 在 commit[66] 中原本的 RV64 环境如果要使用 RV32 的读写  需要声明为 addw subw...   修改在 calcuGen()
 
-// commit[27]: 把 exprGen() 中的 ld 和 sd 提取出来(提高代码可读性
+// commit[33]: 在新增 char 类型后 不同类型读写的字节数量不同 需要进行判断 byte word ddouble
 
 static void Load(Type* type) {
     if (type->Kind == TY_ARRAY_LINER)
@@ -249,7 +251,7 @@ static void calcuGen(Node* AST) {
     {
         calcuGen(AST->LHS);
         printLn("  # 对 a0 的值取反");
-        printLn("  neg a0, a0");
+        printLn("  neg%s a0, a0", AST->node_type->BaseSize <= 4 ? "w" : "");
         return;
     }
 
@@ -360,20 +362,26 @@ static void calcuGen(Node* AST) {
     calcuGen(AST->LHS);
     pop_stack("a1");        // 把 RHS 的计算结果弹到 reg-a1 中
 
+    // commit[66]: 在运算中 char | short 会自动转换到 int 计算  如果 int 溢出会转换到 long
+    // 与其说这个 commit 在支持 32 位指令  本质上是在根据类型限制读写的内存字节
+    // 无后缀是 RV64  添加了后缀是 RV32  如果是 long 或者指针(在本项目环境中也就是 8 字节)  Suffix 为空
+    // 否则其他 char | short 其他乱七八糟的都是 4 字节  需要后缀添加 "w"
+    char* Suffix = AST->LHS->node_type->Kind == TY_LONG || AST->LHS->node_type->BaseSize ? "" : "w";
+
     // 复合运算结点 此时左右结点都已经在上面处理完成 可以直接计算
     switch (AST->node_kind)
     {
     case ND_ADD:
-        printLn("  add a0, a0, a1");
+        printLn("  add%s a0, a0, a1", Suffix);
         return;
     case ND_SUB:
-        printLn("  sub a0, a0, a1");
+        printLn("  sub%s a0, a0, a1", Suffix);
         return;
     case ND_MUL:
-        printLn("  mul a0, a0, a1");
+        printLn("  mul%s a0, a0, a1", Suffix);
         return;
     case ND_DIV:
-        printLn("  div a0, a0, a1");
+        printLn("  div%s a0, a0, a1", Suffix);
         return;
 
     case ND_EQ:
@@ -407,6 +415,7 @@ static void calcuGen(Node* AST) {
         // errorHint("invalid expr\n");
         tokenErrorAt(AST->token, "invalid expr\n");
     }
+
 }
 
 // 表达式代码
