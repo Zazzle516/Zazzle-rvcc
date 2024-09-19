@@ -432,7 +432,7 @@ static void calcuGen(Node* AST) {
     // 与其说这个 commit 在支持 32 位指令  本质上是在根据类型限制读写的内存字节
     // 无后缀是 RV64  添加了后缀是 RV32  如果是 long 或者指针(在本项目环境中也就是 8 字节)  Suffix 为空
     // 否则其他 char | short 其他乱七八糟的都是 4 字节  需要后缀添加 "w"
-    char* Suffix = AST->LHS->node_type->Kind == TY_LONG || AST->LHS->node_type->BaseSize ? "" : "w";
+    char* Suffix = AST->LHS->node_type->Kind == TY_LONG || AST->LHS->node_type->Base ? "" : "w";
 
     // 复合运算结点 此时左右结点都已经在上面处理完成 可以直接计算
     switch (AST->node_kind)

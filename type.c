@@ -48,7 +48,7 @@ Type* funcType(Type* ReturnType) {
     return type;
 }
 
-// 新分配了一片指针空间指向原本的空间
+// Q: 新分配了一片指针空间指向原本的空间  所以到底有什么用呢.
 Type* copyType(Type* origin) {
     Type* newType = calloc(1, sizeof(Type));
     *newType = *origin;
@@ -76,6 +76,29 @@ Type* linerArrayType(Type* arrayBaseType, int arrayElemCount) {
     return linerArray;
 }
 
+// commit[68]: 针对单返回结果 ND 结点进行判断
+static Type* singleLongType(Type* leftType, Type* rightType) {
+    // 针对 LHS 的左指针类型  需要向上传递
+    if (leftType->Base)
+        return newPointerTo(leftType->Base);
+
+    // 针对其他数据类型  根据长度判断
+    if (leftType->BaseSize == 8 || rightType->BaseSize == 8)
+        return TYLONG_GLOBAL;
+
+    return TYINT_GLOBAL;
+}
+
+// commit[68]: 针对双返回结果的 ND 结点进行类型判断
+// Tip: 这是一个 C 如何返回多个结果的示例  通过指针的指针进行传递  函数本身是 VOID
+static void usualArithConv(Node** LHS, Node** RHS) {
+    Type* longestType = singleLongType((*LHS)->node_type, (*RHS)->node_type);
+
+    // 写入 LHS RHS 两个返回结果
+    // 无论是否真的会类型转换  都会完成强制转换的语法
+    *LHS = newCastNode(*LHS, longestType);
+    *RHS = newCastNode(*RHS, longestType);
+}
 
 // 通过递归为该结点的所有子节点添加类型
 void addType(Node* ND) {
@@ -108,23 +131,53 @@ void addType(Node* ND) {
 
     // 目前大体分成两类: 1.根据 LHS 确定类型   2.指针
     switch (ND->node_kind) {
+
+    case ND_NUM:
+    {
+        // 判断强转为 int 类型后是否仍然完整  否则用 long 类型存储
+        // 结合 parse.numNode() 并没有分配空间  进行额外类型判断
+        ND->node_type = (ND->val == (int)ND->val) ? TYINT_GLOBAL : TYLONG_GLOBAL;
+        return;
+    }
+
     case ND_ADD:
     case ND_SUB:
     case ND_MUL:
     case ND_DIV:
-    case ND_NEG:
+    {
         // commit[27]: 无论类型都可以依赖于左值的类型的操作节点
+        // commit[68]: 通过强制类型转换  将左右子树统一为最大的类型
+        usualArithConv(&ND->LHS, &ND->RHS);
+        // Q: 应该不可以改成 RHS 因为涉及指针运算  虽然目前没有测试证明
         ND->node_type = ND->LHS->node_type;
         return;
+    }
+
+    case ND_NEG:
+    {
+        // 单操作数直接和标准类型比较就可以
+        Type* ty = singleLongType(TYINT_GLOBAL, ND->LHS->node_type);
+        ND->LHS = newCastNode(ND->LHS, ty);
+        ND->node_type = ty;
+        return;
+    }
+
     case ND_ASSIGN:
+    {
         // commit[27]: 数组的某个元素空间 表示一个存储地址  作为左值传递是 ok 的
         // 但是  整个数组  表示一个数据的值/数组的起始位置(指针)  不能进行修改  所以不能作为左值传递
-        if (ND->LHS->node_type->Kind == TY_ARRAY_LINER) {
+        if (ND->LHS->node_type->Kind == TY_ARRAY_LINER)
             tokenErrorAt(ND->token, "array itself can not be set as left value\n");
-        }
+
+        // 在赋值的时候  赋值的类型 (RHS.node_type) 需要根据被赋值的类型 (LHS.node_type) 进行转换
+        // eg. int a = 4; long b = a;
+        if (ND->LHS->node_type->Kind != TY_STRUCT)
+            ND->RHS = newCastNode(ND->RHS, ND->LHS->node_type);
+
         ND->node_type = ND->LHS->node_type;
         return;
-    
+    }
+
     // 目前是直接设为 TYPE_INT 类型
     case ND_EQ:
     case ND_NEQ:
@@ -132,26 +185,40 @@ void addType(Node* ND) {
     case ND_LE:
     case ND_GE:
     case ND_GT:
-    case ND_NUM:
-    // Q: 为什么这里把函数调用的类型设置为 TYINT
-    // Q: 而且不是所有结点都需要一个类型 比如 ND_STAMT 的类型就空置了 那 FUNCALL 为什么一定需要一个类型
-    // 现在 commit[50] 也没有对 ND_FUNCALL 使用 newType() 函数  emm.. 挺迷惑的
+    {
+        usualArithConv(&ND->LHS, &ND->RHS);
+        ND->node_type = TYINT_GLOBAL;
+        return;
+    }
+
     case ND_FUNCALL:
+    {
+        // Q: 为什么这里把函数调用的类型设置为 TYLONG
+        // Q: 而且不是所有结点都需要一个类型 比如 ND_STAMT 的类型就空置了 那 FUNCALL 为什么一定需要一个类型
+        // 现在 commit[50] 也没有对 ND_FUNCALL 使用 newType() 函数  emm.. 挺迷惑的
         ND->node_type = TYLONG_GLOBAL;
         return;
+    }
+
     case ND_VAR:
+    {
         ND->node_type = ND->var->var_type;
         return;
+    }
 
     case ND_COMMA:
+    {
         ND->node_type = ND->RHS->node_type;
         return;
+    }
 
     case ND_STRUCT_MEMEBER:
+    {
         // 把访问目标的成员变量的类型向上传递
         ND->node_type = ND->structTargetMember->memberType;
         return;
-    
+    }
+
     case ND_GNU_EXPR:
     {
         if (ND->Body) {

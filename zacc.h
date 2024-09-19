@@ -202,6 +202,8 @@ struct Node {
     structMember* structTargetMember;
 };
 
+// commit[68]: 将 commit[67] 中 parse 定义的类型转换函数重声明
+Node* newCastNode(Node* lastNode, Type* currTypeTarget);
 
 Object* parse(Token* tok);
 

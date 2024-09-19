@@ -315,7 +315,17 @@ static Node* createNode(NODE_KIND node_kind, Token* tok) {
 
 // 针对数字结点的额外的值定义(数字节点相对特殊 但是在 AST 扮演的角色没区别)
 static Node* numNode(int64_t val, Token* tok) {
+    // 结合 commit[68] 的更新  类型交给 addType() 判断是 int | long
     Node* newNode = createNode(ND_NUM, tok);
+    newNode->val = val;
+    return newNode;
+}
+
+// commit[68]: 针对算数类型转换声明 long 类型数字结点
+static Node* longNode(int64_t val, Token* tok) {
+    Node* newNode = createNode(ND_NUM, tok);
+    // Tip: 通过字面量直接分配 type 空间
+    newNode->node_type = TYLONG_GLOBAL;
     newNode->val = val;
     return newNode;
 }
@@ -329,7 +339,7 @@ static Node* singleVarNode(Object* var, Token* tok) {
 
 // commit[67]: 定义强制类型转换结点
 // 每个强制类型转换都会有一个 ND_TYPE_CAST 然后在 node_type 中存储目标类型
-static Node* newCastNode(Node* lastNode, Type* currTypeTarget) {
+Node* newCastNode(Node* lastNode, Type* currTypeTarget) {
     // Q: 可以注释掉 addType() 吗
     // A: 不可以  因为子节点类型的存在判断会提前结束 addType()  而后面的 castTypeNode 会手动添加自己的 node_type
     // 所以在手动完成这个最顶层结点的 node_type 添加之前  必须完成它的子节点的类型赋予
@@ -367,6 +377,7 @@ static Node* createSingle(NODE_KIND node_kind, Node* single_side, Token* tok) {
 /* 指针的加减运算 */
 
 // commit[21]: 新增对指针的加法运算支持
+// commit[68]: 修改支持 64 位指针存储
 static Node* newPtrAdd(Node* LHS, Node* RHS, Token* tok) {
     addType(LHS);
     addType(RHS);
@@ -385,14 +396,14 @@ static Node* newPtrAdd(Node* LHS, Node* RHS, Token* tok) {
     
     // LHS: int  +  RHS: ptr
     if (isInteger(LHS->node_type) && (!isInteger(RHS->node_type))) {
-        Node* newLHS = createAST(ND_MUL, numNode(RHS->node_type->Base->BaseSize, tok), LHS, tok);
+        Node* newLHS = createAST(ND_MUL, longNode(RHS->node_type->Base->BaseSize, tok), LHS, tok);
         return createAST(ND_ADD, RHS, newLHS, tok);
     }
 
     // LHS: ptr  +  RHS: int
     if (!isInteger(LHS->node_type) && (isInteger(RHS->node_type))) {
         // commit[28]: 使用 (n - 1) 维数组的大小作为 1 运算
-        Node* newRHS = createAST(ND_MUL, RHS, numNode(LHS->node_type->Base->BaseSize, tok), tok);
+        Node* newRHS = createAST(ND_MUL, RHS, longNode(LHS->node_type->Base->BaseSize, tok), tok);
         return createAST(ND_ADD, LHS, newRHS, tok);
     }
 
@@ -422,7 +433,7 @@ static Node* newPtrSub(Node* LHS, Node* RHS, Token* tok) {
 
     // LHS: ptr  -  RHS: int   
     if (LHS->node_type->Base && isInteger(RHS->node_type)) {
-        Node* newRHS = createAST(ND_MUL, numNode(LHS->node_type->Base->BaseSize, tok), RHS, tok);
+        Node* newRHS = createAST(ND_MUL, longNode(LHS->node_type->Base->BaseSize, tok), RHS, tok);
 
         // Q: ???   为什么加法不需要减法需要
         addType(newRHS);
@@ -1087,6 +1098,7 @@ static Node* exprStamt(Token** rest, Token* tok) {
     return ND;
 }
 
+// 逗号表达式
 static Node* expr(Token** rest, Token* tok) {
     // commit[48]: 针对 ND_COMMA 构造 Haffman 结构
     Node* ND = assign(&tok, tok);
