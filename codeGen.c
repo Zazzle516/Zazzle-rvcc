@@ -6,6 +6,48 @@ static int StackDepth;
 // 全局变量定义传参用到的至多 6 个寄存器
 static char* ArgReg[] = {"a0", "a1", "a2", "a3", "a4", "a5"};
 
+// commit[67]: 枚举可以互相转换的类型
+enum {I8, I16, I32, I64};
+
+// commit[67]: 判断当前类型需要的存储空间
+// Tip: 好巧妙的设计... 感叹自己活着的无意义(
+static int getTypeMappedId(Type* keyType) {
+    switch (keyType->Kind) {
+    case TY_CHAR:
+        return I8;
+    case TY_SHORT:
+        return I16;
+    case TY_INT:
+        return I32;
+    default:
+        return I64;
+    }
+}
+
+// commit[67]: 定义强制类型转换的过程
+// 先逻辑左移 N 位，再算术右移 N 位，就实现了将 64 位有符号数转换为 (64 - N) 位的有符号数
+static char i64i8[] = "  # 转换为 I8 类型\n"
+                      "  slli a0, a0, 56\n"
+                      "  srai a0, a0, 56";
+
+static char i64i16[] = "  # 转换为 I16 类型\n"
+                       "  slli a0, a0, 48\n"
+                       "  srai a0, a0, 48";
+
+static char i64i32[] = "  # 转换为 I32 类型\n"
+                       "  slli a0, a0, 32\n"
+                       "  srai a0, a0, 32";
+
+// commit[67]: 建立类型转换的映射表 | 二维数组
+// 这里的每一个数组元素都是对应的类型转换汇编语句
+static char* castTable[10][10] = {
+    {NULL,      NULL,       NULL,       NULL},
+    {i64i8,     NULL,       NULL,       NULL},
+    {i64i8,     i64i16,     NULL,       NULL},
+    {i64i8,     i64i16,     i64i32,     NULL},
+};
+
+
 // commit[25]: 记录当前正在执行的函数帧
 static Object* currFuncFrame;
 
@@ -16,6 +58,21 @@ static void calcuGen(Node* AST);
 static void exprGen(Node* AST);
 static void printLn(char* Fmt, ...);
 
+
+// commit[67]: 从内存的空间分配角度进行强制类型转换
+static void typeCast(Type* typeSource, Type* typeTarget) {
+    if (typeTarget->Kind == TY_VOID)
+        return;
+
+    // 获取映射表的 <key, value> 值  判断是否需要强制类型转换
+    int sourceType = getTypeMappedId(typeSource);
+    int targetType = getTypeMappedId(typeTarget);
+
+    if (castTable[sourceType][targetType]) {
+        printLn("  # 转换函数");
+        printLn("%s", castTable[sourceType][targetType]);
+    }
+}
 
 static int count(void) {
     static int count = 1;
@@ -181,7 +238,7 @@ static void getAddr(Node* nd_assign) {
 
     case ND_DEREF:
     {
-        // 这里的递归是用于多次解引用的 （&*x)
+        // 递归进行多次解引用（&*x) 直接返回 x (地址)
         calcuGen(nd_assign->LHS);
         return;
     }
@@ -229,6 +286,7 @@ static void printLn(char* Fmt, ...) {
     fprintf(compileResult, "\n");   // 没有参数考虑就不需要调用 vprintf()
 }
 
+/* 汇编代码生成 */
 
 // 计算式汇编
 static void calcuGen(Node* AST) {
@@ -295,7 +353,7 @@ static void calcuGen(Node* AST) {
     case ND_ADDR:
     {
         // case 1: &var  根据变量的名字找到栈内地址偏移量 - ND_VAR
-        // case 2: &*var 解引用直接返回 y (后续需要对 y 是否是指针进行判断)
+        // case 2: &*var 解引用直接返回 var (以防真正访问到什么非法地址)
         getAddr(AST->LHS);
         return;
     }
@@ -348,6 +406,14 @@ static void calcuGen(Node* AST) {
     {
         calcuGen(AST->LHS);
         calcuGen(AST->RHS);
+        return;
+    }
+
+    case ND_TYPE_CAST:
+    {
+        // 递归找到内层  加载被强转对象  然后进行强转
+        calcuGen(AST->LHS);
+        typeCast(AST->LHS->node_type, AST->node_type);
         return;
     }
 
@@ -562,14 +628,6 @@ void emitText(Object* Global) {
         // commot[26]: 支持函数传参
         int I = 0;
 
-        // for (Object* obj = currFunc->formalParam; obj; obj = obj->next) {
-        //     printLn("  # 将 %s 寄存器存入 %s 栈地址", ArgReg[I], obj->var_name);
-        //     if (obj->var_type->BaseSize == 1)
-        //         printLn("  sb %s, %d(fp)", ArgReg[I++], obj->offset);
-        //     else
-        //         printLn("  sd %s, %d(fp)", ArgReg[I++], obj->offset);
-        // }
-
         // commit[56]: 针对函数传参抽象函数 storeGenral
         for (Object* obj = currFunc->formalParam; obj; obj = obj->next) {
             storeGenral(I++, obj->offset, obj->var_type->BaseSize);
@@ -638,7 +696,6 @@ void emitGlobalData(Object* Global) {
         }
     }
 }
-
 
 void codeGen(Object* Prog, FILE* result) {
     // commit[42]: 把 codeGen() 中所有的 printLn() 输出全部导向 cmopilerResult 文件中

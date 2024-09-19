@@ -48,8 +48,8 @@ Type* funcType(Type* ReturnType) {
     return type;
 }
 
-// commit[26]: 模仿 C 语言的值传递
-Type* copyType(Type *origin) {
+// 新分配了一片指针空间指向原本的空间
+Type* copyType(Type* origin) {
     Type* newType = calloc(1, sizeof(Type));
     *newType = *origin;
     return newType;

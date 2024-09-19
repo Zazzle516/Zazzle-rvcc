@@ -154,6 +154,9 @@ typedef enum {
     // commit[49]: 支持结构体访问运算
     ND_STRUCT_MEMEBER,
 
+    // commit[67]: 支持强制类型转换
+    ND_TYPE_CAST,
+
 } NODE_KIND;
 
 // 定义函数内部 AST 结构

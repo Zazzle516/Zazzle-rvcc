@@ -88,10 +88,15 @@ typedef struct {
 // equality = relation op relation                      op = (!= | ==)
 // relation = first_class_expr op first_class_expr      op = (>= | > | < | <=)
 // first_class_expr = second_class_expr (+|- second_class_expr)*
-// second_class_expr = third_class_expr (*|/ third_class_expr)
+
+// commit[67]: 支持强制类型转换
+// second_class_expr = cast ("*" cast | "/" cast)*
+// __second_class_expr = third_class_expr (*|/ third_class_expr)
+// typeCast = "(" typeName ")" cast | third_class_expr
 
 // commit[29]: 新增对 [] 的语法支持  本质上就是对 *(x + y) 的一个语法糖 => x[y]
-// third_class_expr = (+|-|&|*)third_class_expr | postFix
+// commit[67]: 新增对强制类型转换的支持
+// third_class_expr = (+|-|&|*) cast | postFix
 
 // commit[49]: 支持对结构体成员的访问
 // commit[53]: 支持对结构体实例成员的访问  写入左子树结构  注意结构体可能是递归的 x->y->z
@@ -288,8 +293,10 @@ static Node* assign(Token** rest, Token* tok);
 static Node* equality_expr(Token** rest, Token* tok);
 static Node* relation_expr(Token** rest, Token* tok);
 static Node* first_class_expr(Token** rest, Token* tok);
+
 static Node* second_class_expr(Token** rest, Token* tok);
 static Node* third_class_expr(Token** rest, Token* tok);
+static Node* typeCast(Token** rest, Token* tok);
 
 static Node* preFix(Token** rest, Token* tok);
 static Node* primary_class_expr(Token** rest, Token* tok);
@@ -318,6 +325,28 @@ static Node* singleVarNode(Object* var, Token* tok) {
     Node* varNode = createNode(ND_VAR, tok);
     varNode->var = var;
     return varNode;
+}
+
+// commit[67]: 定义强制类型转换结点
+// 每个强制类型转换都会有一个 ND_TYPE_CAST 然后在 node_type 中存储目标类型
+static Node* newCastNode(Node* lastNode, Type* currTypeTarget) {
+    // Q: 可以注释掉 addType() 吗
+    // A: 不可以  因为子节点类型的存在判断会提前结束 addType()  而后面的 castTypeNode 会手动添加自己的 node_type
+    // 所以在手动完成这个最顶层结点的 node_type 添加之前  必须完成它的子节点的类型赋予
+    addType(lastNode);
+
+    // 根据表达式从右向左构造 AST 结构
+    Node* castTypeNode = calloc(1, sizeof(Node));
+    castTypeNode->node_kind = ND_TYPE_CAST;
+    castTypeNode->token = lastNode->token;
+    castTypeNode->LHS = lastNode;
+
+    // Q: 这里注释掉倒是不会报错 ?
+    castTypeNode->node_type = copyType(currTypeTarget);
+
+    // Q: 为什么这里不通过 addType() 赋予 ND_TYPE_CAST 目标类型
+    // A: 因为 addType() 中根本没定义这种类型的操作  而且这个目标类型是由 token 体现的  没有办法通过 addType() 操作
+    return castTypeNode;
 }
 
 // 定义 AST 的树型结构
@@ -598,12 +627,12 @@ static Type* abstractDeclarator(Token **rest, Token *tok, Type* BaseType) {
     return typeSuffix(rest, tok, BaseType);
 }
 
-// commit[65]: 针对 sizeof 的类型求值获取类型信息
+// 根据类型本身的 token 返回真正有意义的类型结点
 static Type* getTypeInfo(Token** rest, Token* tok) {
     // Q: 为什么需要 abstractDeclarator 这个新的解析函数  而不是调用 declarator + typeSuffix
     // A: 这里的语法规则是匿名变量  所以和 declarator 有一点差别  但是结构类似
     Type* BaseType = declspec(&tok, tok, NULL);
-    return abstractDeclarator(rest, tok, BaseType);
+    return abstractDeclarator(rest, tok, BaseType); // 改名 typeSuffixDeclaration
 }
 
 // commit[26]: 利用 Type 结构定义存储形参的链表
@@ -617,8 +646,11 @@ static Type* funcFormalParams(Token** rest, Token* tok, Type* returnType) {
         // Tip: 也不能在函数参数中使用
         Type* formalBaseType = declspec(&tok, tok, NULL);
         Type* isPtr = declarator(&tok, tok, formalBaseType);
-        
+
+// Q: 当前的 Curr 新指向这个新的指针空间  如果注释掉是稳定报错的
+        // Curr->formalParamNext = (isPtr);
         Curr->formalParamNext = copyType(isPtr);
+
         Curr = Curr->formalParamNext;
     }
 
@@ -1158,19 +1190,20 @@ static Node* first_class_expr(Token** rest, Token* tok) {
 }
 
 // 乘除运算判断
+// commit[67]: 插入类型转换的语法解析层次
 static Node* second_class_expr(Token** rest, Token* tok) {
-    Node* ND = third_class_expr(&tok, tok);
+    Node* ND = typeCast(&tok, tok);
 
     while(true) {
         Token* start = tok;
 
         if (equal(tok, "*")) {
-            ND = createAST(ND_MUL, ND, third_class_expr(&tok, tok->next), start);
+            ND = createAST(ND_MUL, ND, typeCast(&tok, tok->next), start);
             continue;
         }
 
         if (equal(tok, "/")) {
-            ND = createAST(ND_DIV, ND, third_class_expr(&tok, tok->next), start);
+            ND = createAST(ND_DIV, ND, typeCast(&tok, tok->next), start);
             continue;
         }
 
@@ -1179,24 +1212,48 @@ static Node* second_class_expr(Token** rest, Token* tok) {
     }
 }
 
+// 解析类型转换  包含 (& | * | []) 操作  所以和 thir_class_expr 相互调用
+static Node* typeCast(Token** rest, Token* tok) {
+    if (equal(tok, "(") && isTypeName(tok->next)) {
+        // 记录 k 层强转目标的起始位置
+        Token* Start = tok;
+
+        // 获取 k 层的强转目标类型
+        Type* castTargetType = getTypeInfo(&tok, tok->next);
+        tok = skip(tok, ")");
+
+        // 通过 ")" 明确此时已经解析 k 层的目标转换类型  如果存在 (k - 1) 层   递归寻找
+        Node* ND = newCastNode(typeCast(rest, tok), castTargetType);
+        ND->token = Start;
+
+        // 无论嵌套多少层  递归的是语法解析  Q: 最终的 AST 只有一个操作节点 ND_TYPE_CAST ???
+        return ND;
+    }
+
+    // case1: 解析被强制类型转换的变量
+    // case2: 解析强制转换中的特殊操作  比如 & | * | []
+    return third_class_expr(rest, tok);
+}
+
 // 对一元运算符的单边递归
+// commit[67]: 计算运算符也会参与强制类型转换  eg. (int)+(-1) => (-1)  (int)-(-1) => (1)  都是合法的
 static Node* third_class_expr(Token** rest, Token* tok) {
     if (equal(tok, "+")) {
-        return third_class_expr(rest, tok->next);
+        return typeCast(rest, tok->next);
     }
 
     if (equal(tok, "-")) {
-        Node* ND = createSingle(ND_NEG, third_class_expr(rest, tok->next), tok);
+        Node* ND = createSingle(ND_NEG, typeCast(rest, tok->next), tok);
         return ND;
     }
 
     if (equal(tok, "&")) {
-        Node* ND = createSingle(ND_ADDR, third_class_expr(rest, tok->next), tok);
+        Node* ND = createSingle(ND_ADDR, typeCast(rest, tok->next), tok);
         return ND;
     }
 
     if (equal(tok, "*")) {
-        Node* ND = createSingle(ND_DEREF, third_class_expr(rest, tok->next), tok);
+        Node* ND = createSingle(ND_DEREF, typeCast(rest, tok->next), tok);
         return ND;
     }
 
