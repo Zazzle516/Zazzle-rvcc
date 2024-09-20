@@ -40,8 +40,7 @@ Type* newPointerTo(Type* Base) {
 
 // 构造函数结点
 Type* funcType(Type* ReturnType) {
-    // Q: 这个没有用 newType 抽象
-    // A: 我觉得是因为函数没有对齐需求 类型大小
+    // 因为函数没有对齐需求 类型大小  所以没有调用 newType()
     Type* type = calloc(1, sizeof(Type));
     type->Kind = TY_FUNC;
     type->ReturnType = ReturnType;
@@ -279,6 +278,6 @@ void addType(Node* ND) {
     }
 
     default:
-        break;
+        break;  // ND_RETURN 走到这里  其实也没有合法性判断
     }
 }

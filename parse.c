@@ -555,7 +555,7 @@ static Type* declspec(Token** rest, Token* tok, VarAttr* varAttr) {
     return BaseType;
 }
 
-// 类型后缀判断
+// 类型后缀判断  包括函数定义的形参解析
 static Type* declarator(Token** rest, Token* tok, Type* Base) {
     // Tip: 多重指针 != 嵌套定义
     while (consume(&tok, tok, "*")) {
@@ -1389,17 +1389,18 @@ static Node* funcall(Token** rest, Token* tok) {
     // 1. 处理 ident
     ND->FuncName = getVarName(tok);
 
-    // 查找被调用函数
+    // 根据 HEADScope 查找被调用函数
     VarInScope* targetScope = findVar(tok);
     if (!targetScope)
         // case1: 根本没有这个变量名  无论这个变量是什么
         tokenErrorAt(tok, "implicit declaration of a function");
 
-// Q：为什么是两个判断条件  直接采用后者判断不可以吗
+// Q: 为什么是两个判断条件  直接采用后者判断不可以吗
     if (!targetScope->varList || targetScope->varList->var_type->Kind != TY_FUNC)
-        // 有可能是 typedefined 但同时类型是函数吗   函数指针 ??
+        // 猜想是函数指针 ??? 可能存在 tagScope 中  反正截至 commit[69] 把前面的判断注释掉也没影响
         tokenErrorAt(tok, "not a function");
 
+    // 根据函数定义获取函数返回值类型  即使注释掉也不影响通过测试
     Type* funcRetType = targetScope->varList->var_type->ReturnType;
     tok = tok->next->next;
 
@@ -1419,10 +1420,8 @@ static Node* funcall(Token** rest, Token* tok) {
     }
     *rest = skip(tok, ")");
 
-    // Tip: 在 commit[69] 之前 funcall 是根据纯代码解析的  无法读取到返回值类型
-    // 但是因为之前只有 INT 类型所以无所谓  直接返回不需要考虑  但是现在有大小不同的各种类型
     ND->Func_Args = HEAD.next;
-    ND->node_type = funcRetType;    // Q: 这里会进行合法性判断吗
+    ND->node_type = funcRetType;
     return ND;
 }
 

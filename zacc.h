@@ -203,7 +203,7 @@ typedef enum {
     ND_GT,                      // Greater Then
     ND_LT,                      // Less Then
 
-    ND_STAMT,                   // 分号判断独立
+    ND_STAMT,                   // 分号判断语句独立
 
     ND_BLOCK,                   // 花括号判断代码块
 
@@ -216,20 +216,18 @@ typedef enum {
 
     ND_COMMA,                   // commit[48]: 支持 "," 计算
 
-    
     ND_STRUCT_MEMEBER,          // commit[49]: 支持结构体访问运算
 
     ND_TYPE_CAST,               // commit[67]: 支持强制类型转换
 
 // TOKEN_IDENT—————————读写变量
     ND_VAR,
+    ND_FUNCALL,                 // 需要结合符号一起判断
 
 // TOKEN_KEYWORD———————特殊的控制语句执行
     ND_RETURN,
     ND_IF,
     ND_FOR,
-
-    ND_FUNCALL,
 } NODE_KIND;
 
 // 根据结点具体的操作类型保存额外数据
