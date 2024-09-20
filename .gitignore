@@ -24,3 +24,8 @@ build/
 # IDE相关文件夹
 .cache/
 .vscode/
+
+annotation-bak/
+
+jump.sh
+
