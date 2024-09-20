@@ -788,7 +788,7 @@ static Token* functionDefinition(Token* tok, Type* funcReturnBaseType) {
     // 初始化函数帧内部变量
     Local = NULL;
 
-    // 为了包含代码块解析的情况  这里为函数传参单独分配一个 Scope
+    // 为了包含代码块解析的语法解析情况  这里为函数传参单独分配一个 Scope
     enterScope();
 
     // 第一次更新 Local: 函数形参
@@ -1382,29 +1382,47 @@ static Node* primary_class_expr(Token** rest, Token* tok) {
 
 // commit[24]: 处理含参函数调用
 // Tip: 函数调用的真正查找是在 codeGen() 中的汇编标签实现的  和 parse 无关  只负责把 call funcLabel 结点插入 AST
+// commit[69]: 根据 Scope 的查找  对未定义的函数调用报错
 static Node* funcall(Token** rest, Token* tok) {
-    // 1. 处理 ident
     Node* ND = createNode(ND_FUNCALL, tok);
+
+    // 1. 处理 ident
     ND->FuncName = getVarName(tok);
 
-    // 将至多 6 个参数表达式通过链表存储
+    // 查找被调用函数
+    VarInScope* targetScope = findVar(tok);
+    if (!targetScope)
+        // case1: 根本没有这个变量名  无论这个变量是什么
+        tokenErrorAt(tok, "implicit declaration of a function");
+
+// Q：为什么是两个判断条件  直接采用后者判断不可以吗
+    if (!targetScope->varList || targetScope->varList->var_type->Kind != TY_FUNC)
+        // 有可能是 typedefined 但同时类型是函数吗   函数指针 ??
+        tokenErrorAt(tok, "not a function");
+
+    Type* funcRetType = targetScope->varList->var_type->ReturnType;
+    tok = tok->next->next;
+
+    // 2. 通过循环读取至多 6 个参数作为链表表达式
     Node HEAD = {};
     Node* Curr = &HEAD;
 
-    // 2. 通过循环读取全部链表表达式
-    tok = tok->next->next;
     while (!equal(tok, ")"))
     {
-        // 针对多个参数的情况 跳过分割符 其中第一个参数没有 "," 分割
         if (Curr != &HEAD)
             tok = skip(tok, ",");
         Curr->next = assign(&tok, tok);
 
         Curr = Curr->next;
+        // 同理这里因为后续手动赋予 ND 结点 returnType 所以提前遍历子树
+        addType(Curr);
     }
     *rest = skip(tok, ")");
 
+    // Tip: 在 commit[69] 之前 funcall 是根据纯代码解析的  无法读取到返回值类型
+    // 但是因为之前只有 INT 类型所以无所谓  直接返回不需要考虑  但是现在有大小不同的各种类型
     ND->Func_Args = HEAD.next;
+    ND->node_type = funcRetType;    // Q: 这里会进行合法性判断吗
     return ND;
 }
 

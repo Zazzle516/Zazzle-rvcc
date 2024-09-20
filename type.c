@@ -193,9 +193,7 @@ void addType(Node* ND) {
 
     case ND_FUNCALL:
     {
-        // Q: 为什么这里把函数调用的类型设置为 TYLONG
-        // Q: 而且不是所有结点都需要一个类型 比如 ND_STAMT 的类型就空置了 那 FUNCALL 为什么一定需要一个类型
-        // 现在 commit[50] 也没有对 ND_FUNCALL 使用 newType() 函数  emm.. 挺迷惑的
+        // 这个结点的类型取决于被调用函数的返回值  在 commit[69] 中进行正式修改
         ND->node_type = TYLONG_GLOBAL;
         return;
     }
