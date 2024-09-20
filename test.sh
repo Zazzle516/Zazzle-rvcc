@@ -36,4 +36,7 @@ assert() {
 assert 0 0
 assert 42 42
 
+# commit[2]
+assert '1+2-3' 0
+
 echo OK
