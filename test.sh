@@ -42,4 +42,9 @@ assert '1+2-3' 0
 # commit[3]
 assert '1 + 4 -3' 2
 
+# commit[5]
+assert '5+6*7' 47
+assert '5*(9-6)' 15
+assert '1-8/(2*2)+3*6' 17
+
 echo OK

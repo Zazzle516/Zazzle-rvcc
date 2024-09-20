@@ -5,6 +5,9 @@
 #include <ctype.h>
 #include <stdarg.h>
 
+// 全局变量
+static char* InputHEAD;
+
 /* 工具函数 */
 
 static void errorHint(char* errorInfo, ...) {
@@ -44,9 +47,6 @@ static void errorAt(char* place, char* FMT, va_list VA) {
 
 
 /* tokenize() 数据结构 & 函数定义 */
-
-// 全局变量 记录输入流的起始位置 (方便后续找到具体的错误位置)
-static char* InputHEAD;
 
 typedef enum {
     TOKEN_EOF,              // 终结符
@@ -107,7 +107,7 @@ static Token* tokenize(char* input_ptr) {
         }
 
         // 仅处理运算符
-        if (*input_ptr == '+' || *input_ptr == '-') {
+        if (ispunct(*input_ptr)) {
             currToken->next = newToken(TOKEN_OP, input_ptr, input_ptr + 1);
             input_ptr ++;
             currToken = currToken->next;
@@ -125,7 +125,36 @@ static Token* tokenize(char* input_ptr) {
 }
 
 
-/* 语法分析 + 代码生成 */
+/* parser() 数据结构 & 函数定义 */
+
+// Tip: 此时 parse() 不完整  只有计算语句
+
+// 结合两个方面理解  满足两个条件写入 NODE_KIND
+// case1: 从 parse 输入的角度理解  可以把 TOKEN 细分到什么结点  数字 运算符
+// case2: 从 parse 输出的角度理解  一定对应着可以翻译到汇编语句的操作
+typedef enum {
+// TOKEN_NUM——————————————加载立即数
+    ND_NUM,
+
+// TOKEN_OP———————————————执行运算操作
+    ND_ADD,
+    ND_SUB,
+    ND_MUL,
+    ND_DIV
+}NODE_KIND;
+
+// 根据结点具体的操作类型保存额外数据
+typedef struct Node Node;
+struct Node {
+// 基本运算结点结构
+    NODE_KIND node_kind;
+    Node* LHS;
+    Node* RHS;
+
+// ND_NUM
+    int val;
+
+};
 
 // 在 parse() 阶段使用的报错函数
 static void tokenErrorAt(Token* token, char* FMT, ...) {
@@ -160,6 +189,145 @@ static int getNumber(Token* input_token) {
 }
 
 
+// 定义 AST 结点  (注意因为 ND_NUM 的定义不同要分开处理)
+
+// 创造新的结点并分配空间
+static Node* createNode(NODE_KIND node_kind) {
+    Node* newNode = calloc(1, sizeof(Node));
+    newNode->node_kind = node_kind;
+    return newNode;
+}
+
+// 针对数字结点的额外的值定义
+static Node* numNode(int val) {
+    Node* newNode = createNode(ND_NUM);
+    newNode->val = val;
+    return newNode;
+}
+
+// 创建有左右子树的结点
+static Node* createAST(NODE_KIND node_kind, Node* LHS, Node* RHS) {
+    Node* rootNode = createNode(node_kind);
+    rootNode->LHS = LHS;
+    rootNode->RHS = RHS;
+    return rootNode;
+}
+
+// 定义产生式关系并完成自顶向下的递归调用  每一个函数都是一个语法规则  优先级依次升高
+
+static Node* first_class_expr(Token** rest, Token* tok);
+static Node* second_class_expr(Token** rest, Token* tok);
+static Node* primary_class_expr(Token** rest, Token* tok);
+
+// Q: rest 起到了什么作用
+
+// 加减运算     first_class_expr = first_class_expr (+|- first_class_expr)*
+static Node* first_class_expr(Token** rest, Token* tok) {
+    Node* ND = second_class_expr(&tok, tok);
+
+    while(true) {
+        if (equal(tok, "+")) {
+            ND = createAST(ND_ADD, ND, second_class_expr(&tok, tok->next));
+            continue;
+        }
+
+        if (equal(tok, "-")) {
+            ND = createAST(ND_SUB, ND, second_class_expr(&tok, tok->next));
+            continue;
+        }
+
+        *rest = tok;
+        return ND;
+    }
+}
+
+// 乘除运算     second_class_expr = second_class_expr (*|/ second_class_expr)
+static Node* second_class_expr(Token** rest, Token* tok) {
+    Node* ND = primary_class_expr(&tok, tok);
+
+    while(true) {
+        if (equal(tok, "*")) {
+            ND = createAST(ND_MUL, ND, primary_class_expr(&tok, tok->next));
+            continue;
+        }
+
+        if (equal(tok, "/")) {
+            ND = createAST(ND_DIV, ND, primary_class_expr(&tok, tok->next));
+            continue;
+        }
+
+        *rest = tok;
+        return ND;
+    }
+}
+
+// 括号表达式 | 立即数      primary_class_expr = '(' | ')' | num
+static Node* primary_class_expr(Token** rest, Token* tok) {
+    if (equal(tok, "(")) {
+        Node* ND = first_class_expr(&tok, tok->next);
+        *rest = skip(tok, ")");
+        return ND;
+    }
+
+    if ((tok->token_kind) == TOKEN_NUM) {
+        Node* ND = numNode(tok->value);
+        *rest = tok->next;
+        return ND;
+    }
+
+    tokenErrorAt(tok, "expected an expr");
+    return NULL;
+}
+
+// 后端生成 生成指定 ISA 的汇编代码
+
+// 记录当前的栈深度 用于后续的运算合法性判断
+static int StackDepth;
+
+static void push_stack(void) {
+    printf("  addi sp, sp, -8\n");
+    printf("  sd a0, 0(sp)\n");
+    StackDepth++;
+}
+
+static void pop_stack(char* reg) {
+    printf("  ld %s, 0(sp)\n", reg);
+    printf("  addi sp, sp, 8\n");
+    StackDepth--;
+}
+
+// 根据 AST 和目标后端 RISCV-64 生成代码
+static void codeGen(Node* AST) {
+    if (AST->node_kind == ND_NUM) {
+        printf("  li a0, %d\n", AST->val);
+        return;
+    }
+
+    codeGen(AST->RHS);
+    push_stack();
+    codeGen(AST->LHS);
+    pop_stack("a1");        // 把 LHS 的计算结果弹出
+
+    switch (AST->node_kind)
+    {
+    case ND_ADD:
+        printf("  add a0, a0, a1\n");
+        return;
+    case ND_SUB:
+        printf("  sub a0, a0, a1\n");
+        return;
+    case ND_MUL:
+        printf("  mul a0, a0, a1\n");
+        return;
+    case ND_DIV:
+        printf("  div a0, a0, a1\n");
+        return;
+    default:
+        errorHint("invalid expr");
+    }
+}
+
+
 int main(int argc, char* argv[]) {
     if (argc != 2) {
         fprintf(stderr, "%s need two arguments\n", argv[0]);
@@ -169,31 +337,22 @@ int main(int argc, char* argv[]) {
     printf("  .global main\n");
     printf("main:\n");
     
-    // 让报错函数可以访问到用户输入
     char* input_ptr = argv[1];
     InputHEAD = argv[1];
-    
+
     Token* input_token = tokenize(input_ptr);
-    
-    int first_num = getNumber(input_token);
-    printf("  li a0, %d\n", first_num);
 
-    // 更新 token 的位置(如果语法正确应该是符号)
-    input_token = input_token->next;
-
-    while(input_token->token_kind != TOKEN_EOF) {
-        if (equal(input_token, "+")) {
-            input_token = input_token->next;
-            printf("  addi a0, a0, %d\n", getNumber(input_token));
-            input_token = input_token->next;
-            continue;
-        }
-
-        input_token = skip(input_token, "-");
-        printf("  addi a0, a0, -%d\n", getNumber(input_token));
-        input_token = input_token->next;
+    // 在 parse() 结束后检查 token Stream 是否结束
+    Node* currentAST = first_class_expr(&input_token, input_token);
+    if (input_token->token_kind != TOKEN_EOF) {
+        tokenErrorAt(input_token, "extra Token");
     }
 
+    codeGen(currentAST);
     printf("  ret\n");
+
+    if (StackDepth != 0) {
+        errorHint("Wrong syntax");
+    }
     return 0;
 }
