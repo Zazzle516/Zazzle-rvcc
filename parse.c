@@ -118,6 +118,9 @@ typedef struct {
 Object* Local;      // 函数内部变量
 Object* Global;     // 全局变量 + 函数定义(因为 C 不能发生函数嵌套 所以一定是全局的层面)
 
+// 指向正在解析的函数
+static Object* currFunc;
+
 // 一个 Scope 就是一个变量生命范围  全局存储的层面转移到 static HEADScope.varScope
 static Scope *HEADScope = &(Scope){};
 
@@ -785,6 +788,8 @@ static Token* functionDefinition(Token* tok, Type* funcReturnBaseType) {
     if (!function->IsFuncDefinition)
         return tok;
 
+    currFunc = function;
+
     // 初始化函数帧内部变量
     Local = NULL;
 
@@ -1007,11 +1012,17 @@ static Node* structRef(Node* VAR_STRUCT_UNION, Token* tok) {
 // 对表达式语句的解析
 static Node* stamt(Token** rest, Token* tok) {
     if (equal(tok, "return")) {
-        Node* retNode = createNode(ND_RETURN, tok);
-        retNode->LHS = expr(&tok, tok->next);
+        Node* retLeftNode = createNode(ND_RETURN, tok);
 
+        // 根据当前函数的返回值类型进行强转
+        Node* retRightNode = expr(&tok, tok->next);
+        addType(retRightNode);
         *rest = skip(tok, ";");
-        return retNode;
+
+        // retNode->LHS = expr(&tok, tok->next);
+        retLeftNode->LHS = newCastNode(retRightNode, currFunc->var_type->ReturnType);
+
+        return retLeftNode;
     }
 
     if (equal(tok, "{")) {
