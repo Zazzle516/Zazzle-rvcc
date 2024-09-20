@@ -39,4 +39,7 @@ assert 42 42
 # commit[2]
 assert '1+2-3' 0
 
+# commit[3]
+assert '1 + 4 -3' 2
+
 echo OK
