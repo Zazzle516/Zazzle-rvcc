@@ -227,9 +227,11 @@ static int readEscapeChar(char** newPos, char* escapeChar) {
         return hexNumber;
     }
 
-    // 跳过读取到 '\\' 之后的被转移字符 在该函数内转义处理结束后 自然应该指向下一个字符
+    // 同理因为要返回 2 个内容  所以通过 char** 来更新解析位置
+    // case1: 被转义的内容  通过 switch 完成
+    // case2: 更新 input_ptr 的指向
     *newPos = escapeChar + 1;
-    // 转义字符
+
     switch (*escapeChar)
     {
     case 'a':
@@ -297,6 +299,32 @@ static Token* readStringLiteral(char* start) {
     return strToken;
 }
 
+// commit[73]: 读取字符字面量
+static Token* readCharLiteral(char* start) {
+    char* P = start + 1;    // 记录单引号后面的断点
+
+    if (*P == '\0')
+        charErrorAt(start, "unclosed char literal");
+
+    // Tip: 是字符! 一个字符!  所以没有循环判断  只读一个之后就可以判断是否结束了
+    char C;
+    if (*P == '\\')
+        C = readEscapeChar(&P, P + 1);
+    else
+        C = *P++;
+
+    // 在字符串中查找指定的字符，并返回一个指向该字符第一次出现位置的指针
+    char* end = strchr(P, '\'');
+    if (!end)
+        // 空的字符报错位置 ''
+        charErrorAt(P, "unclosed char literal");
+
+    // 通过 ASCII 的方式进行存储
+    Token* tok = newToken(TOKEN_NUM, start, end + 1);
+    tok->value = C;
+    return tok;
+}
+
 // 比较字符串是否相等   和 equal() 中的 memcmp() 区分
 static bool strCmp(char* input_ptr, char* target) {
     return (strncmp(input_ptr, target, strlen(target)) == 0);
@@ -361,6 +389,16 @@ Token* tokenize(char* fileName, char* P) {
                 charErrorAt(P, "unclosed block annotations\n");
 
             P = rightClose + 2;     // 更新指向块注释右侧后的字符
+            continue;
+        }
+
+        // commit[73]: 通过单引号判断字符字面量  Tip: 单引号本身的判断需要 \ 转义
+        if (*P == '\'') {
+            currToken->next = readCharLiteral(P);
+            currToken = currToken->next;
+
+            // 虽然 commit[73] 只解析一个字符  但是字符本身可能是转义的  长度不一定为 1
+            P += currToken->length;
             continue;
         }
         
