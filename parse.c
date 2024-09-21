@@ -248,7 +248,7 @@ static long getArrayNumber(Token* tok) {
 // commit[33]: 判断当前读取的类型是否符合变量声明的类型
 static bool isTypeName(Token* tok) {
     static char* typeNameKeyWord[] = {
-        "void", "char", "int", "long", "struct", "union", "short", "typedef"
+        "void", "char", "int", "long", "struct", "union", "short", "typedef", "_Bool"
     };
 
     for (int I = 0; I < sizeof(typeNameKeyWord) / sizeof(*typeNameKeyWord); I++) {
@@ -461,11 +461,12 @@ static Type* declspec(Token** rest, Token* tok, VarAttr* varAttr) {
     enum {
         // Tip: 这里的 void 必须给出一个值  因为连续定义 void 或者穿插 void 定义也是错误的
         VOID = 1 << 0,
-        CHAR = 1 << 2,
-        SHORT = 1 << 4,
-        INT = 1 << 6,
-        LONG = 1 << 8,
-        OTHER = 1 << 10,
+        BOOL = 1 << 2,
+        CHAR = 1 << 4,
+        SHORT = 1 << 6,
+        INT = 1 << 8,
+        LONG = 1 << 10,
+        OTHER = 1 << 12,
     };
     
     // commit[64] 证明了这里只能写 TYINT 不然在 {typedef a;} 的测试中报错  因为默认 TYINT
@@ -516,6 +517,8 @@ static Type* declspec(Token** rest, Token* tok, VarAttr* varAttr) {
             typeCounter += VOID;
         else if (equal(tok, "char"))
             typeCounter += CHAR;
+        else if (equal(tok, "_Bool"))
+            typeCounter += BOOL;
         else if (equal(tok, "short"))
             typeCounter += SHORT;
         else if (equal(tok, "int"))
@@ -531,6 +534,11 @@ static Type* declspec(Token** rest, Token* tok, VarAttr* varAttr) {
         case VOID:
             BaseType = TYVOID_GLOBAL;
             break;
+
+        case BOOL:
+            BaseType = TYBOOL_GLOBAL;
+            break;
+
         case CHAR:
             BaseType = TYCHAR_GLOBAL;
             break;
@@ -539,14 +547,17 @@ static Type* declspec(Token** rest, Token* tok, VarAttr* varAttr) {
         case SHORT + INT:
             BaseType = TYSHORT_GLOBAL;
             break;
+
         case INT:
             BaseType = TYINT_GLOBAL;
             break;
+
         case LONG:
         case LONG + INT:
         case LONG + LONG:
             BaseType = TYLONG_GLOBAL;
             break;
+
         default:
             tokenErrorAt(tok, "unexpected preFix declaration\n");
         }

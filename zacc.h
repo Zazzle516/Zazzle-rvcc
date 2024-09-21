@@ -92,6 +92,8 @@ typedef enum {
     TY_LONG,            // commit[57]: 基础 long 类型
 
     TY_SHORT,           // commit[58]: 基础 short 类型
+
+    TY_BOOL,            // commit[72]: 基础 bool 类型
 } Typekind;
 
 // 自定义类型
@@ -134,6 +136,7 @@ extern Type* TYCHAR_GLOBAL;
 extern Type* TYLONG_GLOBAL;
 extern Type* TYSHORT_GLOBAL;
 extern Type* TYVOID_GLOBAL;
+extern Type* TYBOOL_GLOBAL;
 
 // 判断是否是指针
 bool isInteger(Type* TY);

@@ -64,6 +64,13 @@ static void typeCast(Type* typeSource, Type* typeTarget) {
     if (typeTarget->Kind == TY_VOID)
         return;
 
+    // commit[72]: 将其他类型转换为 Bool 类型的时候比较特殊
+    if (typeTarget->Kind == TY_BOOL) {
+        printLn("  # 转换为 Bool 类型");
+        printLn("  snez a0, a0");   // 测试 reg-a0 的值是否为 0  如果不为 0 则设置为 1  如果为 0 则不改变
+        return;
+    }
+
     // 获取映射表的 <key, value> 值  判断是否需要强制类型转换
     int sourceType = getTypeMappedId(typeSource);
     int targetType = getTypeMappedId(typeTarget);
