@@ -121,9 +121,8 @@ void addType(Node* ND) {
     }
 
     // commit[26]: 针对函数形参链表进行遍历
-    // Q: 但是 Node.Func_Args 这个参数是用来支持函数调用的啊  没有类型显式声明但是需要赋予类型
-    // A: 因为当前无法对函数参数调用和定义的类型进行判断  目前看就是图省事的方法
-    // 即使在函数定义中写了变量类型也没有用 函数参数的具体定义只根据传参的类型定义
+    // 当前无法对函数参数调用和定义的类型进行判断  目前看就是图省事的方法
+    // commit[71]: 通过强制类型转换解决了 commit[26] 的问题
     for (Node* paraType = ND->Func_Args; paraType; paraType = paraType->next) {
         addType(paraType);
     }
@@ -155,9 +154,9 @@ void addType(Node* ND) {
     case ND_NEG:
     {
         // 单操作数直接和标准类型比较就可以
-        Type* ty = singleLongType(TYINT_GLOBAL, ND->LHS->node_type);
-        ND->LHS = newCastNode(ND->LHS, ty);
-        ND->node_type = ty;
+        Type* longestType = singleLongType(TYINT_GLOBAL, ND->LHS->node_type);
+        ND->LHS = newCastNode(ND->LHS, longestType);
+        ND->node_type = longestType;
         return;
     }
 
@@ -192,8 +191,8 @@ void addType(Node* ND) {
 
     case ND_FUNCALL:
     {
-        // 这个结点的类型取决于被调用函数的返回值  在 commit[69] 中进行正式修改
-        ND->node_type = TYLONG_GLOBAL;
+        // commit[71]: 把 FUNCALL 函数调用结点更新为被调用函数定义的返回类型
+        ND->node_type = ND->definedFuncType->ReturnType;
         return;
     }
 

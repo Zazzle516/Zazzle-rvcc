@@ -1014,12 +1014,12 @@ static Node* stamt(Token** rest, Token* tok) {
     if (equal(tok, "return")) {
         Node* retLeftNode = createNode(ND_RETURN, tok);
 
-        // 根据当前函数的返回值类型进行强转
+
         Node* retRightNode = expr(&tok, tok->next);
-        addType(retRightNode);
+        addType(retRightNode);  // 在 addType() 进行强制类型转换
         *rest = skip(tok, ";");
 
-        // retNode->LHS = expr(&tok, tok->next);
+        // 根据 currFunc 当前函数的返回类型定义进行强制类型转换
         retLeftNode->LHS = newCastNode(retRightNode, currFunc->var_type->ReturnType);
 
         return retLeftNode;
@@ -1049,7 +1049,7 @@ static Node* stamt(Token** rest, Token* tok) {
 
         return ND;
     }
-    
+
     if (equal(tok, "for")) {
         // for (i = 0; i < 10; i = i + 1)
         Node* ND = createNode(ND_FOR, tok);
@@ -1091,7 +1091,7 @@ static Node* stamt(Token** rest, Token* tok) {
         *rest = tok;
         return ND;
     }
-    
+
     return exprStamt(rest, tok);
 }
 
@@ -1411,8 +1411,11 @@ static Node* funcall(Token** rest, Token* tok) {
         // 猜想是函数指针 ??? 可能存在 tagScope 中  反正截至 commit[69] 把前面的判断注释掉也没影响
         tokenErrorAt(tok, "not a function");
 
-    // 根据函数定义获取函数返回值类型  即使注释掉也不影响通过测试
-    Type* funcRetType = targetScope->varList->var_type->ReturnType;
+    // commit[71]: 获取被调用函数的定义信息
+    Type* definedFuncType = targetScope->varList->var_type;
+    Type* formalParamType = definedFuncType->formalParamLink;
+    Type* formalRetType = targetScope->varList->var_type->ReturnType;
+
     tok = tok->next->next;
 
     // 2. 通过循环读取至多 6 个参数作为链表表达式
@@ -1423,16 +1426,28 @@ static Node* funcall(Token** rest, Token* tok) {
     {
         if (Curr != &HEAD)
             tok = skip(tok, ",");
-        Curr->next = assign(&tok, tok);
+        Node* actualParamNode = assign(&tok, tok);
+        addType(actualParamNode);
 
+        // 比较形参类型和实参类型  如果实参不符合  把实参类型强转到形参类型
+        if (formalParamType) {
+            if (formalParamType->Kind == TY_STRUCT || formalParamType->Kind == TY_UNION)
+                tokenErrorAt(actualParamNode->token, "No yet passing Struct or Union as func params");
+            actualParamNode = newCastNode(actualParamNode, formalParamType);
+            formalParamType = formalParamType->formalParamNext;
+        }
+
+
+        Curr->next = actualParamNode;
         Curr = Curr->next;
         // 同理这里因为后续手动赋予 ND 结点 returnType 所以提前遍历子树
         addType(Curr);
     }
     *rest = skip(tok, ")");
 
+    ND->definedFuncType = definedFuncType;
     ND->Func_Args = HEAD.next;
-    ND->node_type = funcRetType;
+    ND->node_type = definedFuncType->ReturnType;
     return ND;
 }
 

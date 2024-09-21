@@ -262,6 +262,7 @@ struct Node {
 // ND_FUNCALL
     char* FuncName;
     Node* Func_Args;        // Tip: 参数可能是计算式 eg. &param
+    Type* definedFuncType;  // 与被调用函数的函数定义类型保持一致
 
 // ND_STRUCT_MEMEBER
     structMember* structTargetMember;   // commit[49]: 储存结构体访问的成员变量
