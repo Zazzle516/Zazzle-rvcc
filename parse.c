@@ -40,17 +40,19 @@ struct Scope {
 };
 
 // commit[64]: 判断该变量是否是类型别名
-// 单独的结构体和 typedef 使用的合法性判断有关
+// commit[75]: 判断文件域内函数
+// Q: 为什么这两种声明语句的属性需要单独一个结构体来声明
+// A: 目前我能想到的共同点  都是声明语句的特殊修饰符，而且通常出现在声明的第一个位置  是面向整个语句的
 typedef struct {
     bool isTypeDef;
+    bool isStatic;
 } VarAttr;
-
 
 // parse() = (functionDefinition | globalVariable | typedef)*
 
 // commit[49] [54] [64] [74]: 支持 struct | union | typedef | enum 语法解析
 // declspec = ("int" | "char" | "long" | "short" | "void" | structDeclaration | unionDeclaration
-//             | "typedef" | "typedefName" | enumSpec)+
+//             | "typedef" | "typedefName" | enumSpec | "static")+
 
 // commit[54]: 针对 struct 和 union 提取出抽象层
 // StructOrUnionDecl = ident ? (" {" structMembers)?
@@ -91,7 +93,6 @@ typedef struct {
 
 // commit[67]: 支持强制类型转换
 // second_class_expr = cast ("*" cast | "/" cast)*
-// __second_class_expr = third_class_expr (*|/ third_class_expr)
 // typeCast = "(" typeName ")" cast | third_class_expr
 
 // commit[29]: 新增对 [] 的语法支持  本质上就是对 *(x + y) 的一个语法糖 => x[y]
@@ -249,7 +250,7 @@ static long getArrayNumber(Token* tok) {
 static bool isTypeName(Token* tok) {
     static char* typeNameKeyWord[] = {
         "void", "char", "int", "long", "struct", "union",
-        "short", "typedef", "_Bool", "enum"
+        "short", "typedef", "_Bool", "enum", "static",
     };
 
     for (int I = 0; I < sizeof(typeNameKeyWord) / sizeof(*typeNameKeyWord); I++) {
@@ -274,7 +275,7 @@ static structMember* getStructMember(Type* structType, Token* tok) {
 }
 
 
-static Token* functionDefinition(Token* tok, Type* funcReturnBaseType);
+static Token* functionDefinition(Token* tok, Type* funcReturnBaseType, VarAttr* varAttr);
 static Token* gloablDefinition(Token* tok, Type* globalBaseType);
 static Token* parseTypeDef(Token* tok, Type* BaseType);
 
@@ -479,12 +480,20 @@ static Type* declspec(Token** rest, Token* tok, VarAttr* varAttr) {
     // 同时处理 typedef 的链式声明 {typedef int a; typedef a b;}
     while (isTypeName(tok)) {
 
-        if (equal(tok, "typedef")) {
+        if (equal(tok, "typedef") || equal(tok, "static")) {
             if (!varAttr)
                 // 通过判断 varAttr 是否为空  人为控制 typedef 语法是否可以使用
                 tokenErrorAt(tok, "storage class specifier is not allowed in this context");
 
-            varAttr->isTypeDef = true;
+            if (equal(tok, "typedef"))
+                varAttr->isTypeDef = true;
+            else
+                varAttr->isStatic = true;
+
+            // typedef 不会与 static 一起使用
+            if (varAttr->isTypeDef && varAttr->isStatic)
+                tokenErrorAt(tok, "typydef and static may not be used together");
+
             tok = tok->next;
             continue;
         }
@@ -847,7 +856,7 @@ static Token* parseTypeDef(Token* tok, Type* BaseType){
 }
 
 // 函数作为变量写入 HEADScope.varList 中
-static Token* functionDefinition(Token* tok, Type* funcReturnBaseType) {
+static Token* functionDefinition(Token* tok, Type* funcReturnBaseType, VarAttr* varAttr) {
     Type* funcType = declarator(&tok, tok, funcReturnBaseType);
 
     // commit[31]: 构造函数结点本身
@@ -856,6 +865,10 @@ static Token* functionDefinition(Token* tok, Type* funcReturnBaseType) {
 
     // commit[60]: 判断函数定义
     function->IsFuncDefinition = !consume(&tok, tok, ";");
+
+    // commit[75]: 判断是否是文件域内函数
+    function->IsStatic = varAttr->isStatic;
+
     if (!function->IsFuncDefinition)
         return tok;
 
@@ -1545,7 +1558,7 @@ Object* parse(Token* tok) {
 
         else if (!GlobalOrFunction(tok)) {
             Type* funcReturnBaseType = copyType(BaseType);
-            tok = functionDefinition(tok, funcReturnBaseType);
+            tok = functionDefinition(tok, funcReturnBaseType, &Attr);
             continue;
         }
 

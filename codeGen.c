@@ -606,7 +606,16 @@ void emitText(Object* Global) {
             // 对于数据和函数声明不进行任何处理
             continue;
 
-        printLn("  .global %s", currFunc->var_name);
+        // commit[75]: 声明该函数变量是否 static  对应到链接器会不同  如果是全局的  比如 main 会暴露给其他文件
+        if (currFunc->IsStatic) {
+            printLn("\n  # 定义局部 %s 函数", currFunc->var_name);
+            printLn("  .local %s", currFunc->var_name);
+        }
+
+        if (currFunc->IsStatic == false) {
+            printLn("\n  # 定义全局 %s 函数", currFunc->var_name);
+            printLn("  .global %s", currFunc->var_name);
+        }
 
         printLn("  .text");
         printLn("\n# ========当前函数 %s 开始============", currFunc->var_name);

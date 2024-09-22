@@ -163,6 +163,7 @@ void addType(Node* ND);
 struct Object {
     bool IsLocal;
     bool IsFunction;
+    bool IsStatic;          // 判断是否是文件域内函数
 
     /* 全局变量 */
     bool IsFuncDefinition;
