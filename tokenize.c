@@ -91,7 +91,7 @@ void charErrorAt(char* place, char* FMT, ...) {
 static bool isKeyWords(Token* input) {
     static char* keywords[] = {"if", "else", "return", "for", "while","sizeof",
 
-                                "char", "struct", "union", "_Bool",
+                                "char", "struct", "union", "_Bool", "enum",
                                 "long", "short", "void", "typedef", "int"
                             };
 

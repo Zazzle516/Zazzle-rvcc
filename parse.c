@@ -18,14 +18,16 @@ struct TagScope {
 typedef struct VarInScope VarInScope;
 struct VarInScope {
     VarInScope* next;
+    char* scopeName;    // commit[64]: 无论什么类型的变量  变量名一定是存在的
 
-    // 在 commit[64] 添加了新的 typedefType 之后  有一个共通的 scopeName 就很重要
-    char* scopeName;
+    Object* varList;    // 标准类型变量
 
-    Object* varList;
+    Type* typeDefined;  // commit[64]: 别名自定义类型变量
 
-    // commit[64]: 存储类型别名被定义的原标准类型
-    Type* typeDefined;
+    // Q: 为什么枚举类型需要一个单独的 enumType 而不能复用 typeDefined
+    // A: 因为枚举类型的大小是固定的  (TY_INT, 4, 4) 结构体是不固定的
+    Type* enumType;     // commit[74]: 定义枚举变量相关数据
+    int enumValue;
 };
 
 // 每个 {} 构成一个生效 Scope 范围
@@ -33,10 +35,8 @@ typedef struct Scope Scope;
 struct Scope {
     Scope* next;
 
-    VarInScope* varScope;
-
-    // 结构体实例作为 var 存入 varScope 而 tarScope 是存了结构体类型模板
-    TagScope* tagScope;
+    VarInScope* varScope;   // 结构体实例作为 var 存入 varScope
+    TagScope* tagScope;     // tarScope 结构体存储类型模板
 };
 
 // commit[64]: 判断该变量是否是类型别名
@@ -48,9 +48,9 @@ typedef struct {
 
 // parse() = (functionDefinition | globalVariable | typedef)*
 
-// commit[49] [54] [64]: 支持 struct | union | typedef 语法解析
+// commit[49] [54] [64] [74]: 支持 struct | union | typedef | enum 语法解析
 // declspec = ("int" | "char" | "long" | "short" | "void" | structDeclaration | unionDeclaration
-//             | "typedef" | "typedefName" )+
+//             | "typedef" | "typedefName" | enumSpec)+
 
 // commit[54]: 针对 struct 和 union 提取出抽象层
 // StructOrUnionDecl = ident ? (" {" structMembers)?
@@ -248,7 +248,8 @@ static long getArrayNumber(Token* tok) {
 // commit[33]: 判断当前读取的类型是否符合变量声明的类型
 static bool isTypeName(Token* tok) {
     static char* typeNameKeyWord[] = {
-        "void", "char", "int", "long", "struct", "union", "short", "typedef", "_Bool"
+        "void", "char", "int", "long", "struct", "union",
+        "short", "typedef", "_Bool", "enum"
     };
 
     for (int I = 0; I < sizeof(typeNameKeyWord) / sizeof(*typeNameKeyWord); I++) {
@@ -278,6 +279,7 @@ static Token* gloablDefinition(Token* tok, Type* globalBaseType);
 static Token* parseTypeDef(Token* tok, Type* BaseType);
 
 static Type* declspec(Token** rest, Token* tok, VarAttr* varAttr);
+static Type* enumspec(Token** rest, Token* tok);
 static Type* declarator(Token** rest, Token* tok, Type* Base);
 static Type* typeSuffix(Token** rest, Token* tok, Type* BaseType);
 static Type *abstractDeclarator(Token **rest, Token *tok, Type* BaseType);
@@ -487,9 +489,9 @@ static Type* declspec(Token** rest, Token* tok, VarAttr* varAttr) {
             continue;
         }
 
-        // 处理 struct | union 类型  & 判断当前的类型声明是否是 typedef 重声明的
+        // 处理 struct | union | enum | typedef 特殊类型
         Type* definedType = findTypeDef(tok);
-        if (equal(tok, "struct") || equal(tok, "union") || definedType) {
+        if (equal(tok, "struct") || equal(tok, "union") || definedType || equal(tok, "enum")) {
             if (typeCounter)
                 // case1: 针对已经被 typedef 修饰的别名  如果重新被 typedef 修饰覆盖  需要 typeCounter 判断
                 // case2: 对非 typedef 的情况进行多类型声明的报错  比如 {int struct}
@@ -501,6 +503,10 @@ static Type* declspec(Token** rest, Token* tok, VarAttr* varAttr) {
 
             else if (equal(tok, "union")) {
                 BaseType = unionDeclaration(&tok, tok->next);
+            }
+
+            else if (equal(tok, "enum")) {
+                BaseType = enumspec(&tok, tok->next);
             }
 
             else {
@@ -567,6 +573,60 @@ static Type* declspec(Token** rest, Token* tok, VarAttr* varAttr) {
 
     *rest = tok;
     return BaseType;
+}
+
+// commit[74]: 针对 enum 类型声明的特殊处理
+static Type* enumspec(Token** rest, Token* tok) {
+    // 结构类似于 StructOrUnionDecl 但是固定类型大小(某种程度图省事
+    Type* newEnumType = enumType();
+    Token* enumTag = NULL;
+    if (tok->token_kind == TOKEN_IDENT) {
+        enumTag = tok;
+        tok = tok->next;
+    }
+
+    // 使用枚举类型标签定义实例  Tip: 如果是别名会在 isTypeName 判断出来
+    if (enumTag && !equal(tok, "{")) {
+        Type* definedEnumType = findStructTag(enumTag);
+
+        // 如果根本不存在或者该标签名不是枚举类型  报错
+        if (!definedEnumType)
+            tokenErrorAt(enumTag, "unknown enum type");
+        if (definedEnumType->Kind != TY_ENUM)
+            tokenErrorAt(enumTag, "not an enum tag");
+
+        *rest = tok;
+        return definedEnumType;
+    }
+
+    tok = skip(tok, "{");   // 进入枚举类型定义内部
+    int I = 0;
+    int value = 0;          // 默认枚举从 0 开始
+    while (!equal(tok, "}")) {
+        if (I++ > 0)
+            tok = skip(tok, ",");
+
+        char* Name = getVarName(tok);
+        tok = tok->next;
+
+        if (equal(tok, "=")) {
+            // 根据用户输入重定义枚举量的值
+            value = getArrayNumber(tok->next);
+            tok = tok->next->next;  // 跳过 {= X}
+        }
+
+        // 存储枚举常量
+        VarInScope* targetScope = pushVarScopeToScope(Name);
+        targetScope->enumType = newEnumType;
+        targetScope->enumValue = value++;
+    }
+    *rest = tok->next;
+
+    if (enumTag)
+        // 存入枚举类型模板
+        pushTagScopeToScope(enumTag, newEnumType);
+
+    return newEnumType;
 }
 
 // 类型后缀判断  包括函数定义的形参解析
@@ -777,7 +837,7 @@ static Token* parseTypeDef(Token* tok, Type* BaseType){
             tok = skip(tok, ",");
         First = false;
 
-        // 解析别名的完整类型
+        // 解析后缀得到别名的完整类型
         Type* definedType = declarator(&tok, tok, BaseType);
 
         pushVarScopeToScope(getVarName(definedType->Name))->typeDefined = definedType;
@@ -1389,11 +1449,18 @@ static Node* primary_class_expr(Token** rest, Token* tok) {
         }
 
         VarInScope* varScope = findVar(tok);
-        if (!varScope || !varScope->varList) {
+        // 能进入这里的变量判断说明进入了 stamt() 被 isTypeName() 判断为非别名
+        // 所以只剩下两种可能性
+        if (!varScope || (!varScope->varList && !varScope->enumType)) {
             tokenErrorAt(tok, "undefined variable");
         }
 
-        Node* ND = singleVarNode(varScope->varList, tok);
+        Node* ND;
+        if (varScope->varList)
+            ND = singleVarNode(varScope->varList, tok);
+        else
+            ND = numNode(varScope->enumValue, tok);
+
         *rest = tok->next;
         return ND;
     }

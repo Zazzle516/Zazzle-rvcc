@@ -94,6 +94,8 @@ typedef enum {
     TY_SHORT,           // commit[58]: 基础 short 类型
 
     TY_BOOL,            // commit[72]: 基础 bool 类型
+
+    TY_ENUM,            // commit[74]: 支持枚举类型
 } Typekind;
 
 // 自定义类型
@@ -146,6 +148,9 @@ Type* newPointerTo(Type* Base);
 
 // 构造函数类型结点
 Type* funcType(Type* ReturnType);
+
+// commit[74]: 构造枚举类型
+Type* enumType(void);
 
 // commit[27]: 根据数组基类和元素个数定义该数组的元数据
 Type* linerArrayType(Type* arrayBaseType, int arrayElemCount);

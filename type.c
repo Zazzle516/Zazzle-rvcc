@@ -29,7 +29,7 @@ static Type* newType(Typekind typeKind, int typeSize, int typeAlign) {
 bool isInteger(Type* TY) {
     Typekind KIND = TY->Kind;
     return KIND == TY_INT || KIND == TY_CHAR || KIND == TY_BOOL ||
-            KIND == TY_LONG || KIND == TY_SHORT;
+            KIND == TY_LONG || KIND == TY_SHORT || KIND == TY_ENUM;
 }
 
 // 新建指针变量结点 根据 Base 定义指向
@@ -47,6 +47,11 @@ Type* funcType(Type* ReturnType) {
     type->Kind = TY_FUNC;
     type->ReturnType = ReturnType;
     return type;
+}
+
+// 构造枚举结点  并且枚举类型的数值范围和 int 保持一致
+Type* enumType(void) {
+    return newType(TY_ENUM, 4, 4);
 }
 
 // Q: 新分配了一片指针空间指向原本的空间  所以到底有什么用呢.
