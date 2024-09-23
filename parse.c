@@ -604,6 +604,8 @@ static Type* enumspec(Token** rest, Token* tok) {
         if (definedEnumType->Kind != TY_ENUM)
             tokenErrorAt(enumTag, "not an enum tag");
 
+        // 这里不是通过 tag 取出任何 enum 信息  只是判断合法性  因为 enum 在 Type 数据结构中没有相关定义
+        // 这里声明被定义变量是 enum 类型
         *rest = tok;
         return definedEnumType;
     }
@@ -981,6 +983,7 @@ static Node* declaration(Token** rest, Token* tok, Type* BaseType) {
             continue;
         }
 
+        // 直接读取赋值语句的 RHS
         Node* LHS = singleVarNode(var, isPtr->Name);
         Node* RHS = assign(&tok, tok->next);
 
@@ -1135,11 +1138,18 @@ static Node* stamt(Token** rest, Token* tok) {
     }
 
     if (equal(tok, "for")) {
-        // for (i = 0; i < 10; i = i + 1)
+        // commit[76]: 通过定义 Scope 支持循环域内局部变量
         Node* ND = createNode(ND_FOR, tok);
-
         tok = skip(tok->next, "(");
-        ND->For_Init = exprStamt(&tok, tok);
+
+        enterScope();
+
+        if (isTypeName(tok)) {
+            Type* Basetype = declspec(&tok, tok, NULL);
+            ND->For_Init = declaration(&tok, tok, Basetype);
+        }
+        else
+            ND->For_Init = exprStamt(&tok, tok);    // 使用已定义的变量
         *rest = tok;
 
         if (!equal(tok, ";"))
@@ -1156,6 +1166,8 @@ static Node* stamt(Token** rest, Token* tok) {
         *rest = tok;
 
         ND->If_BLOCK = stamt(&tok, tok);
+
+        leaveScope();
 
         *rest = tok;
         return ND;
