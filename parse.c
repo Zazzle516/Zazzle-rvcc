@@ -100,7 +100,8 @@ typedef struct {
 
 // commit[29]: 新增对 [] 的语法支持  本质上就是对 *(x + y) 的一个语法糖 => x[y]
 // commit[67]: 新增对强制类型转换的支持
-// third_class_expr = (+|-|&|*) cast | postFix
+// commit[78]: 新增对前置 "++" | "--" 运算符的支持
+// third_class_expr = (+|-|&|*) cast | postFix | ("++" | "--")
 
 // commit[49]: 支持对结构体成员的访问
 // commit[53]: 支持对结构体实例成员的访问  写入左子树结构  注意结构体可能是递归的 x->y->z
@@ -310,7 +311,7 @@ static Node* second_class_expr(Token** rest, Token* tok);
 static Node* third_class_expr(Token** rest, Token* tok);
 static Node* typeCast(Token** rest, Token* tok);
 
-static Node* preFix(Token** rest, Token* tok);
+static Node* postFix(Token** rest, Token* tok);
 static Node* primary_class_expr(Token** rest, Token* tok);
 static Node* funcall(Token** rest, Token* tok);
 
@@ -1394,7 +1395,7 @@ static Node* typeCast(Token** rest, Token* tok) {
         Node* ND = newCastNode(typeCast(rest, tok), castTargetType);
         ND->token = Start;
 
-        // 无论嵌套多少层  递归的是语法解析  Q: 最终的 AST 只有一个操作节点 ND_TYPE_CAST ???
+        // 无论嵌套多少层  递归的是语法解析
         return ND;
     }
 
@@ -1405,6 +1406,7 @@ static Node* typeCast(Token** rest, Token* tok) {
 
 // 对一元运算符的单边递归
 // commit[67]: 计算运算符也会参与强制类型转换  eg. (int)+(-1) => (-1)  (int)-(-1) => (1)  都是合法的
+// Tip: 一元运算符可以连用但要分隔开
 static Node* third_class_expr(Token** rest, Token* tok) {
     if (equal(tok, "+")) {
         return typeCast(rest, tok->next);
@@ -1425,17 +1427,29 @@ static Node* third_class_expr(Token** rest, Token* tok) {
         return ND;
     }
 
-    return preFix(rest, tok);
+    // commit[78]: 把前置 "++" | "--" 运算符转换为 "+=1" | "-=1" 表达式  本质就是个语法糖
+    // 但是相比 commit[77] 不太一样的地方是被运算变量在右边  所以在 newPtr*() 的调用中
+    // 仍然需要调用 third_class_expr 解析
+
+    if (equal(tok, "++")) {
+        return toAssign(newPtrAdd(third_class_expr(rest, tok->next), numNode(1, tok), tok));
+    }
+
+    if (equal(tok, "--")) {
+        return toAssign(newPtrSub(third_class_expr(rest, tok->next),numNode(1, tok), tok));
+    }
+
+    return postFix(rest, tok);
 }
 
 // 对变量的特殊后缀进行判断
-static Node* preFix(Token** rest, Token* tok) {
+static Node* postFix(Token** rest, Token* tok) {
     Node* ND = primary_class_expr(&tok, tok);
     // 访问结构体成员: 使用 "->" 的变量是指针  结构体实例使用 "."
 
     while (true) {
         if (equal(tok, "[")) {
-            // commit[28]: preFix = primary_class_expr ("[" expr "]")*  eg. x[y] 先解析 x 再是 y
+            // commit[28]: postFix = primary_class_expr ("[" expr "]")*  eg. x[y] 先解析 x 再是 y
             Token* idxStart = tok;
             Node* idxExpr = expr(&tok, tok->next);
             tok = skip(tok, "]");
