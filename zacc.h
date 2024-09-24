@@ -17,6 +17,7 @@
 #include <string.h>
 #include <errno.h>
 #include <stdint.h>
+#include <strings.h>
 
 // 替换声明  在后续的变量声明中省略 struct 关键字
 // Q: 为什么 typedef 可以作为一个组合识别到 (struct structName)

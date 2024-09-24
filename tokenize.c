@@ -325,6 +325,42 @@ static Token* readCharLiteral(char* start) {
     return tok;
 }
 
+// commit[80]: 处理 二进制 八进制 十六进制的数字字面量
+static Token* readNumLiteral(char* start) {
+    char* P = start;    // 记录起始位置  用于后面的长度计算
+    int Base = 10;      // 默认十进制
+
+    // strncasecmp: 比较两个字符串的前 n 个字符，而不区分大小写
+    // isalnum: 判断一个字符是否是字母或数字
+
+    // 处理不同进制前缀
+    // Tip: strtoul() 会根据 Base 解析所有合法的数字  直到遇到不合法数字存在 *P 中
+    // 如果被解析对象本身非法  则返回 0 但是 0 本身也返回 0  面对这种情况需要提前对被解析对象合法化判断  防止后面混淆
+    if (!strncasecmp(P, "0x", 2) && isxdigit(P[2])) {
+        P += 2;
+        Base = 16;
+    }
+
+    else if (!strncasecmp(P, "0b", 2) && (P[2] == '0' || P[2] == '1')) {
+        P += 2;
+        Base = 2;
+    }
+
+    else if (*P == '0') {
+        Base = 8;
+    }
+
+    // 处理真正的数字阶段 + 真正的合法性判断
+    long numVal = strtoul(P, &P, Base);
+    if (isalnum(*P))
+        charErrorAt(P, "invalid digit");
+
+    Token* tok = newToken(TOKEN_NUM, start, P);
+    tok->value = numVal;
+
+    return tok;
+}
+
 // 比较字符串是否相等   和 equal() 中的 memcmp() 区分
 static bool strCmp(char* input_ptr, char* target) {
     return (strncmp(input_ptr, target, strlen(target)) == 0);
@@ -411,15 +447,11 @@ Token* tokenize(char* fileName, char* P) {
 
         // 仅处理数字
         if (isdigit(*P)) {
-            // isdigit() 比较特殊 一次只能判断一个字符 如果是一个很大的数字 需要使用 while 循环判断
-            currToken->next = newToken(TOKEN_NUM, P, P);
+            // commit[80]: 抽象在 readNumLiteral() 实现
+            currToken->next = readNumLiteral(P);
+
             currToken = currToken->next;
-
-            const char* start = P;
-            currToken->value = strtoul(P, &P, 10);      // 因为符号会额外处理 所以这里转换为 无符号数
-            currToken->length = P - start;              // 在 newToken() 的时候还无法确定长度 在此时确定后重置
-
-            // 此时 P 通过 strtoul() 指向了非数字字符 空格或者符号
+            P += currToken->length;     // 类似 根据具体长度进行更新  包括符号
             continue;
         }
 
