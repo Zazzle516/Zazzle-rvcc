@@ -85,7 +85,10 @@ typedef struct {
 
 // exprStamt = expr? ";"
 // expr = assign
-// assign = equality (= assign)*                        支持递归性赋值
+
+// commit[77]: 支持简化运算符 += -= ...
+// assign = equality ( assignOp assign)?
+// assignOp = "=" | "+=" | "-=" | "*=" | "/="
 
 // equality = relation op relation                      op = (!= | ==)
 // relation = first_class_expr op first_class_expr      op = (>= | > | < | <=)
@@ -295,7 +298,10 @@ static Node* declaration(Token** rest, Token* tok, Type* BaseType);
 static Node* stamt(Token** rest, Token* tok);
 static Node* exprStamt(Token** rest, Token* tok);
 static Node* expr(Token** rest, Token* tok);
+
+static Node* toAssign(Node* Binary);
 static Node* assign(Token** rest, Token* tok);
+
 static Node* equality_expr(Token** rest, Token* tok);
 static Node* relation_expr(Token** rest, Token* tok);
 static Node* first_class_expr(Token** rest, Token* tok);
@@ -1219,6 +1225,33 @@ static Node* expr(Token** rest, Token* tok) {
     return ND;
 }
 
+// commit[77]: 转换 A =op B 为 {TMP = &A, *TMP = *TMP op B}
+static Node* toAssign(Node* Binary) {
+    // Q: 但是在 newPtr*() 运算中已经完成 addType() 了为什么这里还要执行
+    // A: 针对加减确实不需要  但是乘除没有  还是需要赋予类型的
+    addType(Binary->LHS);
+    addType(Binary->RHS);
+    Token* tok = Binary->token;
+
+    // Q: 为什么要转换为 &A 运算    A: 因为 C 中左值必须是个地址值
+
+    // Tip: 这里并没有对指针的指向进行合法性判断  eg. 3 += 2; 是非法的  需要在 codeGen 中才能发现
+    Object* var = newLocal("", newPointerTo(Binary->LHS->node_type));
+
+    Node* exprA = createAST(ND_ASSIGN, singleVarNode(var, tok),
+                            createSingle(ND_ADDR, Binary->LHS, tok), tok);
+
+    Node* exprB = createAST(
+        ND_ASSIGN,
+        createSingle(ND_DEREF, singleVarNode(var, tok), tok),
+        createAST(Binary->node_kind,
+                createSingle(ND_DEREF, singleVarNode(var, tok), tok),
+                Binary->RHS, tok),
+        tok);
+
+    return createAST(ND_COMMA, exprA, exprB, tok);
+}
+
 // 赋值语句
 static Node* assign(Token** rest, Token* tok) {
     Node* ND = equality_expr(&tok, tok);
@@ -1226,6 +1259,22 @@ static Node* assign(Token** rest, Token* tok) {
     // 支持类似于 'a = b = 1;' 这样的递归性赋值
     if (equal(tok, "=")) {
         ND = createAST(ND_ASSIGN, ND, assign(&tok, tok->next), tok);
+    }
+
+    if (equal(tok, "+=")) {
+        return toAssign(newPtrAdd(ND, assign(rest, tok->next), tok));
+    }
+
+    if (equal(tok, "-=")) {
+        return toAssign(newPtrSub(ND, assign(rest, tok->next), tok));
+    }
+
+    if (equal(tok, "*=")) {
+        return toAssign(createAST(ND_MUL, ND, assign(rest, tok->next), tok));
+    }
+
+    if (equal(tok, "/=")) {
+        return toAssign(createAST(ND_DIV, ND, assign(rest, tok->next), tok));
     }
 
     *rest = tok;
