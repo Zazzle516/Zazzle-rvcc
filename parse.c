@@ -105,7 +105,7 @@ typedef struct {
 
 // commit[49]: 支持对结构体成员的访问
 // commit[53]: 支持对结构体实例成员的访问  写入左子树结构  注意结构体可能是递归的 x->y->z
-// postFix = primary_calss_expr ("[" expr"]" | ("." ident)* | ("->" ident)*)
+// postFix = primary_calss_expr ("[" expr"]" | ("." ident)* | ("->" ident) | "++" | "--")*
 
 // commit[23] [30] [39]: 添加对零参函数名 | "sizeof" | ND_GNU_EXPR 声明的支持
 // primary_class_expr = "(" "{" stamt+ "}" ")" |
@@ -311,6 +311,7 @@ static Node* second_class_expr(Token** rest, Token* tok);
 static Node* third_class_expr(Token** rest, Token* tok);
 static Node* typeCast(Token** rest, Token* tok);
 
+static Node *postIncNode(Node *Nd, Token *Tok, int Addend);
 static Node* postFix(Token** rest, Token* tok);
 static Node* primary_class_expr(Token** rest, Token* tok);
 static Node* funcall(Token** rest, Token* tok);
@@ -1442,6 +1443,20 @@ static Node* third_class_expr(Token** rest, Token* tok) {
     return postFix(rest, tok);
 }
 
+// commit[79]: 转换后缀运算为 (typeof A)((A op= 1) + (-op) 1) 
+static Node *postIncNode(Node *ND, Token *tok, int AddOrSub) {
+    // 因为后续的 ND_CAST 需要访问变量的类型  所以这里提前把类型赋值
+    addType(ND);
+
+    // Tip: 本质上返回的是一个新的结点  因为 (-op 1) 并没有赋值给 A  与 varA 无关而且中间可能溢出
+    return newCastNode(
+        newPtrAdd(                                              // 最后用 Add 连接
+            toAssign(newPtrAdd(ND, numNode(AddOrSub, tok), tok)),   // ExprA: (A op= 1)
+            numNode(-AddOrSub, tok),                                // ExprB: (-op) 1
+            tok),
+        ND->node_type);
+}
+
 // 对变量的特殊后缀进行判断
 static Node* postFix(Token** rest, Token* tok) {
     Node* ND = primary_class_expr(&tok, tok);
@@ -1472,6 +1487,18 @@ static Node* postFix(Token** rest, Token* tok) {
             tok = tok->next->next;
 
             // 通过 continue 支持 a->b->c 的递归访问
+            continue;
+        }
+
+        if (equal(tok, "++")) {
+            ND = postIncNode(ND, tok, 1);
+            tok = tok->next;
+            continue;
+        }
+
+        if (equal(tok, "--")) {
+            ND = postIncNode(ND, tok, -1);
+            tok = tok->next;
             continue;
         }
 
