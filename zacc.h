@@ -213,6 +213,7 @@ typedef enum {
     ND_GT,                      // Greater Then
     ND_LT,                      // Less Then
     ND_NOT,                     // commit[81]: 非运算
+    ND_BITNOT,                  // commit[82]: 按位取反
 
     ND_STAMT,                   // 分号判断语句独立
 

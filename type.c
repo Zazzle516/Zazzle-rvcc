@@ -204,6 +204,12 @@ void addType(Node* ND) {
         return;
     }
 
+    case ND_BITNOT:
+    {
+        ND->node_type = ND->LHS->node_type;
+        return;
+    }
+
     case ND_FUNCALL:
     {
         // commit[71]: 把 FUNCALL 函数调用结点更新为被调用函数定义的返回类型

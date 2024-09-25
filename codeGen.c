@@ -432,6 +432,14 @@ static void calcuGen(Node* AST) {
         return;
     }
 
+    case ND_BITNOT:
+    {
+        calcuGen(AST->LHS);
+        printLn("  # 按位取反运算");
+        printLn("  not a0, a0");    // xori a0, a0, -1 的伪代码
+        return;
+    }
+
     default:
         // +|-|*|/ 其余运算 需要继续向下判断
         break;

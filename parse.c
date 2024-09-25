@@ -102,6 +102,7 @@ typedef struct {
 // commit[67]: 新增对强制类型转换的支持
 // commit[78]: 新增对前置 "++" | "--" 运算符的支持
 // commit[81]: 新增对 "!" 运算符的支持
+// commit[82]: 新增对 "~" 运算符的支持
 // third_class_expr = (+|-|&|*|!) cast | postFix | ("++" | "--")
 
 // commit[49]: 支持对结构体成员的访问
@@ -1431,6 +1432,11 @@ static Node* third_class_expr(Token** rest, Token* tok) {
 
     if (equal(tok, "!")) {
         Node* ND = createSingle(ND_NOT, typeCast(rest, tok->next), tok);
+        return ND;
+    }
+
+    if (equal(tok, "~")) {
+        Node* ND = createSingle(ND_BITNOT, typeCast(rest, tok->next), tok);
         return ND;
     }
 
