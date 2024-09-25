@@ -424,6 +424,14 @@ static void calcuGen(Node* AST) {
         return;
     }
 
+    case ND_NOT:
+    {
+        calcuGen(AST->LHS);
+        printLn("  # 非运算");
+        printLn("  seqz a0, a0");
+        return;
+    }
+
     default:
         // +|-|*|/ 其余运算 需要继续向下判断
         break;

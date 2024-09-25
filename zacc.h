@@ -212,6 +212,7 @@ typedef enum {
     ND_LE,                      // Less Equal
     ND_GT,                      // Greater Then
     ND_LT,                      // Less Then
+    ND_NOT,                     // commit[81]: 非运算
 
     ND_STAMT,                   // 分号判断语句独立
 

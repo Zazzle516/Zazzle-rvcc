@@ -101,7 +101,8 @@ typedef struct {
 // commit[29]: 新增对 [] 的语法支持  本质上就是对 *(x + y) 的一个语法糖 => x[y]
 // commit[67]: 新增对强制类型转换的支持
 // commit[78]: 新增对前置 "++" | "--" 运算符的支持
-// third_class_expr = (+|-|&|*) cast | postFix | ("++" | "--")
+// commit[81]: 新增对 "!" 运算符的支持
+// third_class_expr = (+|-|&|*|!) cast | postFix | ("++" | "--")
 
 // commit[49]: 支持对结构体成员的访问
 // commit[53]: 支持对结构体实例成员的访问  写入左子树结构  注意结构体可能是递归的 x->y->z
@@ -1425,6 +1426,11 @@ static Node* third_class_expr(Token** rest, Token* tok) {
 
     if (equal(tok, "*")) {
         Node* ND = createSingle(ND_DEREF, typeCast(rest, tok->next), tok);
+        return ND;
+    }
+
+    if (equal(tok, "!")) {
+        Node* ND = createSingle(ND_NOT, typeCast(rest, tok->next), tok);
         return ND;
     }
 

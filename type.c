@@ -196,6 +196,14 @@ void addType(Node* ND) {
         return;
     }
 
+    case ND_NOT:
+    {
+        // Q: 为什么不是根据 LHS 的结点类型
+        // A: 因为最后的结果非零即一  所以 INT 也可以
+        ND->node_type = TYINT_GLOBAL;
+        return;
+    }
+
     case ND_FUNCALL:
     {
         // commit[71]: 把 FUNCALL 函数调用结点更新为被调用函数定义的返回类型
