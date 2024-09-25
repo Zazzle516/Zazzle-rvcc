@@ -72,7 +72,10 @@ typedef struct {
 // compoundStamt = (typedef | declaration | stamt)* "}"
 
 // commit[26] [27] [28]: 含参的函数定义  对数组变量定义的支持  多维数组支持
-// typeSuffix = ("(" funcFormalParams | "[" num "]" typeSuffix | ε
+// commit[86]: 支持灵活数组的定义
+// typeSuffix = ("(" funcFormalParams | "[" arrayDimensions | ε
+// arrayDemensions =  num? "]" typeSuffix
+
 // funcFormalParams = (formalParam ("," formalParam)*)? ")"
 // formalParam = declspec declarator
 
@@ -703,6 +706,23 @@ static Type* declarator(Token** rest, Token* tok, Type* Base) {
     return Base;
 }
 
+// commit[86]: 
+static Type* arrayDimensions(Token** rest, Token* tok, Type* ArrayBaseType) {
+    // 无具体大小数组  人为定义为 (-1)
+    if (equal(tok, "]")) {
+        // 同理的递归解析
+        ArrayBaseType = typeSuffix(rest, tok->next, ArrayBaseType);
+        return linerArrayType(ArrayBaseType, -1);
+    }
+
+    // 有具体定义大小的数组
+    int arraySize = getArrayNumber(tok);
+    tok = skip(tok->next, "]");
+    // 通过递归不断重置 BaseType 保存 (n - 1) 维数组的信息  最终返回 n 维数组信息
+    ArrayBaseType = typeSuffix(rest, tok, ArrayBaseType);
+    return linerArrayType(ArrayBaseType, arraySize);
+}
+
 // commit[27]: 处理定义语法的后缀
 static Type* typeSuffix(Token** rest, Token* tok, Type* BaseType) {
     if (equal(tok, "(")) {
@@ -712,12 +732,7 @@ static Type* typeSuffix(Token** rest, Token* tok, Type* BaseType) {
 
     if (equal(tok, "[")) {
         // 数组定义处理    BaseType: 数组基类
-        int arraySize = getArrayNumber(tok->next);
-
-        tok = skip(tok->next->next, "]");
-        // 通过递归不断重置 BaseType 保存 (n - 1) 维数组的信息  最终返回 n 维数组信息
-        BaseType = typeSuffix(rest, tok, BaseType);
-        return linerArrayType(BaseType, arraySize);
+        return arrayDimensions(rest, tok->next, BaseType);
     }
 
     // 变量定义处理    BaseType: 变量类型
@@ -999,6 +1014,11 @@ static Node* declaration(Token** rest, Token* tok, Type* BaseType) {
 
         Type* isPtr = declarator(&tok, tok, BaseType);
 
+        // commit[86]: 目前只能针对奇数维数组定义  因为每个空维度被记 (-1)
+        // 负负相乘为正  偶数维数组无法判断是错误的
+        if (isPtr->BaseSize < 0)
+            tokenErrorAt(tok, "variable has incomplete type");
+
         // commit[61]: 在 declarator() 解析完整类型后判断 void 非法
         if (isPtr->Kind == TY_VOID)
             tokenErrorAt(tok, "variable declared void");
@@ -1040,6 +1060,7 @@ static Type* structDeclaration(Token** rest, Token* tok) {
         newStructMem->offset = totalOffset;
 
         // 为下一个变量计算起始位置准备
+        // commit[86]: 在更新空数组定义后  累加偏移量会出现 bug  起始成员的 BaseSize 会覆盖多个空数组定义
         totalOffset += newStructMem->memberType->BaseSize;
 
         // 判断是否更新结构体对齐最大值  本质上 structType->alignSize = maxSingleOffset

@@ -102,6 +102,7 @@ typedef enum {
 // 自定义类型
 struct structMember {
     structMember* next;
+    Token* tok;             // commit[86]: 针对结构体成员的零或数组定义不支持
 
     Type* memberType;
     Token* memberName;
