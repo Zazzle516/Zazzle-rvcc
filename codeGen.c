@@ -434,6 +434,7 @@ static void calcuGen(Node* AST) {
 
     case ND_BITNOT:
     {
+        // Tip: 全 1 取反为 -1
         calcuGen(AST->LHS);
         printLn("  # 按位取反运算");
         printLn("  not a0, a0");    // xori a0, a0, -1 的伪代码
@@ -471,6 +472,9 @@ static void calcuGen(Node* AST) {
         return;
     case ND_DIV:
         printLn("  div%s a0, a0, a1", Suffix);
+        return;
+    case ND_MOD:
+        printLn("  rem%s a0, a0, a1", Suffix);
         return;
 
     case ND_EQ:

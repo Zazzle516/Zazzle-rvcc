@@ -149,6 +149,7 @@ void addType(Node* ND) {
     case ND_SUB:
     case ND_MUL:
     case ND_DIV:
+    case ND_MOD:
     {
         // commit[27]: 无论类型都可以依赖于左值的类型的操作节点
         // commit[68]: 通过强制类型转换  将左右子树统一为最大的类型

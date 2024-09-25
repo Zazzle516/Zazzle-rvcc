@@ -88,14 +88,15 @@ typedef struct {
 
 // commit[77]: 支持简化运算符 += -= ...
 // assign = equality ( assignOp assign)?
-// assignOp = "=" | "+=" | "-=" | "*=" | "/="
+// assignOp = "=" | "+=" | "-=" | "*=" | "/=" | "%="
 
 // equality = relation op relation                      op = (!= | ==)
 // relation = first_class_expr op first_class_expr      op = (>= | > | < | <=)
 // first_class_expr = second_class_expr (+|- second_class_expr)*
 
 // commit[67]: 支持强制类型转换
-// second_class_expr = cast ("*" cast | "/" cast)*
+// commit[83]: 支持取模运算
+// second_class_expr = cast ("*" cast | "/" cast | "%" cast)*
 // typeCast = "(" typeName ")" cast | third_class_expr
 
 // commit[29]: 新增对 [] 的语法支持  本质上就是对 *(x + y) 的一个语法糖 => x[y]
@@ -1232,28 +1233,28 @@ static Node* expr(Token** rest, Token* tok) {
 // commit[77]: 转换 A =op B 为 {TMP = &A, *TMP = *TMP op B}
 static Node* toAssign(Node* Binary) {
     // Q: 但是在 newPtr*() 运算中已经完成 addType() 了为什么这里还要执行
-    // A: 针对加减确实不需要  但是乘除没有  还是需要赋予类型的
+    // A: 针对加减确实不需要  但是其他运算没有  还是需要赋予类型的
     addType(Binary->LHS);
     addType(Binary->RHS);
     Token* tok = Binary->token;
 
     // Q: 为什么要转换为 &A 运算    A: 因为 C 中左值必须是个地址值
 
-    // Tip: 这里并没有对指针的指向进行合法性判断  eg. 3 += 2; 是非法的  需要在 codeGen 中才能发现
-    Object* var = newLocal("", newPointerTo(Binary->LHS->node_type));
+    // Tip: 这里并没有对指针的指向进行合法性判断  eg. 3 += 2; 是非法的  但需要在 codeGen 中才能发现
+    Object* TMP = newLocal("", newPointerTo(Binary->LHS->node_type));
 
-    Node* exprA = createAST(ND_ASSIGN, singleVarNode(var, tok),
+    Node* exprFirst = createAST(ND_ASSIGN, singleVarNode(TMP, tok),
                             createSingle(ND_ADDR, Binary->LHS, tok), tok);
 
-    Node* exprB = createAST(
+    Node* exprSecond = createAST(
         ND_ASSIGN,
-        createSingle(ND_DEREF, singleVarNode(var, tok), tok),
+        createSingle(ND_DEREF, singleVarNode(TMP, tok), tok),
         createAST(Binary->node_kind,
-                createSingle(ND_DEREF, singleVarNode(var, tok), tok),
+                createSingle(ND_DEREF, singleVarNode(TMP, tok), tok),
                 Binary->RHS, tok),
         tok);
 
-    return createAST(ND_COMMA, exprA, exprB, tok);
+    return createAST(ND_COMMA, exprFirst, exprSecond, tok);
 }
 
 // 赋值语句
@@ -1279,6 +1280,10 @@ static Node* assign(Token** rest, Token* tok) {
 
     if (equal(tok, "/=")) {
         return toAssign(createAST(ND_DIV, ND, assign(rest, tok->next), tok));
+    }
+
+    if (equal(tok, "%=")) {
+        return toAssign(createAST(ND_MOD, ND, assign(rest, tok->next), tok));
     }
 
     *rest = tok;
@@ -1376,6 +1381,11 @@ static Node* second_class_expr(Token** rest, Token* tok) {
 
         if (equal(tok, "/")) {
             ND = createAST(ND_DIV, ND, typeCast(&tok, tok->next), start);
+            continue;
+        }
+
+        if (equal(tok, "%")) {
+            ND = createAST(ND_MOD, ND, typeCast(&tok, tok->next), start);
             continue;
         }
 
