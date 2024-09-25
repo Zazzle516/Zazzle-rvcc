@@ -372,7 +372,7 @@ static int readPunct(char* input_ptr) {
     // commit[53]: 类似于关键字判断 虽然目前这些符号本身是等长的  但是后面可能不一定
     static char* keyPunct[] = {"==", "!=", "<=", ">=", "->",
                                "+=", "-=", "*=", "/=", "++", "--",
-                               "%=", "^=", "|=", "&="};
+                               "%=", "^=", "|=", "&=", "&&", "||"};
 
     for (int I = 0; I < sizeof(keyPunct) / sizeof(*keyPunct); ++I) {
         if (strCmp(input_ptr, keyPunct[I]))

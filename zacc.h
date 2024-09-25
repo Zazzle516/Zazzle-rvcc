@@ -218,6 +218,8 @@ typedef enum {
     ND_BITAND,                  // 按位与
     ND_BITOR,                   // 按位或
     ND_BITXOR,                  // 按位异或
+    ND_LOGAND,
+    ND_LOGOR,
 
     ND_STAMT,                   // 分号判断语句独立
 

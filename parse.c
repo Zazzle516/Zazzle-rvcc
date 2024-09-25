@@ -87,8 +87,12 @@ typedef struct {
 // expr = assign
 
 // commit[77]: 支持简化运算符 += -= ...
-// assign = bitOr (assignOp assign)?
+// assign = logOr (assignOp assign)?
 // assignOp = "=" | "+=" | "-=" | "*=" | "/=" | "%=" | "&=" | "^=" | "|="
+
+// commit[85]: 支持逻辑与或运算
+// logOr = logAnd ("||" logAnd)*
+// logAnd = bitOr ("&&" bitOr)*
 
 // commit[84]: 支持 "| ^ &" 运算符  根据优先级插入语法规则中
 // bitOr = bitXor ("|" bitXor)*
@@ -310,6 +314,10 @@ static Node* expr(Token** rest, Token* tok);
 
 static Node* toAssign(Node* Binary);
 static Node* assign(Token** rest, Token* tok);
+
+static Node* logOr(Token** rest, Token* tok);
+static Node* logAnd(Token** rest, Token* tok);
+
 static Node* bitOr(Token** rest, Token* tok);
 static Node* bitXor(Token** rest, Token* tok);
 static Node* bitAnd(Token** rest, Token* tok);
@@ -1267,7 +1275,7 @@ static Node* toAssign(Node* Binary) {
 
 // 赋值语句
 static Node* assign(Token** rest, Token* tok) {
-    Node* ND = bitOr(&tok, tok);
+    Node* ND = logOr(&tok, tok);
 
     // 支持类似于 'a = b = 1;' 这样的递归性赋值
     if (equal(tok, "=")) {
@@ -1304,6 +1312,31 @@ static Node* assign(Token** rest, Token* tok) {
 
     if (equal(tok, "|=")) {
         return toAssign(createAST(ND_BITOR, ND, assign(rest, tok->next), tok));
+    }
+
+    *rest = tok;
+    return ND;
+}
+
+// commit[85]: 逻辑运算  根据优先级插入语法分析中  构造出镜像 Haffman 树
+static Node* logOr(Token** rest, Token* tok) {
+    Node* ND = logAnd(&tok, tok);
+
+    while (equal(tok, "||")) {
+        Token* start = tok;
+        ND = createAST(ND_LOGOR, ND, logAnd(&tok, tok->next), start);
+    }
+
+    *rest = tok;
+    return ND;
+}
+
+static Node* logAnd(Token** rest, Token* tok) {
+    Node* ND = bitOr(&tok, tok);
+
+    while (equal(tok, "&&")) {
+        Token* start = tok;
+        ND = createAST(ND_LOGAND, ND, bitOr(&tok, tok->next), start);
     }
 
     *rest = tok;

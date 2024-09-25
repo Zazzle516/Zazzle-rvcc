@@ -201,6 +201,8 @@ void addType(Node* ND) {
     }
 
     case ND_NOT:
+    case ND_LOGAND:
+    case ND_LOGOR:
     {
         // Q: 为什么不是根据 LHS 的结点类型
         // A: 因为最后的结果非零即一  所以 INT 也可以

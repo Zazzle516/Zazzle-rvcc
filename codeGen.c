@@ -441,6 +441,57 @@ static void calcuGen(Node* AST) {
         return;
     }
 
+    // Tip: 编译器无法预测执行结果  需要把所有可能性的汇编都翻译出来
+    // 所以一段汇编程序不一定所有汇编语句都执行
+    // commit[84]: 只是模拟了短路运算  并没有进行真正的优化  即使是 (0 && 0 && 0) 也是两段输出
+
+    case ND_LOGAND:
+    {
+        // Tip: 需要满足逻辑与或的短路运算  ((A && B) && C)
+        int C = count();
+        printLn("\n# ===== 逻辑与 %d =====", C);
+
+        // 利用镜像 Haffman 的结构优先计算左部  如果左部为 false 直接返回
+        calcuGen(AST->LHS);
+        printLn("  beqz a0, .L.false.%d", C);
+
+        // 判断当与表达式的右部  写入 reg-a0 中
+        calcuGen(AST->RHS);
+        printLn("  beqz a0, .L.false.%d", C);
+
+        // Branch-true  进入剩余表达式判断
+        printLn("  li a0, 1");
+        printLn("  j .L.end.%d", C);
+
+        printLn(".L.false.%d:", C);
+        printLn("  li a0, 0");          // Tip: 这里注释掉不影响通过测试
+
+        // 是当前计算式的结束 也是下一段计算式的开始
+        printLn(".L.end.%d:", C);
+        return;
+    }
+
+    case ND_LOGOR:
+    {
+        int C = count();
+        printLn("\n# ==== 逻辑或 %d ====", C);
+
+        calcuGen(AST->LHS);
+        printLn("  bnez a0, .L.true.%d", C);
+
+        calcuGen(AST->RHS);
+        printLn("  bnez a0, .L.true.%d", C);
+
+        printLn("  li a0, 0");
+        printLn("  j .L.end.%d", C);
+
+        printLn(".L.true.%d:", C);
+        printLn("  li a0, 1");
+
+        printLn(".L.end.%d:", C);
+        return;
+    }
+
     default:
         // +|-|*|/ 其余运算 需要继续向下判断
         break;
