@@ -785,6 +785,13 @@ static Type* funcFormalParams(Token** rest, Token* tok, Type* returnType) {
         Type* formalBaseType = declspec(&tok, tok, NULL);
         Type* isPtr = declarator(&tok, tok, formalBaseType);
 
+        // commit[87]: 把形参中的数组传参转换为指针
+        if (isPtr->Kind == TY_ARRAY_LINER) {
+            Token* Name = isPtr->Name;
+            isPtr = newPointerTo(isPtr->Base);
+            isPtr->Name = Name;
+        }
+
 // Q: 当前的 Curr 新指向这个新的指针空间  如果注释掉是稳定报错的
         // Curr->formalParamNext = (isPtr);
         Curr->formalParamNext = copyType(isPtr);

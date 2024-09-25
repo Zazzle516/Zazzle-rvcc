@@ -59,6 +59,9 @@ _Bool bool_fn_sub(_Bool x) { return x - 1; }
 // [75] 支持文件域内函数
 static int static_fn() { return 3; }
 
+// [87] 在函数形参中退化数组为指针
+int param_decay(int x[]) { return x[0]; }
+
 int main() {
   // [25] 支持零参函数定义
   ASSERT(3, ret3());
@@ -81,7 +84,7 @@ int main() {
   ASSERT(3, *g1_ptr());
   ASSERT(5, int_to_char(261));
 
-  // [71] 处理函数实参类型转换
+  // {71] 处理函数实参类型转换
   ASSERT(-5, div_long(-10, 2));
 
   // [72] 支持_Bool类型
@@ -94,6 +97,9 @@ int main() {
 
   // [75] 支持文件域内函数
   ASSERT(3, static_fn());
+
+  // [87] 在函数形参中退化数组为指针
+  ASSERT(3, ({ int x[2]; x[0]=3; param_decay(x); }));
 
   printf("OK\n");
   return 0;
