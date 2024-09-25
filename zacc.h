@@ -215,6 +215,9 @@ typedef enum {
     ND_LT,                      // Less Then
     ND_NOT,                     // commit[81]: 非运算
     ND_BITNOT,                  // commit[82]: 按位取反
+    ND_BITAND,                  // 按位与
+    ND_BITOR,                   // 按位或
+    ND_BITXOR,                  // 按位异或
 
     ND_STAMT,                   // 分号判断语句独立
 

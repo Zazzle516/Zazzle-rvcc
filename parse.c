@@ -87,8 +87,13 @@ typedef struct {
 // expr = assign
 
 // commit[77]: 支持简化运算符 += -= ...
-// assign = equality ( assignOp assign)?
-// assignOp = "=" | "+=" | "-=" | "*=" | "/=" | "%="
+// assign = bitOr (assignOp assign)?
+// assignOp = "=" | "+=" | "-=" | "*=" | "/=" | "%=" | "&=" | "^=" | "|="
+
+// commit[84]: 支持 "| ^ &" 运算符  根据优先级插入语法规则中
+// bitOr = bitXor ("|" bitXor)*
+// bitXor = bitAnd ("^" bitAnd)*
+// bitAnd = equality ("&" equality)*
 
 // equality = relation op relation                      op = (!= | ==)
 // relation = first_class_expr op first_class_expr      op = (>= | > | < | <=)
@@ -305,6 +310,9 @@ static Node* expr(Token** rest, Token* tok);
 
 static Node* toAssign(Node* Binary);
 static Node* assign(Token** rest, Token* tok);
+static Node* bitOr(Token** rest, Token* tok);
+static Node* bitXor(Token** rest, Token* tok);
+static Node* bitAnd(Token** rest, Token* tok);
 
 static Node* equality_expr(Token** rest, Token* tok);
 static Node* relation_expr(Token** rest, Token* tok);
@@ -1259,7 +1267,7 @@ static Node* toAssign(Node* Binary) {
 
 // 赋值语句
 static Node* assign(Token** rest, Token* tok) {
-    Node* ND = equality_expr(&tok, tok);
+    Node* ND = bitOr(&tok, tok);
 
     // 支持类似于 'a = b = 1;' 这样的递归性赋值
     if (equal(tok, "=")) {
@@ -1284,6 +1292,53 @@ static Node* assign(Token** rest, Token* tok) {
 
     if (equal(tok, "%=")) {
         return toAssign(createAST(ND_MOD, ND, assign(rest, tok->next), tok));
+    }
+
+    if (equal(tok, "&=")) {
+        return toAssign(createAST(ND_BITAND, ND, assign(rest, tok->next), tok));
+    }
+
+    if (equal(tok, "^=")) {
+        return toAssign(createAST(ND_BITXOR, ND, assign(rest, tok->next), tok));
+    }
+
+    if (equal(tok, "|=")) {
+        return toAssign(createAST(ND_BITOR, ND, assign(rest, tok->next), tok));
+    }
+
+    *rest = tok;
+    return ND;
+}
+
+// commit[84]: 优先级 "&" > "^" > "|" 它们单独一档
+// Tip: 支持任意多参数参与运算 eg. (a & b ^ c | d ....)
+static Node* bitOr(Token** rest, Token* tok) {
+    Node* ND = bitXor(&tok, tok);
+    while (equal(tok, "|")) {
+        Token* start = tok;
+        ND = createAST(ND_BITOR, ND, bitXor(&tok, tok->next), start);
+    }
+
+    *rest = tok;
+    return ND;
+}
+
+static Node* bitXor(Token** rest, Token* tok) {
+    Node* ND = bitAnd(&tok, tok);
+    while (equal(tok, "^")) {
+        Token* start = tok;
+        ND = createAST(ND_BITXOR, ND, bitAnd(&tok, tok->next), start);
+    }
+
+    *rest = tok;
+    return ND;
+}
+
+static Node* bitAnd(Token** rest, Token* tok) {
+    Node* ND = equality_expr(&tok, tok);
+    while (equal(tok, "&")) {
+        Token* start = tok;
+        ND = createAST(ND_BITAND, ND, equality_expr(&tok, tok->next), start);
     }
 
     *rest = tok;

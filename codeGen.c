@@ -476,6 +476,15 @@ static void calcuGen(Node* AST) {
     case ND_MOD:
         printLn("  rem%s a0, a0, a1", Suffix);
         return;
+    case ND_BITAND:
+        printLn("  and a0, a0, a1");
+        return;
+    case ND_BITOR:
+        printLn("  or a0, a0, a1");
+        return;
+    case ND_BITXOR:
+        printLn("  xor a0, a0, a1");
+        return;
 
     case ND_EQ:
     case ND_NEQ:

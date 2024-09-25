@@ -191,6 +191,9 @@ void addType(Node* ND) {
     case ND_LE:
     case ND_GE:
     case ND_GT:
+    case ND_BITAND:
+    case ND_BITOR:
+    case ND_BITXOR:
     {
         usualArithConv(&ND->LHS, &ND->RHS);
         ND->node_type = TYINT_GLOBAL;
