@@ -1005,7 +1005,7 @@ static Node* compoundStamt(Token** rest, Token* tok) {
 
     while (!equal(tok, "}")) {
 
-        if (isTypeName(tok)) {
+        if (isTypeName(tok) && !equal(tok->next, ":")) {
             // 针对 typedef 进行预判断  不会更新 tok 的位置
             VarAttr Attr = {};
             Type* BaseType = declspec(&tok, tok, &Attr);
