@@ -672,6 +672,19 @@ static void exprGen(Node* AST) {
         return;
     }
 
+    case ND_GOTO:
+    {
+        printLn("  j %s", AST->gotoUniqueLabel);
+        return;
+    }
+
+    case ND_LABEL:
+    {
+        printLn("%s:", AST->gotoUniqueLabel);
+        exprGen(AST->LHS);
+        return;
+    }
+
     default:
         break;
     }

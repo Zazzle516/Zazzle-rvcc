@@ -39,6 +39,10 @@ struct Scope {
     TagScope* tagScope;     // tarScope 结构体存储类型模板
 };
 
+// commit[89]: 支持函数内部的 goto 语句
+static Node* GOTOs;
+static Node* Labels;
+
 // commit[64]: 判断该变量是否是类型别名
 // commit[75]: 判断文件域内函数
 // Q: 为什么这两种声明语句的属性需要单独一个结构体来声明
@@ -85,6 +89,8 @@ typedef struct {
 //          | "if" "(" cond-expr ")" stamt ("else" stamt)?
 //          | "for" "(" exprStamt expr? ";" expr? ")" "{" stamt
 //          | "while" "(" expr ")" stamt
+//          | "goto" ident ";"
+//          | ident ":" stamt
 
 // exprStamt = expr? ";"
 // expr = assign
@@ -248,6 +254,28 @@ static Object* newGlobal(char* varName, Type* globalVarType) {
     obj->next = Global;
     Global = obj;
     return obj;
+}
+
+/* 处理函数内的跳转标签 */
+
+// commit[89]: 标签和跳转语句的出现顺序不定  所以在最后进行映射
+// Q: 为什么需要这个映射
+static void resolveGotoLabels(void) {
+    for (Node* X = GOTOs; X; X = X->gotoNext) {
+        for (Node* Y = Labels; Y; Y = Y->gotoNext) {
+            if (!strcmp(X->gotoLabel, Y->gotoLabel)) {
+                X->gotoUniqueLabel = Y->gotoUniqueLabel;
+                break;
+            }
+        }
+
+        if (X->gotoUniqueLabel == NULL)
+            tokenErrorAt(X->token->next, "wrong use of undeclared label");
+    }
+
+    // 因为 GOTO 只在函数内作用所以要清空
+    GOTOs = NULL;
+    Labels = NULL;
 }
 
 // commit[22]: 针对变量声明语句 提取变量名
@@ -706,7 +734,7 @@ static Type* declarator(Token** rest, Token* tok, Type* Base) {
     return Base;
 }
 
-// commit[86]: 
+// commit[86]: 允许灵活数组定义
 static Type* arrayDimensions(Token** rest, Token* tok, Type* ArrayBaseType) {
     // 无具体大小数组  人为定义为 (-1)
     if (equal(tok, "]")) {
@@ -941,6 +969,9 @@ static Token* functionDefinition(Token* tok, Type* funcReturnBaseType, VarAttr* 
     function->local = Local;
 
     leaveScope();
+
+    // 因为 goto 语句和标签定义语句的顺序不固定  所以最后处理映射
+    resolveGotoLabels();
 
     return tok;
 }
@@ -1256,6 +1287,35 @@ static Node* stamt(Token** rest, Token* tok) {
 
         ND->If_BLOCK = stamt(&tok, tok);
         *rest = tok;
+        return ND;
+    }
+
+    if (equal(tok, "goto")) {
+        Node* ND = createNode(ND_GOTO, tok);
+
+        // Q: 为什么这里存入的是 label 而不是 uniqueLabel
+        // A: 不同的函数的跳转标签可能相同  虽然在语法解析没问题  但在 codeGen 部分无法识别  必须全局唯一
+        // 又因为 newUniqueName 每次被调用都会改变  所以不能同时在 goto 和 label 语句中调用
+        ND->gotoLabel = getVarName(tok->next);
+        ND->gotoNext = GOTOs;
+        GOTOs = ND;
+        *rest = skip(tok->next->next, ";");
+        return ND;
+    }
+
+    if (tok->token_kind == TOKEN_IDENT && equal(tok->next, ":")) {
+        Node* ND = createNode(ND_LABEL, tok);
+        ND->gotoLabel = strndup(tok->place, tok->length);
+
+        // 构造在 codeGen 使用的全局唯一跳转标签
+        // 因为 newUniqueName 和 gotoLabel 的差异  所以需要后面的映射
+        ND->gotoUniqueLabel = newUniqueName();
+        // Q: 为什么只解析标签的下一行语句
+        // A: 结合 codeGen 的跳转  按顺序执行跳转到该语句后的所有语句  更新 pc 所以需要至少一条
+        ND->LHS = stamt(rest, tok->next->next);
+
+        ND->gotoNext = Labels;
+        Labels = ND;
         return ND;
     }
 

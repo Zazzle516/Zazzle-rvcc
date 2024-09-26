@@ -251,6 +251,8 @@ typedef enum {
     ND_RETURN,
     ND_IF,
     ND_FOR,
+    ND_GOTO,
+    ND_LABEL,
 } NODE_KIND;
 
 // 根据结点具体的操作类型保存额外数据
@@ -291,6 +293,11 @@ struct Node {
     structMember* structTargetMember;   // commit[49]: 储存结构体访问的成员变量
 
     Token* token;           // 对报错位置的声明支持
+
+// ND_GOTO  ND_LABEL
+    char* gotoLabel;
+    char* gotoUniqueLabel;
+    Node* gotoNext;         // 依赖函数中的 GOTOs 和 Labels 实现
 };
 
 // commit[68]: 将 commit[67] 中 parse 定义的类型转换函数重声明
