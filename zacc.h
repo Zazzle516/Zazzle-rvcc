@@ -157,6 +157,10 @@ Type* enumType(void);
 // commit[27]: 根据数组基类和元素个数定义该数组的元数据
 Type* linerArrayType(Type* arrayBaseType, int arrayElemCount);
 
+// commit[88]: 与其说是针对结构体的前向声明  更多是空结构体的基础面板
+// 对原本通过 calloc() 创建 TY_STRUCT 的抽象
+Type* structBasicDeclType(void);
+
 // 递归性的为节点内的所有节点添加类型
 void addType(Node* ND);
 

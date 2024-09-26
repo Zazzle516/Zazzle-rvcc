@@ -82,6 +82,14 @@ Type* linerArrayType(Type* arrayBaseType, int arrayElemCount) {
     return linerArray;
 }
 
+// commit[88]: 定义空结构体的基础面板
+// 对原本通过 calloc() 创建 TY_STRUCT 的抽象
+Type* structBasicDeclType(void) {
+    // Tip: 因为没有定义所以无法分配空间
+    // Tip: 空结构体语法合法  所以 align 对齐初始化为 1  否则在空结构体测试中  会出现除零异常
+    return newType(TY_STRUCT, 0, 1);
+}
+
 // commit[68]: 针对单返回结果 ND 结点进行判断
 static Type* singleLongType(Type* leftType, Type* rightType) {
     // 针对 LHS 的左指针类型  需要向上传递

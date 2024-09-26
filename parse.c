@@ -1059,6 +1059,10 @@ static Type* structDeclaration(Token** rest, Token* tok) {
     Type* structType = StructOrUnionDecl(rest, tok);
     structType->Kind = TY_STRUCT;
 
+    // commit[88]: 判断是否为前向声明  如果是无法进行后面的计算  返回
+    if (structType->BaseSize < 0)
+        return structType;
+
     // int-char-int => 0-8-9-16-24
     int totalOffset = 0;
     for (structMember* newStructMem = structType->structMemLink; newStructMem; newStructMem = newStructMem->next) {
@@ -1105,34 +1109,46 @@ static Type* StructOrUnionDecl(Token** rest, Token* tok) {
     Token* newTag = NULL;
 
     if (tok->token_kind == TOKEN_IDENT) {
-        // 存在记录结构体标签的 token
         newTag = tok;
         tok = tok->next;
     }
 
     // Tip: 结构体定义和使用结构体标签定义变量是相同的语法前缀  分叉点在 "{"  所以这里进行一次判断
     if ((newTag != NULL) && !equal(tok, "{")) {
-        Type* tagType = findStructTag(newTag);
-        if (tagType == NULL)
-            tokenErrorAt(newTag, "unknown struct type name");
-
+        // 因为判断逻辑的更改  所以移动到上面
         *rest = tok;
+
+        // commit[88]: 支持结构体的前向声明后  修改了这里的判断逻辑
+        // 原本: 判断不存在该 tag 报错  如果存在返回 tag
+        // 现在: 判断不存在要声明该 tag 同时把 BaseSize 更新为 (-1) 无法直接使用
+        Type* tagType = findStructTag(newTag);
+        if (tagType)
+            return tagType;
+
+        tagType = structBasicDeclType();
+        tagType->BaseSize = -1;
+
+        pushTagScopeToScope(newTag, tagType);
         return tagType;
     }
 
-    // 进入这里 说明这是一个结构体定义 "{...}"  分配记录结构体元数据的空间
-    Type* structType = calloc(1, sizeof(Type));
-    // 后面会被具体的 struct | union 覆盖掉  截至 commit[64] 测试都可以
-    structType->Kind = TY_STRUCT;
+    // 进入结构体定义的内部  并分配基础结构体类型  Tip: 这里没有赋值 (-1) 空结构体是合法的
+    tok = skip(tok, "{");
+    Type* structType = structBasicDeclType();
 
-    // 因为空结构体语法合法  所以必须初始化为 1  否则在空结构体测试中  会出现除零异常
-    structMembers(rest, tok->next, structType);
-    structType->alignSize = 1;
+    structMembers(rest, tok, structType);
 
-    // 原本的成员偏移量计算由 structDeclaration() 和 unionDeclaration() 处理
-
-    if (newTag)
+    if (newTag) {
+        // 判断是否是已经前向声明的结构体  进行更新
+        for (TagScope* currTagScope = HEADScope->tagScope; currTagScope; currTagScope = currTagScope->next) {
+            if (equal(newTag, currTagScope->tagName)) {
+                *(currTagScope->tagType) = *structType;
+                return currTagScope->tagType;
+            }
+        }
+        // 如果该结构体不存在前向定义  直接更新
         pushTagScopeToScope(newTag, structType);
+    }
 
     return structType;
 }
