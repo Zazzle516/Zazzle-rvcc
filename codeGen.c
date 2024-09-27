@@ -652,7 +652,7 @@ static void exprGen(Node* AST) {
         if (AST->Cond_Block) {
             printLn("  # while-condition-true");
             calcuGen(AST->Cond_Block);
-            printLn("  beqz a0, .L.end.%d", num);
+            printLn("  beqz a0, %s", AST->BreakLabel);
         }
 
         // 循环体
@@ -668,7 +668,7 @@ static void exprGen(Node* AST) {
 
         // 循环出口
         printLn("\n  # =====循环语句 %d 执行结束========", num);
-        printLn(".L.end.%d:", num);
+        printLn("%s:", AST->BreakLabel);
         return;
     }
 

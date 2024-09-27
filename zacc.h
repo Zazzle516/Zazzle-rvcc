@@ -283,6 +283,7 @@ struct Node {
     Node* Cond_Block;
     Node* For_Init;
     Node* Inc;
+    char* BreakLabel;       // commit[91]: 新增对循环体中 break 的支持
 
 // ND_FUNCALL
     char* FuncName;

@@ -91,6 +91,7 @@ typedef struct {
 //          | "while" "(" expr ")" stamt
 //          | "goto" ident ";"
 //          | ident ":" stamt
+//          | break ";"
 
 // exprStamt = expr? ";"
 // expr = assign
@@ -149,6 +150,11 @@ static Object* currFunc;
 
 // 一个 Scope 就是一个变量生命范围  全局存储的层面转移到 static HEADScope.varScope
 static Scope *HEADScope = &(Scope){};
+
+// commit[91]: 备份上一个代码块中 break 的跳转目标
+// break 语句只能生效在 while | for 的循环体中  针对特定的循环语句可能有多个 break 但是跳转到同一个出口
+// Tip: 无论 break; 在循环体中嵌套多深  一定是跳出最近的循环体  所以和 HEADScope 的层级无关  声明为全局量
+static char* blockBreakLabel;
 
 /* 变量域的操作定义 */
 
@@ -259,7 +265,6 @@ static Object* newGlobal(char* varName, Type* globalVarType) {
 /* 处理函数内的跳转标签 */
 
 // commit[89]: 标签和跳转语句的出现顺序不定  所以在最后进行映射
-// Q: 为什么需要这个映射
 static void resolveGotoLabels(void) {
     for (Node* X = GOTOs; X; X = X->gotoNext) {
         for (Node* Y = Labels; Y; Y = Y->gotoNext) {
@@ -1244,7 +1249,12 @@ static Node* stamt(Token** rest, Token* tok) {
         Node* ND = createNode(ND_FOR, tok);
         tok = skip(tok->next, "(");
 
+        // commit[91]: 进入新循环代码块后记录外层的 break 跳转位置
+        // 并且针对该层循环只有一个跳转出口  使用 unqiue 在汇编部分进行全局唯一
+        // Tip: 即使只有一行的 for 语句  也有自己的生命范围
         enterScope();
+        char* forBreakLabel = blockBreakLabel;
+        blockBreakLabel = ND->BreakLabel = newUniqueName(); // 不一定真的有 break  只是作为这段 for 循环的属性
 
         if (isTypeName(tok)) {
             Type* Basetype = declspec(&tok, tok, NULL);
@@ -1269,7 +1279,9 @@ static Node* stamt(Token** rest, Token* tok) {
 
         ND->If_BLOCK = stamt(&tok, tok);
 
+        // commit[91]: 恢复到外层循环
         leaveScope();
+        blockBreakLabel = forBreakLabel;
 
         *rest = tok;
         return ND;
@@ -1285,7 +1297,13 @@ static Node* stamt(Token** rest, Token* tok) {
         tok = skip(tok, ")");
         *rest = tok;
 
+        char* whileBreakLabel = blockBreakLabel;
+        blockBreakLabel = ND->BreakLabel = newUniqueName();
+
         ND->If_BLOCK = stamt(&tok, tok);
+
+        blockBreakLabel = whileBreakLabel;
+
         *rest = tok;
         return ND;
     }
@@ -1316,6 +1334,20 @@ static Node* stamt(Token** rest, Token* tok) {
 
         ND->gotoNext = Labels;
         Labels = ND;
+        return ND;
+    }
+
+    if (equal(tok, "break")) {
+        // commit[91]: 把该代码块的 break 出口赋值给该 break
+        if (!blockBreakLabel)
+            // 判断是否是针对循环代码块的合法性
+            tokenErrorAt(tok, "stray break");
+
+        // 出现了真正的 break 语句  结合汇编赋值的是 gotoUniquelabel 而不是 BreakLabel
+        Node* ND = createNode(ND_GOTO, tok);
+        ND->gotoUniqueLabel = blockBreakLabel;
+
+        *rest = skip(tok->next, ";");
         return ND;
     }
 
