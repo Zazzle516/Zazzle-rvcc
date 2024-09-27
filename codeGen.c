@@ -636,6 +636,7 @@ static void exprGen(Node* AST) {
     case ND_FOR:
     {
         // 汇编的循环本质是通过 if-stamt + goto 实现
+        // 从逻辑上看循环是线性的  但是汇编需要同时表示所有的可能性
         int num = count();
         printLn("\n# =====循环语句 %d ===============", num);
 
@@ -658,6 +659,8 @@ static void exprGen(Node* AST) {
         // 循环体
         exprGen(AST->If_BLOCK);
 
+        // commit[92]: 新增 continue 的跳转声明  如果有 continue 直接跳到这里继续循环
+        printLn("%s:", AST->ContinueLabel);
         // 处理循环变量 后续 goto .L.begin 判断是否继续
         if (AST->Inc) {
             printLn("  # while-increase");

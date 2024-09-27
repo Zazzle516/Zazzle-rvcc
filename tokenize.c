@@ -90,7 +90,7 @@ void charErrorAt(char* place, char* FMT, ...) {
 // 关键字声明
 static bool isKeyWords(Token* input) {
     static char* keywords[] = {"if", "else", "return", "for", "while","sizeof", "static", "goto",
-                                "break",
+                                "break", "continue",
                                 "char", "struct", "union", "_Bool", "enum",
                                 "long", "short", "void", "typedef", "int"
                             };

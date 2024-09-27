@@ -92,6 +92,7 @@ typedef struct {
 //          | "goto" ident ";"
 //          | ident ":" stamt
 //          | break ";"
+//          | continue ";"
 
 // exprStamt = expr? ";"
 // expr = assign
@@ -155,6 +156,10 @@ static Scope *HEADScope = &(Scope){};
 // break 语句只能生效在 while | for 的循环体中  针对特定的循环语句可能有多个 break 但是跳转到同一个出口
 // Tip: 无论 break; 在循环体中嵌套多深  一定是跳出最近的循环体  所以和 HEADScope 的层级无关  声明为全局量
 static char* blockBreakLabel;
+
+// commit[92]: 同理支持 continue 跳过后面表达式进入下一次循环
+// 和 break 的区别在于保存的断点不同 => 汇编代码调用的位置不同  parse 基本一致
+static char* blockContinueLabel;
 
 /* 变量域的操作定义 */
 
@@ -1256,6 +1261,9 @@ static Node* stamt(Token** rest, Token* tok) {
         char* forBreakLabel = blockBreakLabel;
         blockBreakLabel = ND->BreakLabel = newUniqueName(); // 不一定真的有 break  只是作为这段 for 循环的属性
 
+        char* forContinueLabel = blockContinueLabel;
+        blockContinueLabel = ND->ContinueLabel = newUniqueName();
+
         if (isTypeName(tok)) {
             Type* Basetype = declspec(&tok, tok, NULL);
             ND->For_Init = declaration(&tok, tok, Basetype);
@@ -1282,6 +1290,7 @@ static Node* stamt(Token** rest, Token* tok) {
         // commit[91]: 恢复到外层循环
         leaveScope();
         blockBreakLabel = forBreakLabel;
+        blockContinueLabel = forContinueLabel;
 
         *rest = tok;
         return ND;
@@ -1300,9 +1309,13 @@ static Node* stamt(Token** rest, Token* tok) {
         char* whileBreakLabel = blockBreakLabel;
         blockBreakLabel = ND->BreakLabel = newUniqueName();
 
+        char* whileContinueLabel = blockContinueLabel;
+        blockContinueLabel = ND->ContinueLabel = newUniqueName();
+
         ND->If_BLOCK = stamt(&tok, tok);
 
         blockBreakLabel = whileBreakLabel;
+        blockContinueLabel = whileContinueLabel;
 
         *rest = tok;
         return ND;
@@ -1346,6 +1359,17 @@ static Node* stamt(Token** rest, Token* tok) {
         // 出现了真正的 break 语句  结合汇编赋值的是 gotoUniquelabel 而不是 BreakLabel
         Node* ND = createNode(ND_GOTO, tok);
         ND->gotoUniqueLabel = blockBreakLabel;
+
+        *rest = skip(tok->next, ";");
+        return ND;
+    }
+
+    if (equal(tok, "continue")) {
+        if (!blockContinueLabel)
+            tokenErrorAt(tok, "not a loop to use continue");
+        
+        Node* ND = createNode(ND_GOTO, tok);
+        ND->gotoUniqueLabel = blockContinueLabel;
 
         *rest = skip(tok->next, ";");
         return ND;
