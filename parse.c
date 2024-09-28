@@ -102,7 +102,9 @@ typedef struct {
 
 // commit[77]: 支持简化运算符 += -= ...
 // assign = logOr (assignOp assign)?
-// assignOp = "=" | "+=" | "-=" | "*=" | "/=" | "%=" | "&=" | "^=" | "|="
+
+// commit[94]: 支持左移等和右移等
+// assignOp = "=" | "+=" | "-=" | "*=" | "/=" | "%=" | "&=" | "^=" | "|=" | "<<=" | ">>="
 
 // commit[85]: 支持逻辑与或运算
 // logOr = logAnd ("||" logAnd)*
@@ -114,7 +116,10 @@ typedef struct {
 // bitAnd = equality ("&" equality)*
 
 // equality = relation op relation                      op = (!= | ==)
-// relation = first_class_expr op first_class_expr      op = (>= | > | < | <=)
+
+// commit[94]: 移位运算作为一层语法结构
+// relation = shift_expr (op shift_expr)*     op = (>= | > | < | <=)
+// shift_expr = first_class_expr ("<<" first_class_expr | ">>" first_class_expr)*
 // first_class_expr = second_class_expr (+|- second_class_expr)*
 
 // commit[67]: 支持强制类型转换
@@ -373,6 +378,7 @@ static Node* bitAnd(Token** rest, Token* tok);
 
 static Node* equality_expr(Token** rest, Token* tok);
 static Node* relation_expr(Token** rest, Token* tok);
+static Node* shift_expr(Token** rest, Token* tok);
 static Node* first_class_expr(Token** rest, Token* tok);
 
 static Node* second_class_expr(Token** rest, Token* tok);
@@ -1549,6 +1555,14 @@ static Node* assign(Token** rest, Token* tok) {
         return toAssign(createAST(ND_BITOR, ND, assign(rest, tok->next), tok));
     }
 
+    if (equal(tok, ">>=")) {
+        return toAssign(createAST(ND_SHR, ND, assign(rest, tok->next), tok));
+    }
+
+    if (equal(tok, "<<=")) {
+        return toAssign(createAST(ND_SHL, ND, assign(rest, tok->next), tok));
+    }
+
     *rest = tok;
     return ND;
 }
@@ -1637,28 +1651,51 @@ static Node* equality_expr(Token** rest, Token* tok) {
 
 // 大小判断
 static Node* relation_expr(Token** rest, Token* tok) {
-    Node* ND = first_class_expr(&tok, tok);
+    Node* ND = shift_expr(&tok, tok);
 
     while(true) {
         Token* start = tok;
         
         if (equal(tok, ">=")) {
-            ND = createAST(ND_GE, ND, first_class_expr(&tok, tok->next), start);
+            ND = createAST(ND_GE, ND, shift_expr(&tok, tok->next), start);
             continue;
         }
 
         if (equal(tok, "<=")) {
-            ND = createAST(ND_LE, ND, first_class_expr(&tok, tok->next), start);
+            ND = createAST(ND_LE, ND, shift_expr(&tok, tok->next), start);
             continue;
         }
 
         if (equal(tok, "<")) {
-            ND = createAST(ND_LT, ND, first_class_expr(&tok, tok->next), start);
+            ND = createAST(ND_LT, ND, shift_expr(&tok, tok->next), start);
             continue;
         }
 
         if (equal(tok, ">")) {
-            ND = createAST(ND_GT, ND, first_class_expr(&tok, tok->next), start);
+            ND = createAST(ND_GT, ND, shift_expr(&tok, tok->next), start);
+            continue;
+        }
+
+        *rest = tok;
+        return ND;
+    }
+}
+
+// 移位运算
+static Node* shift_expr(Token** rest, Token* tok) {
+    Node* ND = first_class_expr(&tok, tok);
+
+    while (true) {
+        Token* start = tok;
+
+        if (equal(tok, ">>")) {
+            // 为什么不是调用自己  因为左移右移是可以连续使用的
+            ND = createAST(ND_SHR, ND, first_class_expr(&tok, tok->next), start);
+            continue;
+        }
+
+        if (equal(tok, "<<")) {
+            ND = createAST(ND_SHL, ND, first_class_expr(&tok, tok->next), start);
             continue;
         }
 

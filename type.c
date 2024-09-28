@@ -219,6 +219,8 @@ void addType(Node* ND) {
     }
 
     case ND_BITNOT:
+    case ND_SHL:
+    case ND_SHR:
     {
         ND->node_type = ND->LHS->node_type;
         return;

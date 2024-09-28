@@ -563,7 +563,21 @@ static void calcuGen(Node* AST) {
         printLn("  sgt a0, a0, a1");
         printLn("  xori a0, a0, 1");
         return;
-    
+
+    case ND_SHL:
+    {
+        printLn("  # a0 逻辑左移 a1 比特");
+        printLn("  sll%s a0, a0, a1", Suffix);
+        return;
+    }
+
+    case ND_SHR:
+    {
+        printLn("  # a0 算数右移 a1 比特");
+        printLn("  sra%s a0, a0, a1", Suffix);
+        return;
+    }
+
     default:
         // errorHint("invalid expr\n");
         tokenErrorAt(AST->token, "invalid expr\n");

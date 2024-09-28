@@ -243,6 +243,9 @@ typedef enum {
 
     ND_TYPE_CAST,               // commit[67]: 支持强制类型转换
 
+    ND_SHL,                     // shift left 左移运算
+    ND_SHR,
+
 // TOKEN_IDENT—————————读写变量
     ND_VAR,
     ND_FUNCALL,                 // 需要结合符号一起判断
