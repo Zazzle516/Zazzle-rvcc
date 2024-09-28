@@ -93,6 +93,9 @@ typedef struct {
 //          | ident ":" stamt
 //          | break ";"
 //          | continue ";"
+//          | "switch" "(" expr ")" stamt       // 通过 stamt 构造代码块范围
+//          | "case" num ":" stamt
+//          | "default" ":" stamt
 
 // exprStamt = expr? ";"
 // expr = assign
@@ -153,13 +156,18 @@ static Object* currFunc;
 static Scope *HEADScope = &(Scope){};
 
 // commit[91]: 备份上一个代码块中 break 的跳转目标
-// break 语句只能生效在 while | for 的循环体中  针对特定的循环语句可能有多个 break 但是跳转到同一个出口
-// Tip: 无论 break; 在循环体中嵌套多深  一定是跳出最近的循环体  所以和 HEADScope 的层级无关  声明为全局量
+// Tip: 无论 break; 在代码块中嵌套多深  一定是跳出最近的循环体  所以和 HEADScope 的层级无关
+// 通过该全局量进行通信
 static char* blockBreakLabel;
 
 // commit[92]: 同理支持 continue 跳过后面表达式进入下一次循环
 // 和 break 的区别在于保存的断点不同 => 汇编代码调用的位置不同  parse 基本一致
+// 在循环条件的运算前打上标签  可以让 continue; 翻译的 GOTO 跳转
 static char* blockContinueLabel;
+
+// commit[93]: 因为 switchCase 的解析跨语法层次(函数)  所以需要在不同的调用层次中通信
+// 全局变量作为一种通信方式存在
+static Node* blockSwitch;
 
 /* 变量域的操作定义 */
 
@@ -1335,6 +1343,8 @@ static Node* stamt(Token** rest, Token* tok) {
     }
 
     if (tok->token_kind == TOKEN_IDENT && equal(tok->next, ":")) {
+        // Tip: 这里的 TOKEN_IDENT 可以体现出 tokenize() 中 KEYWORD 的重要性
+        // 否则会把 "case:" "default:" 也判断到这个分支
         Node* ND = createNode(ND_LABEL, tok);
         ND->gotoLabel = strndup(tok->place, tok->length);
 
@@ -1351,12 +1361,11 @@ static Node* stamt(Token** rest, Token* tok) {
     }
 
     if (equal(tok, "break")) {
-        // commit[91]: 把该代码块的 break 出口赋值给该 break
         if (!blockBreakLabel)
-            // 判断是否是针对循环代码块的合法性
+            // 判断被定义的 break 出口是否存在  switch | for | while
             tokenErrorAt(tok, "stray break");
 
-        // 出现了真正的 break 语句  结合汇编赋值的是 gotoUniquelabel 而不是 BreakLabel
+        // 结合汇编跳转的是 gotoUniquelabel 全局唯一而不是 BreakLabel
         Node* ND = createNode(ND_GOTO, tok);
         ND->gotoUniqueLabel = blockBreakLabel;
 
@@ -1372,6 +1381,70 @@ static Node* stamt(Token** rest, Token* tok) {
         ND->gotoUniqueLabel = blockContinueLabel;
 
         *rest = skip(tok->next, ";");
+        return ND;
+    }
+
+    if (equal(tok, "switch")) {
+        Node* ND = createNode(ND_SWITCH, tok);
+
+        tok = skip(tok->next, "(");
+        ND->Cond_Block = expr(&tok, tok);
+        tok = skip(tok, ")");
+
+        // 因为 case 语句的解析是通过 stamt 递归判断的  如果后面的 case 想要判断的话
+        Node* outterSwitch = blockSwitch;   // 没办法通过传参的方式  就通过这种全局的方式来实现
+        blockSwitch = ND;
+
+        // 定义当前 switchNode 所有 break 出口
+        char* switchBreak = blockBreakLabel;
+        blockBreakLabel = ND->BreakLabel = newUniqueName(); // 同时赋值给两个内容  全局 break 还有 switch break
+
+        // 链表存储所有 case 语句
+        ND->If_BLOCK = stamt(rest, tok);
+
+        blockSwitch = outterSwitch;
+        blockBreakLabel = switchBreak;
+        return ND;
+    }
+
+    if (equal(tok, "case")) {
+        // Tip: case 语句有强顺序的特点  汇编必须和用户的 case 顺序保持一致
+        // 因为 AST 是自底向上解析  所以使用头插法  同时 break 由 GOTO 实现来完成 case 的连贯执行
+        if (!blockSwitch)
+            // switch 本身跳转些属性都被 switch 包裹了  只要判断 switch 存在就可以
+            tokenErrorAt(tok, "stray case");
+
+        int caseVal = getArrayNumber(tok->next);
+        Node* ND = createNode(ND_CASE, tok);
+        tok = skip(tok->next->next, ":");
+
+        // 定义 switch 判断的跳转标签
+        // Q: 为什么不定义 unqiquelabel
+        // A: 应该都可以  只不过需要同步修改
+        ND->gotoUniqueLabel = newUniqueName(); 
+        ND->LHS = stamt(rest, tok);
+
+        // 头插法  同时完成 case 语句到 switch
+        ND->val = caseVal;
+        ND->caseNext = blockSwitch->caseNext;
+        blockSwitch->caseNext = ND;
+
+        return ND;
+    }
+
+    if (equal(tok, "default")) {
+        // 作为一种特殊的 case 语句实现  default 也可以成为 switch 的第一个分支
+        // 并没有隐含的 break 直接跳出 switch
+        if (!blockSwitch)
+            tokenErrorAt(tok, "stray default");
+
+        Node* ND = createNode(ND_CASE, tok);
+        tok = skip(tok->next, ":");
+        ND->gotoUniqueLabel = newUniqueName();
+
+        ND->LHS = stamt(rest, tok);
+
+        blockSwitch->defaultCase = ND;
         return ND;
     }
 

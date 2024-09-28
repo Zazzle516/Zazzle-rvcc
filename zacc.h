@@ -253,6 +253,8 @@ typedef enum {
     ND_FOR,
     ND_GOTO,
     ND_LABEL,
+    ND_SWITCH,
+    ND_CASE,                    // default 作为一种特殊 case
 } NODE_KIND;
 
 // 根据结点具体的操作类型保存额外数据
@@ -285,6 +287,10 @@ struct Node {
     Node* Inc;
     char* BreakLabel;       // commit[91]: 新增对循环体中 break 的支持
     char* ContinueLabel;    // commit[92]: 新增对循环体中 continue 支持
+
+// ND_SWITCH | ND_CASE
+    Node* caseNext;         // 针对当前的 switch 所有的 case 语句作为链表存储
+    Node* defaultCase;      // default 作为特殊的 case 语句存在
 
 // ND_FUNCALL
     char* FuncName;

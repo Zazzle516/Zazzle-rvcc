@@ -688,6 +688,44 @@ static void exprGen(Node* AST) {
         return;
     }
 
+    case ND_SWITCH:
+    {
+        printLn("\n# ==== switch ====");
+        calcuGen(AST->Cond_Block);
+
+        // clang 会在 -O2 级别的优化中对 switchCase 进行优化  1.链表跳表  2.二分查找  3.遍历
+        printLn("  # 遍历所有的 case 标签 根据比较结果进行跳转");
+        for (Node* ND = AST->caseNext; ND; ND = ND->caseNext) {
+            // 
+            printLn("  li t0, %ld", ND->val);
+            printLn("  beq a0, t0, %s", ND->gotoUniqueLabel);
+        }
+
+        if (AST->defaultCase) {
+            // 如果顺序执行到这里  说明前面的 case 都不匹配  则执行 default
+            printLn("  # 无匹配则跳转 Default 执行");
+            printLn("  j %s", AST->defaultCase->gotoUniqueLabel);
+        }
+
+        printLn("  # 结束当前的 switch 执行  通过 break 跳转");
+        printLn("  j %s", AST->BreakLabel);
+
+        // 遍历所有的 ND_CASE 语句
+        exprGen(AST->If_BLOCK);
+
+        printLn("  # 声明当前 switch 的跳转出口");
+        printLn("%s:", AST->BreakLabel);
+        return;
+    }
+
+    case ND_CASE:
+    {
+        printLn("# case %ld 标签", AST->val);
+        printLn("%s:", AST->gotoUniqueLabel);
+        exprGen(AST->LHS);
+        return;
+    }
+
     default:
         break;
     }
