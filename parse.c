@@ -1391,19 +1391,22 @@ static Node* stamt(Token** rest, Token* tok) {
         ND->Cond_Block = expr(&tok, tok);
         tok = skip(tok, ")");
 
-        // 因为 case 语句的解析是通过 stamt 递归判断的  如果后面的 case 想要判断的话
-        Node* outterSwitch = blockSwitch;   // 没办法通过传参的方式  就通过这种全局的方式来实现
+        // case1: 保存可能的外层 switch 结点
+        // case2: 把当前的 switchNode 注册到全局的通信量中
+        Node* msgSwitch = blockSwitch;
         blockSwitch = ND;
 
-        // 定义当前 switchNode 所有 break 出口
+        // case1: 保存可能的外层 break 出口
+        // case2: 定义当前 switchNode 所有 break 出口  因为 newUniqueName() 的特殊性必须同时赋值
         char* switchBreak = blockBreakLabel;
-        blockBreakLabel = ND->BreakLabel = newUniqueName(); // 同时赋值给两个内容  全局 break 还有 switch break
+        blockBreakLabel = ND->BreakLabel = newUniqueName();
 
         // 链表存储所有 case 语句
         ND->If_BLOCK = stamt(rest, tok);
 
-        blockSwitch = outterSwitch;
+        blockSwitch = msgSwitch;
         blockBreakLabel = switchBreak;
+
         return ND;
     }
 
@@ -1419,9 +1422,8 @@ static Node* stamt(Token** rest, Token* tok) {
         tok = skip(tok->next->next, ":");
 
         // 定义 switch 判断的跳转标签
-        // Q: 为什么不定义 unqiquelabel
-        // A: 应该都可以  只不过需要同步修改
-        ND->gotoUniqueLabel = newUniqueName(); 
+        // Q: 为什么不定义 Node.gotoUniqueLabel   A: 都可以  只不过需要同步修改
+        ND->gotoLabel = newUniqueName(); 
         ND->LHS = stamt(rest, tok);
 
         // 头插法  同时完成 case 语句到 switch
@@ -1440,7 +1442,7 @@ static Node* stamt(Token** rest, Token* tok) {
 
         Node* ND = createNode(ND_CASE, tok);
         tok = skip(tok->next, ":");
-        ND->gotoUniqueLabel = newUniqueName();
+        ND->gotoLabel = newUniqueName();
 
         ND->LHS = stamt(rest, tok);
 

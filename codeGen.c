@@ -698,13 +698,13 @@ static void exprGen(Node* AST) {
         for (Node* ND = AST->caseNext; ND; ND = ND->caseNext) {
             // 
             printLn("  li t0, %ld", ND->val);
-            printLn("  beq a0, t0, %s", ND->gotoUniqueLabel);
+            printLn("  beq a0, t0, %s", ND->gotoLabel);
         }
 
         if (AST->defaultCase) {
             // 如果顺序执行到这里  说明前面的 case 都不匹配  则执行 default
             printLn("  # 无匹配则跳转 Default 执行");
-            printLn("  j %s", AST->defaultCase->gotoUniqueLabel);
+            printLn("  j %s", AST->defaultCase->gotoLabel);
         }
 
         printLn("  # 结束当前的 switch 执行  通过 break 跳转");
@@ -721,7 +721,7 @@ static void exprGen(Node* AST) {
     case ND_CASE:
     {
         printLn("# case %ld 标签", AST->val);
-        printLn("%s:", AST->gotoUniqueLabel);
+        printLn("%s:", AST->gotoLabel);
         exprGen(AST->LHS);
         return;
     }
