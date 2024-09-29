@@ -226,6 +226,19 @@ void addType(Node* ND) {
         return;
     }
 
+    case ND_TERNARY:
+    {
+        if (ND->If_BLOCK->node_type->Kind == TY_VOID || ND->Else_BLOCK->node_type->Kind == TY_VOID) {
+            // commit[95]: 标准的 C 编译器不支持 void 赋值  目前没有合法判断
+            ND->node_type = TYVOID_GLOBAL;
+            return;
+        }
+        
+        usualArithConv(&ND->If_BLOCK, &ND->Else_BLOCK);
+        ND->node_type = ND->If_BLOCK->node_type;
+        return;
+    }
+
     case ND_FUNCALL:
     {
         // commit[71]: 把 FUNCALL 函数调用结点更新为被调用函数定义的返回类型

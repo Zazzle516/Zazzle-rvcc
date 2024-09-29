@@ -246,6 +246,8 @@ typedef enum {
     ND_SHL,                     // shift left 左移运算
     ND_SHR,
 
+    ND_TERNARY,                 // commit[95]: 三目运算符
+
 // TOKEN_IDENT—————————读写变量
     ND_VAR,
     ND_FUNCALL,                 // 需要结合符号一起判断

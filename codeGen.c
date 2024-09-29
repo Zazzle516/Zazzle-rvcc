@@ -441,6 +441,24 @@ static void calcuGen(Node* AST) {
         return;
     }
 
+    case ND_TERNARY:
+    {
+        // 默认执行 IF_BLOCK 为 ELSE_BLOCK 添加跳转标签
+        int C = count();
+        printLn("\n# ==== 三目运算符 %d ====", C);
+
+        calcuGen(AST->Cond_Block);
+        printLn("  beqz a0, .L.else.%d", C);
+
+        calcuGen(AST->If_BLOCK);
+        printLn("  j .L.end.%d", C);
+
+        printLn(".L.else.%d:", C);
+        calcuGen(AST->Else_BLOCK);
+        printLn(".L.end.%d:", C);
+        return;
+    }
+
     // Tip: 编译器无法预测执行结果  需要把所有可能性的汇编都翻译出来
     // 所以一段汇编程序不一定所有汇编语句都执行
     // commit[84]: 只是模拟了短路运算  并没有进行真正的优化  即使是 (0 && 0 && 0) 也是两段输出

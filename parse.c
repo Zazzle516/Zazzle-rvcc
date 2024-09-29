@@ -101,7 +101,10 @@ typedef struct {
 // expr = assign
 
 // commit[77]: 支持简化运算符 += -= ...
-// assign = logOr (assignOp assign)?
+// assign = ternaryExpr (assignOp assign)?
+
+// commit[95]: 支持三目运算符  Tip: 优先级比赋值高
+// ternaryExpr = logOr ("?" expr ":" ternaryExpr)?
 
 // commit[94]: 支持左移等和右移等
 // assignOp = "=" | "+=" | "-=" | "*=" | "/=" | "%=" | "&=" | "^=" | "|=" | "<<=" | ">>="
@@ -368,6 +371,7 @@ static Node* expr(Token** rest, Token* tok);
 
 static Node* toAssign(Node* Binary);
 static Node* assign(Token** rest, Token* tok);
+static Node* ternaryExpr(Token** rest, Token* tok);
 
 static Node* logOr(Token** rest, Token* tok);
 static Node* logAnd(Token** rest, Token* tok);
@@ -903,6 +907,8 @@ static Object* newStringLiteral(char* strContent, Type* strType) {
     return strObj;
 }
 
+/* 结构体处理 */
+
 // commit[49]: 以链表的形式存储所有成员变量
 static void structMembers(Token** rest, Token* tok, Type* structType) {
     structMember HEAD = {};
@@ -935,6 +941,105 @@ static void structMembers(Token** rest, Token* tok, Type* structType) {
 
     *rest = tok->next;
     structType->structMemLink = HEAD.next;
+}
+
+// commit[50]: 新增结构体的对齐
+static Type* structDeclaration(Token** rest, Token* tok) {
+    Type* structType = StructOrUnionDecl(rest, tok);
+    structType->Kind = TY_STRUCT;
+
+    // commit[88]: 判断是否为前向声明  如果是无法进行后面的计算  返回
+    if (structType->BaseSize < 0)
+        return structType;
+
+    // int-char-int => 0-8-9-16-24
+    int totalOffset = 0;
+    for (structMember* newStructMem = structType->structMemLink; newStructMem; newStructMem = newStructMem->next) {
+        // 确定当前变量的起始位置  判断是否会对齐  => 判断 realTotal 是否为 aimAlign 的倍数
+        totalOffset = alignTo(totalOffset, newStructMem->memberType->alignSize);
+        newStructMem->offset = totalOffset;
+
+        // 为下一个变量计算起始位置准备
+        // commit[86]: 在更新空数组定义后  累加偏移量会出现 bug  起始成员的 BaseSize 会覆盖多个空数组定义
+        totalOffset += newStructMem->memberType->BaseSize;
+
+        // 判断是否更新结构体对齐最大值  本质上 structType->alignSize = maxSingleOffset
+        if (structType->alignSize < newStructMem->memberType->alignSize)
+            structType->alignSize = newStructMem->memberType->alignSize;
+    }
+
+    // 比如 int-char 这种情况  最后的 char 也要单独留出 8B 否则 9B 中另外的 7B 读取会出问题
+    structType->BaseSize = alignTo(totalOffset, structType->alignSize);
+
+    return structType;
+}
+
+// commit[54]: 针对 union 的偏移量计算
+static Type* unionDeclaration(Token** rest, Token* tok) {
+    Type* unionType = StructOrUnionDecl(rest, tok);
+    unionType->Kind = TY_UNION;
+
+    // union 的偏移量设置为成员中最大的  并且由于空间共用  所有成员的偏移量都是 0
+    for (structMember* newUnionMem = unionType->structMemLink; newUnionMem; newUnionMem = newUnionMem->next) {
+        if (unionType->alignSize < newUnionMem->memberType->alignSize)
+            unionType->alignSize = newUnionMem->memberType->alignSize;
+
+        if (unionType->BaseSize < newUnionMem->memberType->BaseSize)
+            unionType->BaseSize = newUnionMem->memberType->BaseSize;
+    }
+
+    unionType->BaseSize = alignTo(unionType->BaseSize, unionType->alignSize);
+
+    return unionType;
+}
+
+// commit[54]: 基于 union 和 struct 共同的语法结构复用
+static Type* StructOrUnionDecl(Token** rest, Token* tok) {
+    Token* newTag = NULL;
+
+    if (tok->token_kind == TOKEN_IDENT) {
+        newTag = tok;
+        tok = tok->next;
+    }
+
+    // Tip: 结构体定义和使用结构体标签定义变量是相同的语法前缀  分叉点在 "{"  所以这里进行一次判断
+    if ((newTag != NULL) && !equal(tok, "{")) {
+        // 因为判断逻辑的更改  所以移动到上面
+        *rest = tok;
+
+        // commit[88]: 支持结构体的前向声明后  修改了这里的判断逻辑
+        // 原本: 判断不存在该 tag 报错  如果存在返回 tag
+        // 现在: 判断不存在要声明该 tag 同时把 BaseSize 更新为 (-1) 无法直接使用
+        Type* tagType = findStructTag(newTag);
+        if (tagType)
+            return tagType;
+
+        tagType = structBasicDeclType();
+        tagType->BaseSize = -1;
+
+        pushTagScopeToScope(newTag, tagType);
+        return tagType;
+    }
+
+    // 进入结构体定义的内部  并分配基础结构体类型  Tip: 这里没有赋值 (-1) 空结构体是合法的
+    tok = skip(tok, "{");
+    Type* structType = structBasicDeclType();
+
+    structMembers(rest, tok, structType);
+
+    if (newTag) {
+        // 判断是否是已经前向声明的结构体  进行更新
+        for (TagScope* currTagScope = HEADScope->tagScope; currTagScope; currTagScope = currTagScope->next) {
+            if (equal(newTag, currTagScope->tagName)) {
+                *(currTagScope->tagType) = *structType;
+                return currTagScope->tagType;
+            }
+        }
+        // 如果该结构体不存在前向定义  直接更新
+        pushTagScopeToScope(newTag, structType);
+    }
+
+    return structType;
 }
 
 /* 语法规则的递归解析 */
@@ -1107,105 +1212,6 @@ static Node* declaration(Token** rest, Token* tok, Type* BaseType) {
     multi_declara->Body = HEAD.next;
     *rest = tok->next;
     return multi_declara;
-}
-
-// commit[50]: 新增结构体的对齐
-static Type* structDeclaration(Token** rest, Token* tok) {
-    Type* structType = StructOrUnionDecl(rest, tok);
-    structType->Kind = TY_STRUCT;
-
-    // commit[88]: 判断是否为前向声明  如果是无法进行后面的计算  返回
-    if (structType->BaseSize < 0)
-        return structType;
-
-    // int-char-int => 0-8-9-16-24
-    int totalOffset = 0;
-    for (structMember* newStructMem = structType->structMemLink; newStructMem; newStructMem = newStructMem->next) {
-        // 确定当前变量的起始位置  判断是否会对齐  => 判断 realTotal 是否为 aimAlign 的倍数
-        totalOffset = alignTo(totalOffset, newStructMem->memberType->alignSize);
-        newStructMem->offset = totalOffset;
-
-        // 为下一个变量计算起始位置准备
-        // commit[86]: 在更新空数组定义后  累加偏移量会出现 bug  起始成员的 BaseSize 会覆盖多个空数组定义
-        totalOffset += newStructMem->memberType->BaseSize;
-
-        // 判断是否更新结构体对齐最大值  本质上 structType->alignSize = maxSingleOffset
-        if (structType->alignSize < newStructMem->memberType->alignSize)
-            structType->alignSize = newStructMem->memberType->alignSize;
-    }
-
-    // 比如 int-char 这种情况  最后的 char 也要单独留出 8B 否则 9B 中另外的 7B 读取会出问题
-    structType->BaseSize = alignTo(totalOffset, structType->alignSize);
-
-    return structType;
-}
-
-// commit[54]: 针对 union 的偏移量计算
-static Type* unionDeclaration(Token** rest, Token* tok) {
-    Type* unionType = StructOrUnionDecl(rest, tok);
-    unionType->Kind = TY_UNION;
-
-    // union 的偏移量设置为成员中最大的  并且由于空间共用  所有成员的偏移量都是 0
-    for (structMember* newUnionMem = unionType->structMemLink; newUnionMem; newUnionMem = newUnionMem->next) {
-        if (unionType->alignSize < newUnionMem->memberType->alignSize)
-            unionType->alignSize = newUnionMem->memberType->alignSize;
-
-        if (unionType->BaseSize < newUnionMem->memberType->BaseSize)
-            unionType->BaseSize = newUnionMem->memberType->BaseSize;
-    }
-
-    unionType->BaseSize = alignTo(unionType->BaseSize, unionType->alignSize);
-
-    return unionType;
-}
-
-// commit[54]: 基于 union 和 struct 共同的语法结构复用
-static Type* StructOrUnionDecl(Token** rest, Token* tok) {
-    Token* newTag = NULL;
-
-    if (tok->token_kind == TOKEN_IDENT) {
-        newTag = tok;
-        tok = tok->next;
-    }
-
-    // Tip: 结构体定义和使用结构体标签定义变量是相同的语法前缀  分叉点在 "{"  所以这里进行一次判断
-    if ((newTag != NULL) && !equal(tok, "{")) {
-        // 因为判断逻辑的更改  所以移动到上面
-        *rest = tok;
-
-        // commit[88]: 支持结构体的前向声明后  修改了这里的判断逻辑
-        // 原本: 判断不存在该 tag 报错  如果存在返回 tag
-        // 现在: 判断不存在要声明该 tag 同时把 BaseSize 更新为 (-1) 无法直接使用
-        Type* tagType = findStructTag(newTag);
-        if (tagType)
-            return tagType;
-
-        tagType = structBasicDeclType();
-        tagType->BaseSize = -1;
-
-        pushTagScopeToScope(newTag, tagType);
-        return tagType;
-    }
-
-    // 进入结构体定义的内部  并分配基础结构体类型  Tip: 这里没有赋值 (-1) 空结构体是合法的
-    tok = skip(tok, "{");
-    Type* structType = structBasicDeclType();
-
-    structMembers(rest, tok, structType);
-
-    if (newTag) {
-        // 判断是否是已经前向声明的结构体  进行更新
-        for (TagScope* currTagScope = HEADScope->tagScope; currTagScope; currTagScope = currTagScope->next) {
-            if (equal(newTag, currTagScope->tagName)) {
-                *(currTagScope->tagType) = *structType;
-                return currTagScope->tagType;
-            }
-        }
-        // 如果该结构体不存在前向定义  直接更新
-        pushTagScopeToScope(newTag, structType);
-    }
-
-    return structType;
 }
 
 // 构造访问 结构体 | 联合体 成员的 AST
@@ -1516,11 +1522,11 @@ static Node* toAssign(Node* Binary) {
 
 // 赋值语句
 static Node* assign(Token** rest, Token* tok) {
-    Node* ND = logOr(&tok, tok);
+    Node* ND = ternaryExpr(&tok, tok);
 
-    // 支持类似于 'a = b = 1;' 这样的递归性赋值
+    // 支持类似于 '= b = 1;' 这样的递归性赋值
     if (equal(tok, "=")) {
-        ND = createAST(ND_ASSIGN, ND, assign(&tok, tok->next), tok);
+        return ND = createAST(ND_ASSIGN, ND, assign(rest, tok->next), tok);
     }
 
     if (equal(tok, "+=")) {
@@ -1564,6 +1570,28 @@ static Node* assign(Token** rest, Token* tok) {
     }
 
     *rest = tok;
+    return ND;
+}
+
+// commit[95]: 判断三目运算符是否存在以及解析  A ? B : C
+static Node* ternaryExpr(Token** rest, Token* tok) {
+    Node* ternaryCond = logOr(&tok, tok);
+
+    if (!equal(tok, "?")) {
+        *rest = tok;
+        return ternaryCond;
+    }
+
+    Node* ND = createNode(ND_TERNARY, tok);
+    ND->Cond_Block = ternaryCond;
+
+    ND->If_BLOCK = expr(&tok, tok->next);
+    tok = skip(tok, ":");
+
+    // 不是不可以正确解析  而是为了满足 C 优先级规则
+    // ND->Else_BLOCK = expr(rest, tok);
+    ND->Else_BLOCK = ternaryExpr(rest, tok);
+
     return ND;
 }
 
@@ -1689,7 +1717,7 @@ static Node* shift_expr(Token** rest, Token* tok) {
         Token* start = tok;
 
         if (equal(tok, ">>")) {
-            // 为什么不是调用自己  因为左移右移是可以连续使用的
+            // Q: 在 while-true 中通过 continue; 完成自己的调用
             ND = createAST(ND_SHR, ND, first_class_expr(&tok, tok->next), start);
             continue;
         }
