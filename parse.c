@@ -3,14 +3,14 @@
 // commit[22] 注释备份在 annotation-bak 中
 // commit[42]: checkout 查看注释
 // commit[64]: checkout 查看注释
+// commit[95]: checkout 查看注释
 
-// commit[54]: 支持联合体的类型模板存储  因为语法和 struct 一样  所以可以复用
+// commit[54]: 同时支持结构体 联合体的类型模板存储
 typedef struct TagScope TagScope;
 struct TagScope {
     TagScope* next;
     char* tagName;
 
-    // 利用 Type 记录该结构体类型模板
     Type* tagType;
 };
 
@@ -20,13 +20,12 @@ struct VarInScope {
     VarInScope* next;
     char* scopeName;    // commit[64]: 无论什么类型的变量  变量名一定是存在的
 
-    Object* varList;    // 标准类型变量
+    Object* varList;
 
     Type* typeDefined;  // commit[64]: 别名自定义类型变量
 
-    // Q: 为什么枚举类型需要一个单独的 enumType 而不能复用 typeDefined
-    // A: 因为枚举类型的大小是固定的  (TY_INT, 4, 4) 结构体是不固定的
-    Type* enumType;     // commit[74]: 定义枚举变量相关数据
+    // 枚举类型的大小是固定的  (TY_INT, 4, 4)  结构体是不固定的
+    Type* enumType;
     int enumValue;
 };
 
@@ -35,8 +34,8 @@ typedef struct Scope Scope;
 struct Scope {
     Scope* next;
 
-    VarInScope* varScope;   // 结构体实例作为 var 存入 varScope
-    TagScope* tagScope;     // tarScope 结构体存储类型模板
+    VarInScope* varScope;
+    TagScope* tagScope;     // tagScope 结构体存储类型模板
 };
 
 // commit[89]: 支持函数内部的 goto 语句
@@ -45,8 +44,7 @@ static Node* Labels;
 
 // commit[64]: 判断该变量是否是类型别名
 // commit[75]: 判断文件域内函数
-// Q: 为什么这两种声明语句的属性需要单独一个结构体来声明
-// A: 目前我能想到的共同点  都是声明语句的特殊修饰符，而且通常出现在声明的第一个位置  是面向整个语句的
+// 声明语句的特殊修饰符  出现在声明的第一个位置
 typedef struct {
     bool isTypeDef;
     bool isStatic;
@@ -60,10 +58,8 @@ typedef struct {
 
 // commit[54]: 针对 struct 和 union 提取出抽象层
 // StructOrUnionDecl = ident ? (" {" structMembers)?
-
 // structDeclaration = StructOrUnionDecl
 // unionDeclaration = StructOrUnionDecl
-
 // structMembers = (declspec declarator ("," declarator)* ";")*
 
 // commit[59]: 支持类型的嵌套定义
@@ -75,8 +71,7 @@ typedef struct {
 
 // compoundStamt = (typedef | declaration | stamt)* "}"
 
-// commit[26] [27] [28]: 含参的函数定义  对数组变量定义的支持  多维数组支持
-// commit[86]: 支持灵活数组的定义
+// commit[26] [27] [28] [86]: 含参的函数定义  对数组变量定义的支持  多维数组支持  灵活数组的定义
 // typeSuffix = ("(" funcFormalParams | "[" arrayDimensions | ε
 // arrayDemensions =  num? "]" typeSuffix
 
@@ -125,16 +120,12 @@ typedef struct {
 // shift_expr = first_class_expr ("<<" first_class_expr | ">>" first_class_expr)*
 // first_class_expr = second_class_expr (+|- second_class_expr)*
 
-// commit[67]: 支持强制类型转换
-// commit[83]: 支持取模运算
+// commit[67] [83]: 支持强制类型转换  取模运算
 // second_class_expr = cast ("*" cast | "/" cast | "%" cast)*
 // typeCast = "(" typeName ")" cast | third_class_expr
 
 // commit[29]: 新增对 [] 的语法支持  本质上就是对 *(x + y) 的一个语法糖 => x[y]
-// commit[67]: 新增对强制类型转换的支持
-// commit[78]: 新增对前置 "++" | "--" 运算符的支持
-// commit[81]: 新增对 "!" 运算符的支持
-// commit[82]: 新增对 "~" 运算符的支持
+// commit[67] [78] [81] [82]: 强制类型转换  前置 "++" | "--" 运算符  "!" 运算符  "~" 运算符
 // third_class_expr = (+|-|&|*|!) cast | postFix | ("++" | "--")
 
 // commit[49]: 支持对结构体成员的访问
@@ -148,7 +139,7 @@ typedef struct {
 //                      "sizeof" "(" typeName")"
 
 // commit[65]: 在编译阶段解析 sizeof 对类型的求值
-// typeName = declspec abstractDeclarator   // Q: 这是什么东西...  这个 typeName 为什么是拆成两个部分的
+// typeName = declspec abstractDeclarator
 // abstractDeclarator = "*"* ("(" abstractDeclarator ")")? typeSuffix
 
 // commit[24]: 函数调用 在 primary_class_expr 前看一个字符确认是函数声明后的定义
@@ -163,9 +154,8 @@ static Object* currFunc;
 // 一个 Scope 就是一个变量生命范围  全局存储的层面转移到 static HEADScope.varScope
 static Scope *HEADScope = &(Scope){};
 
-// commit[91]: 备份上一个代码块中 break 的跳转目标
+// commit[91]: 备份上一个代码块中 break 的跳转目标  通过该全局量进行通信
 // Tip: 无论 break; 在代码块中嵌套多深  一定是跳出最近的循环体  所以和 HEADScope 的层级无关
-// 通过该全局量进行通信
 static char* blockBreakLabel;
 
 // commit[92]: 同理支持 continue 跳过后面表达式进入下一次循环
@@ -173,8 +163,7 @@ static char* blockBreakLabel;
 // 在循环条件的运算前打上标签  可以让 continue; 翻译的 GOTO 跳转
 static char* blockContinueLabel;
 
-// commit[93]: 因为 switchCase 的解析跨语法层次(函数)  所以需要在不同的调用层次中通信
-// 全局变量作为一种通信方式存在
+// commit[93]: 同理用于通信的全局变量
 static Node* blockSwitch;
 
 /* 变量域的操作定义 */
@@ -229,7 +218,6 @@ static VarInScope* findVar(Token* tok) {
 // commit[64]: 针对 typedef 判断  返回类型 Type 如果是标准类型则是 NULL
 static Type* findTypeDef(Token* tok) {
     if (tok->token_kind == TOKEN_IDENT) {
-        // 因为 varList 和 typeDefined 不能确定返回类型  所以包装一层
         VarInScope* newVarScope = findVar(tok);
 
         if (newVarScope)
@@ -256,7 +244,6 @@ static Object* newVariable(char* varName, Type* varType) {
     obj->var_type = varType;
     obj->var_name = varName;
 
-    // commit[64]: 配合 pushVarScopeToScope 的传参针对 varList 进行修改
     pushVarScopeToScope(varName)->varList = obj;
 
     return obj;
@@ -270,8 +257,8 @@ static Object* newLocal(char* varName, Type* localVarType) {
 
     obj->next = Local;
     Local = obj;
-
     obj->IsLocal = true;
+
     return obj;
 }
 
@@ -313,13 +300,14 @@ static char* getVarName(Token* tok) {
 }
 
 // commit[27]: 获取数组定义中括号中的数字
+// 随着后续 commit 的更新支持各种立即数的读取
 static long getArrayNumber(Token* tok) {
     if (tok->token_kind != TOKEN_NUM)
         tokenErrorAt(tok, "need a number for array declaration");
     return tok->value;
 }
 
-// commit[33]: 判断当前读取的类型是否符合变量声明的类型
+// commit[33]: 判断当前读取的类型是否为类型
 static bool isTypeName(Token* tok) {
     static char* typeNameKeyWord[] = {
         "void", "char", "int", "long", "struct", "union",
@@ -416,7 +404,6 @@ static Node* numNode(int64_t val, Token* tok) {
 // commit[68]: 针对算数类型转换声明 long 类型数字结点
 static Node* longNode(int64_t val, Token* tok) {
     Node* newNode = createNode(ND_NUM, tok);
-    // Tip: 通过字面量直接分配 type 空间
     newNode->node_type = TYLONG_GLOBAL;
     newNode->val = val;
     return newNode;
@@ -430,11 +417,7 @@ static Node* singleVarNode(Object* var, Token* tok) {
 }
 
 // commit[67]: 定义强制类型转换结点
-// 每个强制类型转换都会有一个 ND_TYPE_CAST 然后在 node_type 中存储目标类型
 Node* newCastNode(Node* lastNode, Type* currTypeTarget) {
-    // Q: 可以注释掉 addType() 吗
-    // A: 不可以  因为子节点类型的存在判断会提前结束 addType()  而后面的 castTypeNode 会手动添加自己的 node_type
-    // 所以在手动完成这个最顶层结点的 node_type 添加之前  必须完成它的子节点的类型赋予
     addType(lastNode);
 
     // 根据表达式从右向左构造 AST 结构
@@ -446,8 +429,6 @@ Node* newCastNode(Node* lastNode, Type* currTypeTarget) {
     // Q: 这里注释掉倒是不会报错 ?
     castTypeNode->node_type = copyType(currTypeTarget);
 
-    // Q: 为什么这里不通过 addType() 赋予 ND_TYPE_CAST 目标类型
-    // A: 因为 addType() 中根本没定义这种类型的操作  而且这个目标类型是由 token 体现的  没有办法通过 addType() 操作
     return castTypeNode;
 }
 
@@ -548,8 +529,7 @@ static Node* newPtrSub(Node* LHS, Node* RHS, Token* tok) {
 static Type* declspec(Token** rest, Token* tok, VarAttr* varAttr) {
     // commit[62]: 支持组合类型的声明  比如 long int | int long 类型声明
     enum {
-        // Tip: 这里的 void 必须给出一个值  因为连续定义 void 或者穿插 void 定义也是错误的
-        VOID = 1 << 0,
+        VOID = 1 << 0,  // Tip: 连续 void 定义或者穿插 void 定义是错误的
         BOOL = 1 << 2,
         CHAR = 1 << 4,
         SHORT = 1 << 6,
@@ -558,8 +538,7 @@ static Type* declspec(Token** rest, Token* tok, VarAttr* varAttr) {
         OTHER = 1 << 12,
     };
     
-    // commit[64] 证明了这里只能写 TYINT 不然在 {typedef a;} 的测试中报错  因为默认 TYINT
-    Type* BaseType = TYINT_GLOBAL;
+    Type* BaseType = TYINT_GLOBAL;  // 缺省默认 INT
     int typeCounter = 0;
 
     // 每进行一次类型解析都会进行一次合法判断  和声明的层数无关
@@ -584,7 +563,6 @@ static Type* declspec(Token** rest, Token* tok, VarAttr* varAttr) {
             continue;
         }
 
-        // 处理 struct | union | enum | typedef 特殊类型
         Type* definedType = findTypeDef(tok);
         if (equal(tok, "struct") || equal(tok, "union") || definedType || equal(tok, "enum")) {
             if (typeCounter)
@@ -672,7 +650,7 @@ static Type* declspec(Token** rest, Token* tok, VarAttr* varAttr) {
 
 // commit[74]: 针对 enum 类型声明的特殊处理
 static Type* enumspec(Token** rest, Token* tok) {
-    // 结构类似于 StructOrUnionDecl 但是固定类型大小(某种程度图省事
+    // 函数结构类似于 StructOrUnionDecl 但是固定类型大小(图省事
     Type* newEnumType = enumType();
     Token* enumTag = NULL;
     if (tok->token_kind == TOKEN_IDENT) {
@@ -680,25 +658,23 @@ static Type* enumspec(Token** rest, Token* tok) {
         tok = tok->next;
     }
 
-    // 使用枚举类型标签定义实例  Tip: 如果是别名会在 isTypeName 判断出来
+    // 使用 enum tag 定义实例 var  Tip: 如果是别名会在 isTypeName 判断取出 definedType
     if (enumTag && !equal(tok, "{")) {
         Type* definedEnumType = findStructTag(enumTag);
 
-        // 如果根本不存在或者该标签名不是枚举类型  报错
         if (!definedEnumType)
             tokenErrorAt(enumTag, "unknown enum type");
         if (definedEnumType->Kind != TY_ENUM)
             tokenErrorAt(enumTag, "not an enum tag");
 
-        // 这里不是通过 tag 取出任何 enum 信息  只是判断合法性  因为 enum 在 Type 数据结构中没有相关定义
-        // 这里声明被定义变量是 enum 类型
+        // 这里声明 var 是 enumTag 类型
         *rest = tok;
         return definedEnumType;
     }
 
-    tok = skip(tok, "{");   // 进入枚举类型定义内部
+    tok = skip(tok, "{");
     int I = 0;
-    int value = 0;          // 默认枚举从 0 开始
+    int value = 0;
     while (!equal(tok, "}")) {
         if (I++ > 0)
             tok = skip(tok, ",");
@@ -707,12 +683,10 @@ static Type* enumspec(Token** rest, Token* tok) {
         tok = tok->next;
 
         if (equal(tok, "=")) {
-            // 根据用户输入重定义枚举量的值
             value = getArrayNumber(tok->next);
             tok = tok->next->next;  // 跳过 {= X}
         }
 
-        // 存储枚举常量
         VarInScope* targetScope = pushVarScopeToScope(Name);
         targetScope->enumType = newEnumType;
         targetScope->enumValue = value++;
@@ -720,7 +694,6 @@ static Type* enumspec(Token** rest, Token* tok) {
     *rest = tok->next;
 
     if (enumTag)
-        // 存入枚举类型模板
         pushTagScopeToScope(enumTag, newEnumType);
 
     return newEnumType;
@@ -728,7 +701,6 @@ static Type* enumspec(Token** rest, Token* tok) {
 
 // 类型后缀判断  包括函数定义的形参解析
 static Type* declarator(Token** rest, Token* tok, Type* Base) {
-    // Tip: 多重指针 != 嵌套定义
     while (consume(&tok, tok, "*")) {
         Base = newPointerTo(Base);
     }
@@ -741,8 +713,6 @@ static Type* declarator(Token** rest, Token* tok, Type* Base) {
         // 因为外层大小没有确定  内层解析没有意义  最后丢弃
         Type Dummy = {};
         declarator(&tok, Start->next, &Dummy);
-
-        // 内层类型解析完成
         tok = skip(tok, ")");
 
         // 把外层类型的大小通过 Base 传入内层  通过 Start 重新解析内层类型
@@ -764,9 +734,8 @@ static Type* declarator(Token** rest, Token* tok, Type* Base) {
 
 // commit[86]: 允许灵活数组定义
 static Type* arrayDimensions(Token** rest, Token* tok, Type* ArrayBaseType) {
-    // 无具体大小数组  人为定义为 (-1)
     if (equal(tok, "]")) {
-        // 同理的递归解析
+        // 无具体大小数组  人为定义为 (-1)  便于后面判断合法性
         ArrayBaseType = typeSuffix(rest, tok->next, ArrayBaseType);
         return linerArrayType(ArrayBaseType, -1);
     }
@@ -806,7 +775,6 @@ static Type* abstractDeclarator(Token **rest, Token *tok, Type* BaseType) {
     // 等待外层类型解析后再重新解析内层类型
     if (equal(tok, "(")) {
         Token* Start = tok;
-
         Type Dummy = {};
         abstractDeclarator(&tok, Start->next, &Dummy);
         tok = skip(tok,")");
@@ -823,10 +791,9 @@ static Type* abstractDeclarator(Token **rest, Token *tok, Type* BaseType) {
 
 // 根据类型本身的 token 返回真正有意义的类型结点
 static Type* getTypeInfo(Token** rest, Token* tok) {
-    // Q: 为什么需要 abstractDeclarator 这个新的解析函数  而不是调用 declarator + typeSuffix
-    // A: 这里的语法规则是匿名变量  所以和 declarator 有一点差别  但是结构类似
+    // 匿名类型  和 declarator 有一点差别  但是结构类似
     Type* BaseType = declspec(&tok, tok, NULL);
-    return abstractDeclarator(rest, tok, BaseType); // 改名 typeSuffixDeclaration
+    return abstractDeclarator(rest, tok, BaseType);
 }
 
 // commit[26]: 利用 Type 结构定义存储形参的链表
@@ -915,11 +882,9 @@ static void structMembers(Token** rest, Token* tok, Type* structType) {
     structMember* Curr = &HEAD;
 
     while (!equal(tok, "}")) {
-        // 支持结构体的递归执行  解析类型前缀
         // Tip: typedef 不可以在 struct 定义内部使用  必须是标准类型
         Type* memberType = declspec(&tok, tok, NULL);
 
-        // 成员变量的连续定义
         int First = true;
         while (!consume(&tok, tok, ";")) {
             if (!First)
@@ -1007,9 +972,7 @@ static Type* StructOrUnionDecl(Token** rest, Token* tok) {
         // 因为判断逻辑的更改  所以移动到上面
         *rest = tok;
 
-        // commit[88]: 支持结构体的前向声明后  修改了这里的判断逻辑
-        // 原本: 判断不存在该 tag 报错  如果存在返回 tag
-        // 现在: 判断不存在要声明该 tag 同时把 BaseSize 更新为 (-1) 无法直接使用
+        // 如果判断不存在  要声明该 tag 同时把 BaseSize 更新为 (-1) 无法使用
         Type* tagType = findStructTag(newTag);
         if (tagType)
             return tagType;
@@ -1054,9 +1017,7 @@ static Token* parseTypeDef(Token* tok, Type* BaseType){
             tok = skip(tok, ",");
         First = false;
 
-        // 解析后缀得到别名的完整类型
         Type* definedType = declarator(&tok, tok, BaseType);
-
         pushVarScopeToScope(getVarName(definedType->Name))->typeDefined = definedType;
     }
 
@@ -1107,8 +1068,7 @@ static Token* functionDefinition(Token* tok, Type* funcReturnBaseType, VarAttr* 
 
 // commit[32]: 正式在 AST 中加入全局变量的处理
 static Token* gloablDefinition(Token* tok, Type* globalBaseType) {
-    // Tip: 结构体的全局声明比较特殊  如果是有结构体标签的  那么会提前在 parse.declspec() 中存储
-    // 而不是通过 globalDefinition.newGlobal() 执行
+    // Tip: 结构体的全局声明会提前在 parse.declspec() 中存储
     bool isLast = true;
 
     while (!consume(&tok, tok, ";")) {
@@ -1131,7 +1091,6 @@ static Node* compoundStamt(Token** rest, Token* tok) {
     Node* Curr = &HEAD;
 
     enterScope();
-
     while (!equal(tok, "}")) {
 
         if (isTypeName(tok) && !equal(tok->next, ":")) {
@@ -1146,7 +1105,6 @@ static Node* compoundStamt(Token** rest, Token* tok) {
                 continue;
             }
 
-            // 通过 BaseType 进行传参  相应在 declaration() 里面删掉前缀判断
             Curr->next = declaration(&tok, tok, BaseType);
         }
 
@@ -1157,27 +1115,23 @@ static Node* compoundStamt(Token** rest, Token* tok) {
         Curr = Curr->next;
         addType(Curr);
     }
-
     leaveScope();
 
     ND->Body = HEAD.next;
-
     *rest = tok->next;
+
     return ND;
 }
 
 // 对变量定义语句的解析
 static Node* declaration(Token** rest, Token* tok, Type* BaseType) {
-    // 1. 接收来自 declspec() 解析的 BaseType
     Node HEAD = {};
     Node* Curr = &HEAD;
 
-    // 2. 解析变量的连续定义
     int variable_count = 0;
     while(!equal(tok, ";")) {
         if ((variable_count ++) > 0)
-            // Tip: 函数嵌套定义报错位置
-            tok = skip(tok, ",");
+            tok = skip(tok, ",");   // Tip: 函数嵌套定义报错位置
 
         Type* isPtr = declarator(&tok, tok, BaseType);
 
@@ -1192,12 +1146,10 @@ static Node* declaration(Token** rest, Token* tok, Type* BaseType) {
 
         Object* var = newLocal(getVarName(isPtr->Name), isPtr);
 
-        // 3. 如果存在赋值那么调用语法规则生成 AST 结构
         if (!equal(tok, "=")) {
             continue;
         }
 
-        // 直接读取赋值语句的 RHS
         Node* LHS = singleVarNode(var, isPtr->Name);
         Node* RHS = assign(&tok, tok->next);
 
@@ -1232,13 +1184,11 @@ static Node* structRef(Node* VAR_STRUCT_UNION, Token* tok) {
 static Node* stamt(Token** rest, Token* tok) {
     if (equal(tok, "return")) {
         Node* retLeftNode = createNode(ND_RETURN, tok);
-
-
         Node* retRightNode = expr(&tok, tok->next);
-        addType(retRightNode);  // 在 addType() 进行强制类型转换
         *rest = skip(tok, ";");
 
         // 根据 currFunc 当前函数的返回类型定义进行强制类型转换
+        addType(retRightNode);
         retLeftNode->LHS = newCastNode(retRightNode, currFunc->var_type->ReturnType);
 
         return retLeftNode;
@@ -1274,12 +1224,10 @@ static Node* stamt(Token** rest, Token* tok) {
         Node* ND = createNode(ND_FOR, tok);
         tok = skip(tok->next, "(");
 
-        // commit[91]: 进入新循环代码块后记录外层的 break 跳转位置
-        // 并且针对该层循环只有一个跳转出口  使用 unqiue 在汇编部分进行全局唯一
-        // Tip: 即使只有一行的 for 语句  也有自己的生命范围
+        // commit[91]: 进入新循环代码块后记录当前唯一的 break 跳转位置
         enterScope();
         char* forBreakLabel = blockBreakLabel;
-        blockBreakLabel = ND->BreakLabel = newUniqueName(); // 不一定真的有 break  只是作为这段 for 循环的属性
+        blockBreakLabel = ND->BreakLabel = newUniqueName();
 
         char* forContinueLabel = blockContinueLabel;
         blockContinueLabel = ND->ContinueLabel = newUniqueName();
@@ -1289,7 +1237,7 @@ static Node* stamt(Token** rest, Token* tok) {
             ND->For_Init = declaration(&tok, tok, Basetype);
         }
         else
-            ND->For_Init = exprStamt(&tok, tok);    // 使用已定义的变量
+            ND->For_Init = exprStamt(&tok, tok);
         *rest = tok;
 
         if (!equal(tok, ";"))
@@ -1298,7 +1246,6 @@ static Node* stamt(Token** rest, Token* tok) {
         tok = skip(tok, ";");
         *rest = tok;
 
-        // 对 operation 处理同理        注意没有第三个分号 直接就是右括号了
         if (!equal(tok, ")")) {
             ND->Inc = expr(&tok, tok);
         }
@@ -1307,7 +1254,7 @@ static Node* stamt(Token** rest, Token* tok) {
 
         ND->If_BLOCK = stamt(&tok, tok);
 
-        // commit[91]: 恢复到外层循环
+        // commit[91]: 恢复到可能存在的外层循环
         leaveScope();
         blockBreakLabel = forBreakLabel;
         blockContinueLabel = forContinueLabel;
@@ -1320,7 +1267,6 @@ static Node* stamt(Token** rest, Token* tok) {
         // while (i < 10) {...}  复用 for 标签
         Node* ND = createNode(ND_FOR, tok);
 
-        // while 循环可以看成简化版的 for-loop
         tok = skip(tok->next, "(");
         ND->Cond_Block = expr(&tok, tok);
         tok = skip(tok, ")");
@@ -1343,14 +1289,13 @@ static Node* stamt(Token** rest, Token* tok) {
 
     if (equal(tok, "goto")) {
         Node* ND = createNode(ND_GOTO, tok);
+        *rest = skip(tok->next->next, ";");
 
-        // Q: 为什么这里存入的是 label 而不是 uniqueLabel
-        // A: 不同的函数的跳转标签可能相同  虽然在语法解析没问题  但在 codeGen 部分无法识别  必须全局唯一
-        // 又因为 newUniqueName 每次被调用都会改变  所以不能同时在 goto 和 label 语句中调用
+        // 记录 goto 映射表的 key 值
         ND->gotoLabel = getVarName(tok->next);
         ND->gotoNext = GOTOs;
         GOTOs = ND;
-        *rest = skip(tok->next->next, ";");
+        
         return ND;
     }
 
@@ -1359,16 +1304,13 @@ static Node* stamt(Token** rest, Token* tok) {
         // 否则会把 "case:" "default:" 也判断到这个分支
         Node* ND = createNode(ND_LABEL, tok);
         ND->gotoLabel = strndup(tok->place, tok->length);
-
-        // 构造在 codeGen 使用的全局唯一跳转标签
-        // 因为 newUniqueName 和 gotoLabel 的差异  所以需要后面的映射
         ND->gotoUniqueLabel = newUniqueName();
-        // Q: 为什么只解析标签的下一行语句
-        // A: 结合 codeGen 的跳转  按顺序执行跳转到该语句后的所有语句  更新 pc 所以需要至少一条
-        ND->LHS = stamt(rest, tok->next->next);
-
         ND->gotoNext = Labels;
         Labels = ND;
+
+        // Q: 为什么只解析标签的下一行语句
+        // A: 汇编会按顺序执行跳转到该语句后的所有语句  只需要更新 pc 指向目标下一条
+        ND->LHS = stamt(rest, tok->next->next);
         return ND;
     }
 
@@ -1377,7 +1319,6 @@ static Node* stamt(Token** rest, Token* tok) {
             // 判断被定义的 break 出口是否存在  switch | for | while
             tokenErrorAt(tok, "stray break");
 
-        // 结合汇编跳转的是 gotoUniquelabel 全局唯一而不是 BreakLabel
         Node* ND = createNode(ND_GOTO, tok);
         ND->gotoUniqueLabel = blockBreakLabel;
 
@@ -1448,7 +1389,7 @@ static Node* stamt(Token** rest, Token* tok) {
 
     if (equal(tok, "default")) {
         // 作为一种特殊的 case 语句实现  default 也可以成为 switch 的第一个分支
-        // 并没有隐含的 break 直接跳出 switch
+        // 并且没有隐含的 break 直接跳出 switch
         if (!blockSwitch)
             tokenErrorAt(tok, "stray default");
 
@@ -1524,7 +1465,6 @@ static Node* toAssign(Node* Binary) {
 static Node* assign(Token** rest, Token* tok) {
     Node* ND = ternaryExpr(&tok, tok);
 
-    // 支持类似于 '= b = 1;' 这样的递归性赋值
     if (equal(tok, "=")) {
         return ND = createAST(ND_ASSIGN, ND, assign(rest, tok->next), tok);
     }
@@ -1588,7 +1528,7 @@ static Node* ternaryExpr(Token** rest, Token* tok) {
     ND->If_BLOCK = expr(&tok, tok->next);
     tok = skip(tok, ":");
 
-    // 不是不可以正确解析  而是为了满足 C 优先级规则
+    // 不是不可以正确解析  而是为了满足以及定义的优先级规则
     // ND->Else_BLOCK = expr(rest, tok);
     ND->Else_BLOCK = ternaryExpr(rest, tok);
 
@@ -1717,7 +1657,6 @@ static Node* shift_expr(Token** rest, Token* tok) {
         Token* start = tok;
 
         if (equal(tok, ">>")) {
-            // Q: 在 while-true 中通过 continue; 完成自己的调用
             ND = createAST(ND_SHR, ND, first_class_expr(&tok, tok->next), start);
             continue;
         }
@@ -1796,7 +1735,6 @@ static Node* typeCast(Token** rest, Token* tok) {
         Node* ND = newCastNode(typeCast(rest, tok), castTargetType);
         ND->token = Start;
 
-        // 无论嵌套多少层  递归的是语法解析
         return ND;
     }
 
@@ -1838,9 +1776,7 @@ static Node* third_class_expr(Token** rest, Token* tok) {
         return ND;
     }
 
-    // commit[78]: 把前置 "++" | "--" 运算符转换为 "+=1" | "-=1" 表达式  本质就是个语法糖
-    // 但是相比 commit[77] 不太一样的地方是被运算变量在右边  所以在 newPtr*() 的调用中
-    // 仍然需要调用 third_class_expr 解析
+    // Tip: 被运算变量在右边  所以仍然需要调用 third_class_expr 解析
 
     if (equal(tok, "++")) {
         return toAssign(newPtrAdd(third_class_expr(rest, tok->next), numNode(1, tok), tok));
@@ -1919,16 +1855,13 @@ static Node* postFix(Token** rest, Token* tok) {
 
 // 判断子表达式或者数字
 static Node* primary_class_expr(Token** rest, Token* tok) {
-    // commit[65]: 记录报错断点
     Token* Start = tok;
 
-    // 优先判定 GNU 的语句表达式
     if (equal(tok, "(") && equal(tok->next, "{")) {
         Node* ND = createNode(ND_GNU_EXPR, tok);
-
         ND->Body = compoundStamt(&tok, tok->next->next)->Body;
-        *rest = skip(tok, ")");
 
+        *rest = skip(tok, ")");
         return ND;
     }
 
@@ -1939,8 +1872,7 @@ static Node* primary_class_expr(Token** rest, Token* tok) {
     }
 
     if (equal(tok, "sizeof") && equal(tok->next, "(") && isTypeName(tok->next->next)) {
-        // commit[65]: 针对匿名类型声明进行 sizeof(type) 的求值
-        // Tip: 类型可以是复合的  又因为判断用的是 isTypeName 所以可以判断别名
+        // commit[65]: 针对匿名复合类型声明进行 sizeof(type) 的求值
         Type* targetType = getTypeInfo(&tok, tok->next->next);
         *rest = skip(tok, ")");
 
@@ -1999,29 +1931,24 @@ static Node* primary_class_expr(Token** rest, Token* tok) {
 // commit[69]: 根据 Scope 的查找  对未定义的函数调用报错
 static Node* funcall(Token** rest, Token* tok) {
     Node* ND = createNode(ND_FUNCALL, tok);
-
-    // 1. 处理 ident
     ND->FuncName = getVarName(tok);
 
     // 根据 HEADScope 查找被调用函数
     VarInScope* targetScope = findVar(tok);
     if (!targetScope)
-        // case1: 根本没有这个变量名  无论这个变量是什么
         tokenErrorAt(tok, "implicit declaration of a function");
 
-// Q: 为什么是两个判断条件  直接采用后者判断不可以吗
+// Q: 为什么是两个判断条件  直接采用后者判断不可以吗  截至 commit[69] 把前面的判断注释掉也没影响
     if (!targetScope->varList || targetScope->varList->var_type->Kind != TY_FUNC)
-        // 猜想是函数指针 ??? 可能存在 tagScope 中  反正截至 commit[69] 把前面的判断注释掉也没影响
         tokenErrorAt(tok, "not a function");
+    tok = tok->next->next;
 
     // commit[71]: 获取被调用函数的定义信息
     Type* definedFuncType = targetScope->varList->var_type;
     Type* formalParamType = definedFuncType->formalParamLink;
     Type* formalRetType = targetScope->varList->var_type->ReturnType;
 
-    tok = tok->next->next;
-
-    // 2. 通过循环读取至多 6 个参数作为链表表达式
+    // 读取至多 6 个参数作为链表表达式
     Node HEAD = {};
     Node* Curr = &HEAD;
 
@@ -2040,11 +1967,9 @@ static Node* funcall(Token** rest, Token* tok) {
             formalParamType = formalParamType->formalParamNext;
         }
 
-
         Curr->next = actualParamNode;
         Curr = Curr->next;
-        // 同理这里因为后续手动赋予 ND 结点 returnType 所以提前遍历子树
-        addType(Curr);
+        addType(Curr);      // 这里注释掉貌似也无所谓 因为已经经过 newCastNode()
     }
     *rest = skip(tok, ")");
 
@@ -2054,7 +1979,6 @@ static Node* funcall(Token** rest, Token* tok) {
     return ND;
 }
 
-// 解析全局变量和函数定义
 Object* parse(Token* tok) {
     Global = NULL;
 
