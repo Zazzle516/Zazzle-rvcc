@@ -304,6 +304,9 @@ static void calcuGen(Node* AST) {
 
     switch (AST->node_kind)
     {
+    case ND_NULL_EXPR:
+        return;
+
     case ND_NUM:
     {
         printLn("  # 加载立即数 %d 到 a0", AST->val);

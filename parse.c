@@ -50,6 +50,28 @@ typedef struct {
     bool isStatic;
 } VarAttr;
 
+/* 数组初始化器 */
+
+// commit[97]: 构造初始化器
+typedef struct Initializer Initializer;
+struct Initializer {
+    Initializer* next;
+    Type* initType;
+    Token* tok;
+    Initializer** children;     // 针对多维数组
+
+    Node* initAssignRightExpr;  // 储存初始化映射的赋值语句
+};
+
+// 针对数组初始化 AST 特化的数据结构
+typedef struct arrayInitAST arrayInitAST;
+struct arrayInitAST {
+    arrayInitAST* upDimension;
+    int elemOffset;
+
+    Object* var;    // 表示当前数组元素
+};
+
 // parse() = (functionDefinition | globalVariable | typedef)*
 
 // commit[49] [54] [64] [74]: 支持 struct | union | typedef | enum 语法解析
@@ -73,6 +95,10 @@ typedef struct {
 // functionDefinition = declspec declarator "{" compoundStamt*
 
 // compoundStamt = (typedef | declaration | stamt)* "}"
+
+// declaration = declspec (declarator ("=" initializer)?
+//                          ("," declarator ("=" initializer)?)*)? ";"
+// initializer = "{" initializer ("," initializer)* "}" | assign
 
 // commit[26] [27] [28] [86]: 含参的函数定义  对数组变量定义的支持  多维数组支持  灵活数组的定义
 // typeSuffix = ("(" funcFormalParams | "[" arrayDimensions | ε
@@ -330,6 +356,32 @@ static structMember* getStructMember(Type* structType, Token* tok) {
     return NULL;
 }
 
+/* 初始化器 */
+
+// commit[97]: 分配空间
+static Initializer* createInitializer(Type* varType) {
+    Initializer* Init = calloc(1, sizeof(Initializer));
+    Init->initType = varType;
+
+    if (varType->Kind == TY_ARRAY_LINER) {
+        // 首先计算出 (n - 1) 维度的全部的指针空间
+        Init->children = calloc(varType->arrayElemCount, sizeof(Initializer*));
+
+        for (int I = 0; I < varType->arrayElemCount; ++I)
+            // 完整实际的空间分配后再进行指针的指向
+            Init->children[I] = createInitializer(varType->Base);
+    }
+
+    return Init;
+}
+
+static Node* initializerNode(Token** rest, Token* tok, Object* var);
+static Initializer* initialize(Token** rest, Token* tok, Type* varType);
+static void arrayAssignMap(Token** rest, Token* tok, Initializer* Init);
+static Node* createLocalVarInit(Initializer* Init, Type* varType, arrayInitAST* arrayInitRoot, Token* tok);
+static Node* initDesigExpr(arrayInitAST* Desig, Token* tok);
+
+/* 语法规则 */
 
 static Token* functionDefinition(Token* tok, Type* funcReturnBaseType, VarAttr* varAttr);
 static Token* gloablDefinition(Token* tok, Type* globalBaseType);
@@ -347,7 +399,10 @@ static Type* structDeclaration(Token** rest, Token* tok);
 static Type* unionDeclaration(Token** rest, Token* tok);
 
 static Node* compoundStamt(Token** rest, Token* tok);
+
 static Node* declaration(Token** rest, Token* tok, Type* BaseType);
+static Node* initializerNode(Token** rest, Token* tok, Object* var);
+
 static Node* stamt(Token** rest, Token* tok);
 static Node* exprStamt(Token** rest, Token* tok);
 static Node* expr(Token** rest, Token* tok);
@@ -1221,17 +1276,12 @@ static Node* declaration(Token** rest, Token* tok, Type* BaseType) {
 
         Object* var = newLocal(getVarName(isPtr->Name), isPtr);
 
-        if (!equal(tok, "=")) {
-            continue;
+        // commit[97]: 修改了判定逻辑  转移到初始化器中进行初始化
+        if (equal(tok, "=")) {        
+            Node* LHS = initializerNode(&tok, tok->next, var);
+            Curr->next = createSingle(ND_STAMT, LHS, tok);
+            Curr = Curr->next;
         }
-
-        Node* LHS = singleVarNode(var, isPtr->Name);
-        Node* RHS = assign(&tok, tok->next);
-
-        Node* ND_ROOT = createAST(ND_ASSIGN, LHS, RHS, tok);
-        Curr->next = createSingle(ND_STAMT, ND_ROOT, tok);
-
-        Curr = Curr->next;
     }
 
     // 4. 构造 Block 返回结果
@@ -1239,6 +1289,92 @@ static Node* declaration(Token** rest, Token* tok, Type* BaseType) {
     multi_declara->Body = HEAD.next;
     *rest = tok->next;
     return multi_declara;
+}
+
+// commit[97]: 最顶层的初始化器结点
+static Node* initializerNode(Token** rest, Token* tok, Object* var) {
+    // 一阶段: 完成 init 数据结构分配  赋值数值的映射
+    Initializer* init = initialize(rest, tok, var->var_type);
+
+    // 二阶段: 根据 var 定义数组初始化结构基址
+    arrayInitAST arrayInitRoot = {NULL, 0, var};
+    return createLocalVarInit(init, var->var_type, &arrayInitRoot, tok);
+}
+
+// 初始化器的数据处理
+static Initializer* initialize(Token** rest, Token* tok, Type* varType) {
+    // 1.1: 进行初始化器的空间分配
+    Initializer* Init = createInitializer(varType);
+
+    // 1.2: 完成赋值数值与数据元素的映射
+    arrayAssignMap(rest, tok, Init);
+    return Init;
+}
+
+// 针对数组的每个元素进行赋值处理  结合实际的赋值数值  与初始化器对应起来
+static void arrayAssignMap(Token** rest, Token* tok, Initializer* Init) {
+    if (Init->initType->Kind == TY_ARRAY_LINER) {
+        // 针对数组  递归找到可以执行赋值的叶子元素
+
+        // 根据递归层次找到赋值数值的位置
+        tok = skip(tok, "{");
+        for (int I = 0; I < Init->initType->arrayElemCount; I++) {
+            if (I > 0)
+                tok = skip(tok, ",");
+            // Tip: 使用完当前的数值就要更新到下一个  所以是 &tok
+            arrayAssignMap(&tok, tok, Init->children[I]);
+        }
+        *rest = skip(tok, "}"); // 当前层的数组元素赋值解析完成
+        return;
+    }
+
+    // 叶子元素直接赋值  解析得到不完整右侧赋值数值
+    Init->initAssignRightExpr = assign(rest, tok);
+}
+
+// 完成映射后  构造可翻译到汇编的 AST 树
+static Node* createLocalVarInit(Initializer* Init, Type* varType, arrayInitAST* arrayInitRoot, Token* tok) {
+    // 针对数组结构递归到元素完成赋值语句的翻译  然后构造出合适的 AST 结构
+    if (varType->Kind == TY_ARRAY_LINER) {
+        // 维持 ND_COMMA 返回值为 NULL
+        Node* ND = createNode(ND_NULL_EXPR, tok);
+
+        for (int currOffset = 0; currOffset < varType->arrayElemCount; currOffset++) {
+            // desig.var在 initializerNode() 中初始化为数组的基址
+            // 因为只有数组的根节点被定义  如果是 k 维数组在 initDesigExpr() 中会递归 k 次
+            // 通过字面量定义当前数组元素的基本信息  通过 upDimension 维持了链表结构
+            arrayInitAST arrayElemInit = {.upDimension = arrayInitRoot, .elemOffset = currOffset};
+
+            // 在确定下一层的递归过程中更新根节点和元素的偏移量
+            Node* RHS = createLocalVarInit(Init->children[currOffset], varType->Base, &arrayElemInit, tok);
+
+            // 自底向上  挂载到最终的 AST 树上
+            ND = createAST(ND_COMMA, ND, RHS, tok);
+        }
+        return ND;
+    }
+
+    // lvalue: 通过 DEREF 构造当前数组元素的地址
+    Node* LHS = initDesigExpr(arrayInitRoot, tok);
+    // rvalue: 找到在一阶段解析的对应数值
+    Node* RHS = Init->initAssignRightExpr;
+    return createAST(ND_ASSIGN, LHS, RHS, tok);
+}
+
+// 找到初始化数组目标元素的地址
+static Node* initDesigExpr(arrayInitAST* Desig, Token* tok) {
+    if (Desig->var)
+        // 找到数组的根地址  Tip: 这个递归效率会比较低
+        return singleVarNode(Desig->var, tok);
+
+    // 通过 k 层递归找到当前元素所处维度的基址
+    Node* LHS = initDesigExpr(Desig->upDimension, tok);
+
+    // 得到该元素在当前维度中的偏移量
+    Node* RHS = numNode(Desig->elemOffset, tok);
+
+    // 得到该元素在栈空间分配的具体位置
+    return createSingle(ND_DEREF, newPtrAdd(LHS, RHS, tok), tok);
 }
 
 // 构造访问 结构体 | 联合体 成员的 AST
