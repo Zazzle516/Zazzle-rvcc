@@ -56,6 +56,9 @@ typedef struct {
 // declspec = ("int" | "char" | "long" | "short" | "void" | structDeclaration | unionDeclaration
 //             | "typedef" | "typedefName" | enumSpec | "static")+
 
+// enumSpec = ident? "{" enumList? "}" | ident ("{" enumList? "}")?
+// enumList = ident ("=" constExpr)? ("," ident ("=" constExpr)?)*
+
 // commit[54]: 针对 struct 和 union 提取出抽象层
 // StructOrUnionDecl = ident ? (" {" structMembers)?
 // structDeclaration = StructOrUnionDecl
@@ -73,7 +76,7 @@ typedef struct {
 
 // commit[26] [27] [28] [86]: 含参的函数定义  对数组变量定义的支持  多维数组支持  灵活数组的定义
 // typeSuffix = ("(" funcFormalParams | "[" arrayDimensions | ε
-// arrayDemensions =  num? "]" typeSuffix
+// arrayDemensions =  constExpr? "]" typeSuffix
 
 // funcFormalParams = (formalParam ("," formalParam)*)? ")"
 // formalParam = declspec declarator
@@ -89,7 +92,7 @@ typedef struct {
 //          | break ";"
 //          | continue ";"
 //          | "switch" "(" expr ")" stamt       // 通过 stamt 构造代码块范围
-//          | "case" num ":" stamt
+//          | "case" constExpr ":" stamt
 //          | "default" ":" stamt
 
 // exprStamt = expr? ";"
@@ -299,14 +302,6 @@ static char* getVarName(Token* tok) {
     return strndup(tok->place, tok->length);
 }
 
-// commit[27]: 获取数组定义中括号中的数字
-// 随着后续 commit 的更新支持各种立即数的读取
-static long getArrayNumber(Token* tok) {
-    if (tok->token_kind != TOKEN_NUM)
-        tokenErrorAt(tok, "need a number for array declaration");
-    return tok->value;
-}
-
 // commit[33]: 判断当前读取的类型是否为类型
 static bool isTypeName(Token* tok) {
     static char* typeNameKeyWord[] = {
@@ -382,6 +377,87 @@ static Node* postFix(Token** rest, Token* tok);
 static Node* primary_class_expr(Token** rest, Token* tok);
 static Node* funcall(Token** rest, Token* tok);
 
+/* 常数表达式的预计算 */
+static int64_t eval(Node* ND) {
+    addType(ND);
+
+    switch (ND->node_kind) {
+    case ND_ADD:
+        return eval(ND->LHS) + eval(ND->RHS);
+    case ND_SUB:
+        return eval(ND->LHS) - eval(ND->RHS);
+    case ND_MUL:
+        return eval(ND->LHS) * eval(ND->RHS);
+    case ND_DIV:
+        return eval(ND->LHS) / eval(ND->RHS);
+    case ND_NEG:
+        return -eval(ND->LHS);
+    case ND_MOD:
+        return eval(ND->LHS) % eval(ND->RHS);
+    case ND_BITAND:
+        return eval(ND->LHS) & eval(ND->RHS);
+    case ND_BITNOT:
+        return ~eval(ND->LHS);
+    case ND_BITOR:
+        return eval(ND->LHS) | eval(ND->RHS);
+    case ND_BITXOR:
+        return eval(ND->LHS) ^ eval(ND->RHS);
+    case ND_SHL:
+        return eval(ND->LHS) << eval(ND->RHS);
+    case ND_SHR:
+        return eval(ND->LHS) >> eval(ND->RHS);
+    case ND_EQ:
+        return eval(ND->LHS) == eval(ND->RHS);
+    case ND_NEQ:
+        return eval(ND->LHS) != eval(ND->RHS);
+    case ND_LE:
+        return eval(ND->LHS) <= eval(ND->RHS);
+    case ND_LT:
+        return eval(ND->LHS) < eval(ND->RHS);
+    case ND_GE:
+        return eval(ND->LHS) >= eval(ND->RHS);
+    case ND_GT:
+        return eval(ND->LHS) > eval(ND->RHS);
+    case ND_TERNARY:
+        return eval(ND->Cond_Block) ? eval(ND->If_BLOCK) : eval(ND->Else_BLOCK);
+    case ND_COMMA:
+        return eval(ND->RHS);
+    case ND_NOT:
+        return !eval(ND->LHS);
+    case ND_LOGAND:
+        return eval(ND->LHS) && eval(ND->RHS);
+    case ND_LOGOR:
+        return eval(ND->LHS) || eval(ND->RHS);
+    case ND_TYPE_CAST:
+    {
+        if (isInteger(ND->node_type)) {
+            switch (ND->node_type->BaseSize) {
+            case 1:
+                return (uint8_t)eval(ND->LHS);
+            case 2:
+                return (uint16_t)eval(ND->LHS);
+            case 4:
+                return (uint32_t)eval(ND->LHS);
+            }
+        }
+        return eval(ND->LHS);
+    }
+
+    case ND_NUM:
+        return ND->val;
+    default:
+        break;
+    }
+
+    tokenErrorAt(ND->token, "not a compile-time constant");
+    return -1;
+}
+
+// commit[96]: 支持常量计算式  三目表达式是计算规则的开始层次
+static int64_t constExpr(Token** rest, Token* tok) {
+    Node* ND = ternaryExpr(rest, tok);
+    return eval(ND);
+}
 
 /* AST 结构的辅助函数 */
 
@@ -683,8 +759,7 @@ static Type* enumspec(Token** rest, Token* tok) {
         tok = tok->next;
 
         if (equal(tok, "=")) {
-            value = getArrayNumber(tok->next);
-            tok = tok->next->next;  // 跳过 {= X}
+            value = constExpr(&tok, tok->next);
         }
 
         VarInScope* targetScope = pushVarScopeToScope(Name);
@@ -741,8 +816,8 @@ static Type* arrayDimensions(Token** rest, Token* tok, Type* ArrayBaseType) {
     }
 
     // 有具体定义大小的数组
-    int arraySize = getArrayNumber(tok);
-    tok = skip(tok->next, "]");
+    int arraySize = constExpr(&tok, tok);
+    tok = skip(tok, "]");
     // 通过递归不断重置 BaseType 保存 (n - 1) 维数组的信息  最终返回 n 维数组信息
     ArrayBaseType = typeSuffix(rest, tok, ArrayBaseType);
     return linerArrayType(ArrayBaseType, arraySize);
@@ -1370,9 +1445,9 @@ static Node* stamt(Token** rest, Token* tok) {
             // switch 本身跳转些属性都被 switch 包裹了  只要判断 switch 存在就可以
             tokenErrorAt(tok, "stray case");
 
-        int caseVal = getArrayNumber(tok->next);
         Node* ND = createNode(ND_CASE, tok);
-        tok = skip(tok->next->next, ":");
+        int caseVal = constExpr(&tok, tok->next);
+        tok = skip(tok, ":");
 
         // 定义 switch 判断的跳转标签
         // Q: 为什么不定义 Node.gotoUniqueLabel   A: 都可以  只不过需要同步修改
