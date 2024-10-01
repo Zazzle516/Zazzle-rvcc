@@ -1318,6 +1318,17 @@ static Initializer* initialize(Token** rest, Token* tok, Type* varType) {
     return Init;
 }
 
+// 赋值元素多余 但是语法层面应该合法
+static Token* skipExcessElem(Token* tok) {
+    if (equal(tok, "{")) {
+        tok = skipExcessElem(tok->next);
+        return skip(tok, "}");
+    }
+
+    assign(&tok, tok);  // 没有 LHS 进行赋值  直接丢弃
+    return tok;
+}
+
 // 针对数组的每个元素进行赋值处理  结合实际的赋值数值  与初始化器对应起来
 static void arrayAssignMap(Token** rest, Token* tok, Initializer* Init) {
     if (Init->initType->Kind == TY_ARRAY_LINER) {
@@ -1327,11 +1338,16 @@ static void arrayAssignMap(Token** rest, Token* tok, Initializer* Init) {
         // commit[98]: 因为默认存在和数组元素数量一致的初始化值  在赋值数量不足时防止过早结束
         tok = skip(tok, "{");
         // Tip: 如果一个都没有根本不会进入循环
-        for (int I = 0; I < Init->initType->arrayElemCount && !equal(tok, "}"); I++) {
+        for (int I = 0; !consume(rest, tok, "}"); I++) {
             if (I > 0)
+                // 针对多余元素还要判断 "," 所以移动到循环体内部
                 tok = skip(tok, ",");
-            // Tip: 使用完当前的数值就要更新到下一个  所以是 &tok
-            arrayAssignMap(&tok, tok, Init->children[I]);
+
+            if (I < Init->initType->arrayElemCount)
+                // Tip: 使用完当前的数值就要更新到下一个  所以是 &tok
+                arrayAssignMap(&tok, tok, Init->children[I]);
+            else
+                tok = skipExcessElem(tok);
         }
         *rest = skip(tok, "}");
         return;
