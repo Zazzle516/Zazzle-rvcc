@@ -27,6 +27,10 @@ typedef struct Type Type;
 typedef struct Object Object;
 typedef struct Node Node;
 
+/* 工具函数 */
+#define MAX(x, y) ((x) < (y) ? (y) : (x))
+#define MIN(x, y) ((x) < (y) ? (x) : (y))
+
 /* 词法解析 tokenize() 数据结构和函数声明 */ 
 
 // 字符串

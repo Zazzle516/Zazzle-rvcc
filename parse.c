@@ -98,7 +98,11 @@ struct arrayInitAST {
 
 // declaration = declspec (declarator ("=" initializer)?
 //                          ("," declarator ("=" initializer)?)*)? ";"
-// initializer = "{" initializer ("," initializer)* "}" | assign
+
+// commit[100]: 支持字符串数组和一般数组初始化
+// initializer = stringInitializer | arrayInitializer | assign
+// stringInitializer.
+// arrayInittializer = "{" initializer ("," initializer)* "}"
 
 // commit[26] [27] [28] [86]: 含参的函数定义  对数组变量定义的支持  多维数组支持  灵活数组的定义
 // typeSuffix = ("(" funcFormalParams | "[" arrayDimensions | ε
@@ -356,30 +360,6 @@ static structMember* getStructMember(Type* structType, Token* tok) {
     return NULL;
 }
 
-/* 初始化器 */
-
-// commit[97]: 分配空间
-static Initializer* createInitializer(Type* varType) {
-    Initializer* Init = calloc(1, sizeof(Initializer));
-    Init->initType = varType;
-
-    if (varType->Kind == TY_ARRAY_LINER) {
-        // 首先分配 (n - 1) 维度的全部的指针空间
-        Init->children = calloc(varType->arrayElemCount, sizeof(Initializer*));
-
-        for (int I = 0; I < varType->arrayElemCount; ++I)
-            // 完整实际的空间分配后再进行指针的指向
-            Init->children[I] = createInitializer(varType->Base);
-    }
-
-    return Init;
-}
-
-static Node* initializerNode(Token** rest, Token* tok, Object* var);
-static Initializer* initialize(Token** rest, Token* tok, Type* varType);
-static void arrayAssignMap(Token** rest, Token* tok, Initializer* Init);
-static Node* createLocalVarInit(Initializer* Init, Type* varType, arrayInitAST* arrayInitRoot, Token* tok);
-static Node* initDesigExpr(arrayInitAST* Desig, Token* tok);
 
 /* 语法规则 */
 
@@ -431,6 +411,46 @@ static Node *postIncNode(Node *Nd, Token *Tok, int Addend);
 static Node* postFix(Token** rest, Token* tok);
 static Node* primary_class_expr(Token** rest, Token* tok);
 static Node* funcall(Token** rest, Token* tok);
+
+/* 初始化器 */
+
+// commit[97]: 分配空间
+static Initializer* createInitializer(Type* varType) {
+    Initializer* Init = calloc(1, sizeof(Initializer));
+    Init->initType = varType;
+
+    if (varType->Kind == TY_ARRAY_LINER) {
+        // 首先分配 (n - 1) 维度的全部的指针空间
+        Init->children = calloc(varType->arrayElemCount, sizeof(Initializer*));
+
+        for (int I = 0; I < varType->arrayElemCount; ++I)
+            // 完整实际的空间分配后再进行指针的指向
+            Init->children[I] = createInitializer(varType->Base);
+    }
+
+    return Init;
+}
+
+// 赋值元素多余 但是语法层面应该合法
+static Token* skipExcessElem(Token* tok) {
+    if (equal(tok, "{")) {
+        tok = skipExcessElem(tok->next);
+        return skip(tok, "}");
+    }
+
+    assign(&tok, tok);  // 没有 LHS 进行赋值  直接丢弃
+    return tok;
+}
+
+static Node* initializerNode(Token** rest, Token* tok, Object* var);
+static Initializer* initialize(Token** rest, Token* tok, Type* varType);
+static void ArrayOrStringInit(Token** rest, Token* tok, Initializer* Init);
+static void arrayRecurisve(Token** rest, Token* tok, Initializer* Init);
+static void stringInitializer(Token** rest, Token* tok, Initializer* Init);
+static void arrayInitializer(Token** rest, Token* tok, Initializer* Init);
+static Node* createInitAST(Initializer* Init, Type* varType, arrayInitAST* arrayInitRoot, Token* tok);
+static Node* initDesigExpr(arrayInitAST* Desig, Token* tok);
+
 
 /* 常数表达式的预计算 */
 static int64_t eval(Node* ND) {
@@ -1296,15 +1316,13 @@ static Node* initializerNode(Token** rest, Token* tok, Object* var) {
     // 一阶段: 完成 init 数据结构分配  赋值数值的映射
     Initializer* init = initialize(rest, tok, var->var_type);
 
-    // 二阶段: 根据 var 定义数组初始化结构基址
+    // 二阶段: LHS 除了最后一个元素的所有元素完成赋值 => 针对完整的数组空间定义 codeGen 赋零操作
     arrayInitAST arrayInitRoot = {NULL, 0, var};
-
-    // 2.1: LHS 除了最后一个元素的所有元素完成赋值 => 针对完整的数组空间定义 codeGen 赋零操作
     Node* LHS = createNode(ND_MEMZERO, tok);
     LHS->var = var;
 
-    // 2.2: 针对存在初始化的二次覆盖  RHS 定义全部数组元素的初始化
-    Node* RHS = createLocalVarInit(init, var->var_type, &arrayInitRoot, tok);
+    // 三阶段: 针对存在初始化的二次覆盖  RHS 定义全部数组元素的初始化
+    Node* RHS = createInitAST(init, var->var_type, &arrayInitRoot, tok);
     return createAST(ND_COMMA, LHS, RHS, tok);
 }
 
@@ -1314,51 +1332,70 @@ static Initializer* initialize(Token** rest, Token* tok, Type* varType) {
     Initializer* Init = createInitializer(varType);
 
     // 1.2: 完成赋值数值与数据元素的映射
-    arrayAssignMap(rest, tok, Init);
+    ArrayOrStringInit(rest, tok, Init);
     return Init;
 }
 
-// 赋值元素多余 但是语法层面应该合法
-static Token* skipExcessElem(Token* tok) {
-    if (equal(tok, "{")) {
-        tok = skipExcessElem(tok->next);
-        return skip(tok, "}");
+// commit[100]: 在叶子结点层面支持字符串数组赋值
+static void ArrayOrStringInit(Token** rest, Token* tok, Initializer* Init) {
+    if (Init->initType->Kind == TY_ARRAY_LINER && tok->token_kind == TOKEN_STR) {
+        stringInitializer(rest, tok, Init);
+        return; // tok -> ","
     }
 
-    assign(&tok, tok);  // 没有 LHS 进行赋值  直接丢弃
-    return tok;
-}
-
-// 针对数组的每个元素进行赋值处理  结合实际的赋值数值  与初始化器对应起来
-static void arrayAssignMap(Token** rest, Token* tok, Initializer* Init) {
     if (Init->initType->Kind == TY_ARRAY_LINER) {
-        // 针对数组  递归找到可以执行赋值的叶子元素
-
-        // 根据递归层次找到被赋值元素的位置
-        // commit[98]: 因为默认存在和数组元素数量一致的初始化值  在赋值数量不足时防止过早结束
-        tok = skip(tok, "{");
-        // Tip: 如果一个都没有根本不会进入循环
-        for (int I = 0; !consume(rest, tok, "}"); I++) {
-            if (I > 0)
-                // 针对多余元素还要判断 "," 所以移动到循环体内部
-                tok = skip(tok, ",");
-
-            if (I < Init->initType->arrayElemCount)
-                // Tip: 使用完当前的数值就要更新到下一个  所以是 &tok
-                arrayAssignMap(&tok, tok, Init->children[I]);
-            else
-                tok = skipExcessElem(tok);
-        }
-        *rest = skip(tok, "}");
+        arrayRecurisve(rest, tok, Init);
         return;
     }
 
-    // 叶子元素直接赋值  解析得到不完整右侧赋值数值
+    else {
+        arrayInitializer(rest, tok, Init);
+        return;
+    }
+}
+
+// 根据数组的结构进行递归
+static void arrayRecurisve(Token** rest, Token* tok, Initializer* Init) {
+    // 根据递归层次找到被赋值元素的位置
+    // commit[98]: 因为默认存在和数组元素数量一致的初始化值  在赋值数量不足时防止过早结束
+    tok = skip(tok, "{");
+    // Tip: 如果一个都没有根本不会进入循环
+    for (int I = 0; !consume(rest, tok, "}"); I++) {
+        if (I > 0)
+            // 针对多余元素还要判断 "," 所以移动到循环体内部
+            tok = skip(tok, ",");
+
+        if (I < Init->initType->arrayElemCount)
+            // Tip: 使用完当前的数值就要更新到下一个  所以是 &tok
+            // 多维字符串通过数组结构递归到 tok->TOKEN_STR 的字符串叶子  需要调用到上一层进行判断
+            ArrayOrStringInit(&tok, tok, Init->children[I]);
+        else
+            tok = skipExcessElem(tok);
+    }
+}
+
+// 完整字符串数组元素的映射
+static void stringInitializer(Token** rest, Token* tok, Initializer* Init) {
+    // Tip: token_type 本身也会 + 1  所以不需要在 parse 考虑 '\0' 问题
+    int stringLen = MIN(Init->initType->arrayElemCount, tok->tokenType->arrayElemCount);
+
+    for (int I = 0; I < stringLen; I++) {
+        // 以 ASCII 编码的方式存储字符
+        Init->children[I]->initAssignRightExpr = numNode(tok->strContent[I], tok);
+    }
+
+    // 执行到 "\"" 跳过
+    *rest = tok->next;
+}
+
+// 标准类型数组元素映射
+static void arrayInitializer(Token** rest, Token* tok, Initializer* Init) {
     Init->initAssignRightExpr = assign(rest, tok);
+    return;
 }
 
 // 完成映射后  构造可翻译到汇编的 AST 树
-static Node* createLocalVarInit(Initializer* Init, Type* varType, arrayInitAST* arrayInitRoot, Token* tok) {
+static Node* createInitAST(Initializer* Init, Type* varType, arrayInitAST* arrayInitRoot, Token* tok) {
     // 针对数组结构递归到元素完成赋值语句的翻译  然后构造出合适的 AST 结构
     if (varType->Kind == TY_ARRAY_LINER) {
         // 维持 ND_COMMA.LHS 返回值为 NULL
@@ -1372,7 +1409,7 @@ static Node* createLocalVarInit(Initializer* Init, Type* varType, arrayInitAST* 
             arrayInitAST arrayElemInit = {.upDimension = arrayInitRoot, .elemOffset = currOffset};
 
             // 在确定下一层的递归过程中更新根节点和元素的偏移量
-            Node* RHS = createLocalVarInit(Init->children[currOffset], varType->Base, &arrayElemInit, tok);
+            Node* RHS = createInitAST(Init->children[currOffset], varType->Base, &arrayElemInit, tok);
 
             // 自底向上  挂载到最终的 AST 树上
             ND = createAST(ND_COMMA, ND, RHS, tok);
