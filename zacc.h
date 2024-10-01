@@ -211,7 +211,9 @@ typedef enum {
     ND_MOD,
 
     ND_ASSIGN,
-    ND_NULL_EXPR,   // 处理返回值的占位功能
+    ND_NULL_EXPR1,              // 处理 ND_COMMA 返回值的占位功能
+    ND_NULL_EXPR2,              // 处理无赋值情况的占位
+    ND_MEMZERO,                 // 初始化赋值的清零操作
 
     ND_EQ,
     ND_NEQ,

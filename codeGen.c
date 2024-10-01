@@ -304,7 +304,8 @@ static void calcuGen(Node* AST) {
 
     switch (AST->node_kind)
     {
-    case ND_NULL_EXPR:
+    case ND_NULL_EXPR1:
+    case ND_NULL_EXPR2:
         return;
 
     case ND_NUM:
@@ -357,6 +358,17 @@ static void calcuGen(Node* AST) {
 
         Store(AST->node_type);  // AST 的 node_type 肯定是来自 LHS 所以理论是无法判断出错的
 
+        return;
+    }
+
+    case ND_MEMZERO:
+    {
+        printLn("  # 对 %s 内存 %d(fp) 清零",AST->var->var_name, AST->var->offset);
+
+        // Tip: 这里的 I 表示该元素的实际大小  要考虑到 BaseSize
+        // Q: 这里没有视频里提到的优化  为什么  分配空间超过了 int 的表示范围  和 int 无关  是 sb 指令的问题
+        for (int I = 0; I < AST->var->var_type->BaseSize; I++)
+            printLn("  sb zero, %d(fp)", AST->var->offset + I);
         return;
     }
 

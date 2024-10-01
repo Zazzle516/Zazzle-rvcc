@@ -364,7 +364,7 @@ static Initializer* createInitializer(Type* varType) {
     Init->initType = varType;
 
     if (varType->Kind == TY_ARRAY_LINER) {
-        // 首先计算出 (n - 1) 维度的全部的指针空间
+        // 首先分配 (n - 1) 维度的全部的指针空间
         Init->children = calloc(varType->arrayElemCount, sizeof(Initializer*));
 
         for (int I = 0; I < varType->arrayElemCount; ++I)
@@ -1298,7 +1298,14 @@ static Node* initializerNode(Token** rest, Token* tok, Object* var) {
 
     // 二阶段: 根据 var 定义数组初始化结构基址
     arrayInitAST arrayInitRoot = {NULL, 0, var};
-    return createLocalVarInit(init, var->var_type, &arrayInitRoot, tok);
+
+    // 2.1: LHS 除了最后一个元素的所有元素完成赋值 => 针对完整的数组空间定义 codeGen 赋零操作
+    Node* LHS = createNode(ND_MEMZERO, tok);
+    LHS->var = var;
+
+    // 2.2: 针对存在初始化的二次覆盖  RHS 定义全部数组元素的初始化
+    Node* RHS = createLocalVarInit(init, var->var_type, &arrayInitRoot, tok);
+    return createAST(ND_COMMA, LHS, RHS, tok);
 }
 
 // 初始化器的数据处理
@@ -1316,15 +1323,17 @@ static void arrayAssignMap(Token** rest, Token* tok, Initializer* Init) {
     if (Init->initType->Kind == TY_ARRAY_LINER) {
         // 针对数组  递归找到可以执行赋值的叶子元素
 
-        // 根据递归层次找到赋值数值的位置
+        // 根据递归层次找到被赋值元素的位置
+        // commit[98]: 因为默认存在和数组元素数量一致的初始化值  在赋值数量不足时防止过早结束
         tok = skip(tok, "{");
-        for (int I = 0; I < Init->initType->arrayElemCount; I++) {
+        // Tip: 如果一个都没有根本不会进入循环
+        for (int I = 0; I < Init->initType->arrayElemCount && !equal(tok, "}"); I++) {
             if (I > 0)
                 tok = skip(tok, ",");
             // Tip: 使用完当前的数值就要更新到下一个  所以是 &tok
             arrayAssignMap(&tok, tok, Init->children[I]);
         }
-        *rest = skip(tok, "}"); // 当前层的数组元素赋值解析完成
+        *rest = skip(tok, "}");
         return;
     }
 
@@ -1336,8 +1345,9 @@ static void arrayAssignMap(Token** rest, Token* tok, Initializer* Init) {
 static Node* createLocalVarInit(Initializer* Init, Type* varType, arrayInitAST* arrayInitRoot, Token* tok) {
     // 针对数组结构递归到元素完成赋值语句的翻译  然后构造出合适的 AST 结构
     if (varType->Kind == TY_ARRAY_LINER) {
-        // 维持 ND_COMMA 返回值为 NULL
-        Node* ND = createNode(ND_NULL_EXPR, tok);
+        // 维持 ND_COMMA.LHS 返回值为 NULL
+        // Tip: 数组赋值语句在 rvcc 中返回最后一个赋值数值
+        Node* ND = createNode(ND_NULL_EXPR1, tok);
 
         for (int currOffset = 0; currOffset < varType->arrayElemCount; currOffset++) {
             // desig.var在 initializerNode() 中初始化为数组的基址
@@ -1353,6 +1363,10 @@ static Node* createLocalVarInit(Initializer* Init, Type* varType, arrayInitAST* 
         }
         return ND;
     }
+
+    if (!Init->initAssignRightExpr)
+        // 针对无赋值的情况 使用 NULL 占位
+        return createNode(ND_NULL_EXPR2, tok);
 
     // lvalue: 通过 DEREF 构造当前数组元素的地址
     Node* LHS = initDesigExpr(arrayInitRoot, tok);
