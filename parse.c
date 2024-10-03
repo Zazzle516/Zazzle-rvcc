@@ -103,10 +103,11 @@ struct initStructInfo {
 
 // commit[100]: 支持字符串数组和一般数组初始化
 // commit[102]: 支持结构体初始化 ?? 和数组有关系吗
-// initializer = stringInitializer | dataInitializer | structInitializer | assign
+// initializer = stringInitializer | dataInitializer | structInitializer | unionInitializer | assign
 // stringInitializer.
 // arrayInittializer = "{" initializer ("," initializer)* "}"
 // structInitializer = "{" initializer ("," initializer)* "}"
+// unionInitializer = "{" initializer "}"
 
 // commit[26] [27] [28] [86]: 含参的函数定义  对数组变量定义的支持  多维数组支持  灵活数组的定义
 // typeSuffix = ("(" funcFormalParams | "[" arrayDimensions | ε
@@ -424,6 +425,7 @@ static void arrayRecurisve(Token** rest, Token* tok, Initializer* Init);
 static void stringInitializer(Token** rest, Token* tok, Initializer* Init);
 static void dataInitializer(Token** rest, Token* tok, Initializer* Init);
 static void structInitializer(Token** rest, Token* tok, Initializer* Init);
+static void unionInitializer(Token** rest, Token* tok, Initializer* Init);
 static Node* createInitAST(Initializer* Init, Type* varType, initStructInfo* arrayInitRoot, Token* tok);
 static Node* initASTLeft(initStructInfo* initInfo, Token* tok);
 
@@ -450,7 +452,8 @@ static Initializer* createInitializer(Type* varType, bool IsArrayFixed) {
             Init->children[I] = createInitializer(varType->Base, false);    // 重置到 false
     }
 
-    if (varType->Kind == TY_STRUCT) {
+    // Tip: 这里直接复用有问题的  这里是根据成员的数量分配空间的  而不是大小  后面应该会改掉 Q??
+    if (varType->Kind == TY_STRUCT || varType->Kind == TY_UNION) {
         // Idx 是成员内部的属性  而成员本身又是链表存储的  没办法直接读取  所以需要遍历
         int len = 0;
         for (structMember* currMem = varType->structMemLink; currMem; currMem = currMem->next)
@@ -1438,6 +1441,11 @@ static void DataInit(Token** rest, Token* tok, Initializer* Init) {
         return;
     }
 
+    if (Init->initType->Kind == TY_UNION) {
+        unionInitializer(rest, tok, Init);
+        return;
+    }
+
     else {
         // 任意数据结构的递归终点
         dataInitializer(rest, tok, Init);
@@ -1523,6 +1531,14 @@ static void structInitializer(Token** rest, Token* tok, Initializer* Init) {
     }
 }
 
+// commit[103]: 联合体初始化
+static void unionInitializer(Token** rest, Token* tok, Initializer* Init) {
+    // Tip: 联合体相对于结构体只有一个成员  不需要进行循环  目前默认存储在第一个成员中
+    tok = skip(tok, "{");
+    DataInit(&tok, tok, Init->children[0]);
+    *rest = skip(tok, "}");
+}
+
 // 把映射元素填入 Init 数据结构后  可以开始构造翻译到汇编的 AST 树
 static Node* createInitAST(Initializer* Init, Type* varType, initStructInfo* arrayInitRoot, Token* tok) {
     // 针对数组结构递归到元素完成赋值语句的翻译  然后构造出合适的 AST 结构
@@ -1560,6 +1576,13 @@ static Node* createInitAST(Initializer* Init, Type* varType, initStructInfo* arr
             ND = createAST(ND_COMMA, ND, RHS, tok);
         }
         return ND;
+    }
+
+    if (varType->Kind == TY_UNION) {
+        initStructInfo unionInit = {.upDimension = arrayInitRoot,
+                                    .elemOffset = 0,
+                                    .initStructMem = varType->structMemLink};
+        return createInitAST(Init->children[0], varType->structMemLink->memberType, &unionInit, tok);
     }
 
     if (!Init->initAssignRightExpr)
