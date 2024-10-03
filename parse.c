@@ -763,6 +763,9 @@ static Type* declspec(Token** rest, Token* tok, VarAttr* varAttr) {
                 // case2: 对非 typedef 的情况进行多类型声明的报错  比如 {int struct}
                 break;
 
+            // Q: 为什么在判断到特殊类型后不直接返回  毕竟也不能再出现类型关键字了
+            // A: 统一通过 typeCounter 处理了
+
             if (equal(tok, "struct")) {
                 BaseType = structDeclaration(&tok, tok->next);
             }
@@ -1376,8 +1379,8 @@ static Node* initializerNode(Token** rest, Token* tok, Object* var) {
     // commit[101]: 在赋值元素解析后更新 linerArray.BaseSize
     Initializer* init = initialize(rest, tok, var->var_type, &var->var_type);
 
-    // 二阶段: LHS 除了最后一个元素的所有元素完成赋值 => 针对完整的数组空间定义 codeGen 赋零操作
-    initStructInfo arrayInitRoot = {  .upDimension = NULL,
+    // 二阶段: LHS 除了最后一个元素的所有元素完成赋值 => 针对 BaseSize 进行 codeGen 赋零操作
+    initStructInfo arrayInitRoot = {.upDimension = NULL,
                                     .elemOffset = 0,
                                     .initStructMem = NULL,
                                     .var = var };
@@ -1397,7 +1400,7 @@ static Initializer* initialize(Token** rest, Token* tok, Type* varType, Type** r
 
     // 1.2: 完成赋值数值与数据元素的映射
     // case1: 针对空数组会通过两次遍历重置 Init.children
-    // case2: 完成结构体成员的赋值映射
+    // case2: 完成结构体成员的赋值映射  &&  完成结构体实例间的赋值
     DataInit(rest, tok, Init);
 
     // Q: 这里的 Type** 在更新什么
@@ -1419,6 +1422,18 @@ static void DataInit(Token** rest, Token* tok, Initializer* Init) {
     }
 
     if (Init->initType->Kind == TY_STRUCT) {
+        // commit[103]: 支持结构体实例之间的赋值
+        if (!equal(tok, "{")) {
+            Node* Expr = assign(rest, tok);
+
+            // 针对赋值量进行合法化检查  但是这里没有对类型的一致性进行检查
+            addType(Expr);
+            if (Expr->node_type->Kind == TY_STRUCT) {
+                Init->initAssignRightExpr = Expr;
+                return;
+            }
+        }
+
         structInitializer(rest, tok, Init);
         return;
     }
@@ -1508,7 +1523,7 @@ static void structInitializer(Token** rest, Token* tok, Initializer* Init) {
     }
 }
 
-// 完成映射后  构造可翻译到汇编的 AST 树
+// 把映射元素填入 Init 数据结构后  可以开始构造翻译到汇编的 AST 树
 static Node* createInitAST(Initializer* Init, Type* varType, initStructInfo* arrayInitRoot, Token* tok) {
     // 针对数组结构递归到元素完成赋值语句的翻译  然后构造出合适的 AST 结构
     if (varType->Kind == TY_ARRAY_LINER) {
@@ -1531,14 +1546,15 @@ static Node* createInitAST(Initializer* Init, Type* varType, initStructInfo* arr
         return ND;
     }
 
-    if (varType->Kind == TY_STRUCT) {
+    // 如果是结构体实例赋值  右侧的映射本身就是 AST 结构  不需要额外处理
+    if (varType->Kind == TY_STRUCT && !Init->initAssignRightExpr) {
         Node* ND = createNode(ND_NULL_EXPR1, tok);
 
         // 结构体相对于数组  区别在成员类型大小不一定相同  所以遍历通过成员本身进行遍历
         for (structMember* currMem = varType->structMemLink; currMem; currMem = currMem->next) {
             initStructInfo structMemInit = {.upDimension = arrayInitRoot,
-                                          .elemOffset = 0,
-                                          .initStructMem = currMem };
+                                            .elemOffset = 0,
+                                            .initStructMem = currMem };
 
             Node* RHS = createInitAST(Init->children[currMem->Idx], currMem->memberType, &structMemInit, tok);
             ND = createAST(ND_COMMA, ND, RHS, tok);
