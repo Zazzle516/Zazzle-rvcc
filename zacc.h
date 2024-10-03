@@ -110,7 +110,9 @@ struct structMember {
 
     Type* memberType;
     Token* memberName;
-    int offset;             // 记录该成员相对于结构体的偏移量
+    int offset;             // 从字节角度: 记录该成员相对于结构体的偏移量
+
+    int Idx;                // 从逻辑角度: 记录每个成员的下标  同时也作为成员比较的标志
 };
 
 // 针对不同类型额外保存的数据

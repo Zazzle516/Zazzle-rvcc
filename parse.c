@@ -65,12 +65,13 @@ struct Initializer {
 };
 
 // 针对数组初始化 AST 特化的数据结构
-typedef struct arrayInitAST arrayInitAST;
-struct arrayInitAST {
-    arrayInitAST* upDimension;      // 指向数组的上一层维度
-    int elemOffset;                 // 元素相对于当前维度基址的偏移量
+typedef struct initStructInfo initStructInfo;
+struct initStructInfo {
+    initStructInfo* upDimension;        // 指向数组的上一层维度
+    int elemOffset;                     // 元素相对于当前维度基址的偏移量
 
-    Object* var;                    // 表示当前数组元素
+    Object* var;                        // 表示当前数组元素
+    structMember* initStructMem;
 };
 
 // parse() = (functionDefinition | globalVariable | typedef)*
@@ -101,9 +102,11 @@ struct arrayInitAST {
 //                          ("," declarator ("=" initializer)?)*)? ";"
 
 // commit[100]: 支持字符串数组和一般数组初始化
-// initializer = stringInitializer | arrayInitializer | assign
+// commit[102]: 支持结构体初始化 ?? 和数组有关系吗
+// initializer = stringInitializer | dataInitializer | structInitializer | assign
 // stringInitializer.
 // arrayInittializer = "{" initializer ("," initializer)* "}"
+// structInitializer = "{" initializer ("," initializer)* "}"
 
 // commit[26] [27] [28] [86]: 含参的函数定义  对数组变量定义的支持  多维数组支持  灵活数组的定义
 // typeSuffix = ("(" funcFormalParams | "[" arrayDimensions | ε
@@ -416,12 +419,13 @@ static Node* funcall(Token** rest, Token* tok);
 /* 初始化器 */
 static Node* initializerNode(Token** rest, Token* tok, Object* var);
 static Initializer* initialize(Token** rest, Token* tok, Type* varType, Type** reSetType);
-static void ArrayOrStringInit(Token** rest, Token* tok, Initializer* Init);
+static void DataInit(Token** rest, Token* tok, Initializer* Init);
 static void arrayRecurisve(Token** rest, Token* tok, Initializer* Init);
 static void stringInitializer(Token** rest, Token* tok, Initializer* Init);
-static void arrayInitializer(Token** rest, Token* tok, Initializer* Init);
-static Node* createInitAST(Initializer* Init, Type* varType, arrayInitAST* arrayInitRoot, Token* tok);
-static Node* initDesigExpr(arrayInitAST* Desig, Token* tok);
+static void dataInitializer(Token** rest, Token* tok, Initializer* Init);
+static void structInitializer(Token** rest, Token* tok, Initializer* Init);
+static Node* createInitAST(Initializer* Init, Type* varType, initStructInfo* arrayInitRoot, Token* tok);
+static Node* initASTLeft(initStructInfo* initInfo, Token* tok);
 
 // commit[97]: 分配空间
 // Q: 数组定义维度与赋值元素维度不同怎么办  A: case1: 定义维度高 补零    case2: 赋值维度高 忽略
@@ -446,7 +450,22 @@ static Initializer* createInitializer(Type* varType, bool IsArrayFixed) {
             Init->children[I] = createInitializer(varType->Base, false);    // 重置到 false
     }
 
-    return Init;    // 非数组就直接返回了一个新的 Init 结点
+    if (varType->Kind == TY_STRUCT) {
+        // Idx 是成员内部的属性  而成员本身又是链表存储的  没办法直接读取  所以需要遍历
+        int len = 0;
+        for (structMember* currMem = varType->structMemLink; currMem; currMem = currMem->next)
+            ++len;
+
+        // 根据结构体的成员数量进行指针分配  每个成员都有自己的初始化器
+        Init->children = calloc(len, sizeof(Initializer*));
+
+        for (structMember* currMem = varType->structMemLink; currMem; currMem = currMem->next)
+            Init->children[currMem->Idx] = createInitializer(currMem->memberType, false);   // 通过 Idx 偏移量找到目标指针
+
+        return Init;
+    }
+
+    return Init;
 }
 
 // 赋值元素多余 但是语法层面应该合法
@@ -460,6 +479,7 @@ static Token* skipExcessElem(Token* tok) {
     return tok;
 }
 
+// 针对空数组定义需要通过赋值元素确认数组长度
 static int countArrayInitElem(Token* tok, Type* varType) {
     Initializer* Dummy = createInitializer(varType->Base, false);
     int I = 0;
@@ -468,8 +488,8 @@ static int countArrayInitElem(Token* tok, Type* varType) {
         if (I > 0)
             tok = skip(tok, ",");
 
-        // 这个函数的目的只是确定数组长度  只有确定长度后才能二次调用 createInitializer()  所以丢弃
-        ArrayOrStringInit(&tok, tok, Dummy);
+        // 这个函数的目的只是确定数组长度  只有确定长度后才能二次调用 createInitializer() 所以丢弃
+        DataInit(&tok, tok, Dummy);
     }
     return I;
 }
@@ -1053,6 +1073,7 @@ static Object* newStringLiteral(char* strContent, Type* strType) {
 static void structMembers(Token** rest, Token* tok, Type* structType) {
     structMember HEAD = {};
     structMember* Curr = &HEAD;
+    int Idx = 0;
 
     while (!equal(tok, "}")) {
         // Tip: typedef 不可以在 struct 定义内部使用  必须是标准类型
@@ -1067,9 +1088,11 @@ static void structMembers(Token** rest, Token* tok, Type* structType) {
             // 结构体中的每一个成员都作为 struct structMember 存储
             structMember* newStructMember = calloc(1, sizeof(structMember));
 
+            // Tip: 因为现在无法确定 STRUCT or UNION 所以只处理 Idx 而不是 Offset
             // 根据 declspec 类型前缀 使用 declarator 解析各自的类型后缀
             newStructMember->memberType = declarator(&tok, tok, memberType);
             newStructMember->memberName = newStructMember->memberType->Name;
+            newStructMember->Idx = Idx++;
 
             // 此时的成员变量是顺序存在 structType 中  因为涉及后续的 Offset 的 maxOffset  所以必须是顺序的
             Curr->next = newStructMember;
@@ -1323,7 +1346,7 @@ static Node* declaration(Token** rest, Token* tok, Type* BaseType) {
         Object* var = newLocal(getVarName(isPtr->Name), isPtr);
 
         // commit[97]: 修改了判定逻辑  转移到初始化器中进行初始化
-        if (equal(tok, "=")) {        
+        if (equal(tok, "=")) {
             Node* LHS = initializerNode(&tok, tok->next, var);
             Curr->next = createSingle(ND_STAMT, LHS, tok);
             Curr = Curr->next;
@@ -1354,7 +1377,10 @@ static Node* initializerNode(Token** rest, Token* tok, Object* var) {
     Initializer* init = initialize(rest, tok, var->var_type, &var->var_type);
 
     // 二阶段: LHS 除了最后一个元素的所有元素完成赋值 => 针对完整的数组空间定义 codeGen 赋零操作
-    arrayInitAST arrayInitRoot = {NULL, 0, var};
+    initStructInfo arrayInitRoot = {  .upDimension = NULL,
+                                    .elemOffset = 0,
+                                    .initStructMem = NULL,
+                                    .var = var };
     Node* LHS = createNode(ND_MEMZERO, tok);
     LHS->var = var;
 
@@ -1369,8 +1395,10 @@ static Initializer* initialize(Token** rest, Token* tok, Type* varType, Type** r
     // 非空数组会重置到 false 所以默认 true 传递
     Initializer* Init = createInitializer(varType, true);
 
-    // 1.2: 完成赋值数值与数据元素的映射  针对空数组会通过两次遍历重置 Init.children
-    ArrayOrStringInit(rest, tok, Init);
+    // 1.2: 完成赋值数值与数据元素的映射
+    // case1: 针对空数组会通过两次遍历重置 Init.children
+    // case2: 完成结构体成员的赋值映射
+    DataInit(rest, tok, Init);
 
     // Q: 这里的 Type** 在更新什么
     // A: 更新变量结点的 varType 从空数组 BasiSize = (-1 * arrayElem) 更新到真实大小
@@ -1378,8 +1406,8 @@ static Initializer* initialize(Token** rest, Token* tok, Type* varType, Type** r
     return Init;
 }
 
-// commit[100]: 在叶子结点层面支持字符串数组赋值
-static void ArrayOrStringInit(Token** rest, Token* tok, Initializer* Init) {
+// 针对不同的数据类型进行递归找到可以进行赋值的叶子结点
+static void DataInit(Token** rest, Token* tok, Initializer* Init) {
     if (Init->initType->Kind == TY_ARRAY_LINER && tok->token_kind == TOKEN_STR) {
         stringInitializer(rest, tok, Init);
         return; // tok -> ","
@@ -1390,8 +1418,14 @@ static void ArrayOrStringInit(Token** rest, Token* tok, Initializer* Init) {
         return;
     }
 
+    if (Init->initType->Kind == TY_STRUCT) {
+        structInitializer(rest, tok, Init);
+        return;
+    }
+
     else {
-        arrayInitializer(rest, tok, Init);
+        // 任意数据结构的递归终点
+        dataInitializer(rest, tok, Init);
         return;
     }
 }
@@ -1408,7 +1442,7 @@ static void arrayRecurisve(Token** rest, Token* tok, Initializer* Init) {
         int len = countArrayInitElem(tok, Init->initType);
         *Init = *createInitializer(
                     linerArrayType(Init->initType->Base, len),
-                    false);
+                    false);     // Tip: 因为这里传递了 false  所以空数组解析只支持到一维  更高维度的 BaseSize 无法被重置
     }
 
     // Tip: 如果一个都没有根本不会进入循环
@@ -1421,7 +1455,7 @@ static void arrayRecurisve(Token** rest, Token* tok, Initializer* Init) {
         if (I < Init->initType->arrayElemCount)
             // Tip: 使用完当前的数值就要更新到下一个  所以是 &tok
             // 多维字符串通过数组结构递归到 tok->TOKEN_STR 的字符串叶子  需要调用到上一层进行判断
-            ArrayOrStringInit(&tok, tok, Init->children[I]);
+            DataInit(&tok, tok, Init->children[I]);
         else
             tok = skipExcessElem(tok);
     }
@@ -1431,6 +1465,7 @@ static void arrayRecurisve(Token** rest, Token* tok, Initializer* Init) {
 static void stringInitializer(Token** rest, Token* tok, Initializer* Init) {
     if (Init->isArrayFixed)
         *Init = *createInitializer(
+                    // Tip: String 这里使用 tokType 和 Array 有区别
                     linerArrayType(Init->initType->Base, tok->tokenType->arrayElemCount),
                     false);
 
@@ -1447,13 +1482,34 @@ static void stringInitializer(Token** rest, Token* tok, Initializer* Init) {
 }
 
 // 标准类型数组元素映射
-static void arrayInitializer(Token** rest, Token* tok, Initializer* Init) {
+static void dataInitializer(Token** rest, Token* tok, Initializer* Init) {
     Init->initAssignRightExpr = assign(rest, tok);
     return;
 }
 
+// commit[102]: 结构体初始化
+static void structInitializer(Token** rest, Token* tok, Initializer* Init) {
+    tok = skip(tok, "{");
+    structMember* currMem = Init->initType->structMemLink;
+
+    while (!consume(rest, tok, "}")) {
+        if (currMem != Init->initType->structMemLink)
+            // 与第一个成员进行比较  即使类型相同  通过 Idx 也能比较出区别  如果不是第一个成员就需要跳过 ","
+            tok = skip(tok, ",");
+
+        if (currMem) {
+            DataInit(&tok, tok, Init->children[currMem->Idx]);
+            currMem = currMem->next;
+        }
+
+        else {
+            tok = skipExcessElem(tok);
+        }
+    }
+}
+
 // 完成映射后  构造可翻译到汇编的 AST 树
-static Node* createInitAST(Initializer* Init, Type* varType, arrayInitAST* arrayInitRoot, Token* tok) {
+static Node* createInitAST(Initializer* Init, Type* varType, initStructInfo* arrayInitRoot, Token* tok) {
     // 针对数组结构递归到元素完成赋值语句的翻译  然后构造出合适的 AST 结构
     if (varType->Kind == TY_ARRAY_LINER) {
         // 维持 ND_COMMA.LHS 返回值为 NULL
@@ -1462,9 +1518,9 @@ static Node* createInitAST(Initializer* Init, Type* varType, arrayInitAST* array
 
         for (int currOffset = 0; currOffset < varType->arrayElemCount; currOffset++) {
             // desig.var在 initializerNode() 中初始化为数组的基址
-            // 因为只有数组的根节点被定义  如果是 k 维数组在 initDesigExpr() 中会递归 k 次
+            // 因为只有数组的根节点被定义  如果是 k 维数组在 initASTLeft() 中会递归 k 次
             // 通过字面量定义当前数组元素的基本信息  通过 upDimension 维持了链表结构  找到该元素相对于当前维度基址的偏移量
-            arrayInitAST arrayElemInit = {.upDimension = arrayInitRoot, .elemOffset = currOffset};
+            initStructInfo arrayElemInit = {.upDimension = arrayInitRoot, .elemOffset = currOffset};
 
             // 在确定下一层的递归过程中更新根节点和元素的偏移量
             Node* RHS = createInitAST(Init->children[currOffset], varType->Base, &arrayElemInit, tok);
@@ -1475,28 +1531,51 @@ static Node* createInitAST(Initializer* Init, Type* varType, arrayInitAST* array
         return ND;
     }
 
+    if (varType->Kind == TY_STRUCT) {
+        Node* ND = createNode(ND_NULL_EXPR1, tok);
+
+        // 结构体相对于数组  区别在成员类型大小不一定相同  所以遍历通过成员本身进行遍历
+        for (structMember* currMem = varType->structMemLink; currMem; currMem = currMem->next) {
+            initStructInfo structMemInit = {.upDimension = arrayInitRoot,
+                                          .elemOffset = 0,
+                                          .initStructMem = currMem };
+
+            Node* RHS = createInitAST(Init->children[currMem->Idx], currMem->memberType, &structMemInit, tok);
+            ND = createAST(ND_COMMA, ND, RHS, tok);
+        }
+        return ND;
+    }
+
     if (!Init->initAssignRightExpr)
         // 针对无赋值的情况 使用 NULL 占位
         return createNode(ND_NULL_EXPR2, tok);
 
     // lvalue: 通过 DEREF 构造当前数组元素的地址
-    Node* LHS = initDesigExpr(arrayInitRoot, tok);
+    Node* LHS = initASTLeft(arrayInitRoot, tok);
     // rvalue: 找到在一阶段解析的对应数值
     Node* RHS = Init->initAssignRightExpr;
     return createAST(ND_ASSIGN, LHS, RHS, tok);
 }
 
-// 找到初始化数组目标元素的地址
-static Node* initDesigExpr(arrayInitAST* Desig, Token* tok) {
-    if (Desig->var)
-        // 找到数组的根地址  Tip: 这个递归效率会比较低
-        return singleVarNode(Desig->var, tok);
+// 获取初始化赋值的 LHS 的地址
+static Node* initASTLeft(initStructInfo* initInfo, Token* tok) {
+    if (initInfo->var)
+        // 找到根地址  Tip: 这个递归效率会比较低
+        return singleVarNode(initInfo->var, tok);
 
+    if (initInfo->initStructMem) {
+        // 通过 ND_STRUCT_MEMBER 构造对成员变量的访问结构
+        Node* ND = createSingle(ND_STRUCT_MEMEBER, initASTLeft(initInfo->upDimension, tok), tok);
+        ND->structTargetMember = initInfo->initStructMem;
+        return ND;
+    }
+
+    // 找到初始化数组目标元素的地址
     // 通过 k 层递归找到当前元素所处维度的基址
-    Node* LHS = initDesigExpr(Desig->upDimension, tok);
+    Node* LHS = initASTLeft(initInfo->upDimension, tok);
 
     // 得到该元素在当前维度中的偏移量
-    Node* RHS = numNode(Desig->elemOffset, tok);
+    Node* RHS = numNode(initInfo->elemOffset, tok);
 
     // 得到该元素在栈空间分配的具体位置
     return createSingle(ND_DEREF, newPtrAdd(LHS, RHS, tok), tok);
