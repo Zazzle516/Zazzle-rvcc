@@ -59,6 +59,7 @@ struct Initializer {
     Type* initType;
     Token* tok;
     Initializer** children;     // 针对多维数组
+    bool isArrayFixed;          // 标志当前数组大小是否已经固定  如果未声明  需要等到右侧解析完成后重新构造
 
     Node* initAssignRightExpr;  // 储存初始化映射的赋值语句
 };
@@ -66,10 +67,10 @@ struct Initializer {
 // 针对数组初始化 AST 特化的数据结构
 typedef struct arrayInitAST arrayInitAST;
 struct arrayInitAST {
-    arrayInitAST* upDimension;
-    int elemOffset;
+    arrayInitAST* upDimension;      // 指向数组的上一层维度
+    int elemOffset;                 // 元素相对于当前维度基址的偏移量
 
-    Object* var;    // 表示当前数组元素
+    Object* var;                    // 表示当前数组元素
 };
 
 // parse() = (functionDefinition | globalVariable | typedef)*
@@ -413,37 +414,8 @@ static Node* primary_class_expr(Token** rest, Token* tok);
 static Node* funcall(Token** rest, Token* tok);
 
 /* 初始化器 */
-
-// commit[97]: 分配空间
-static Initializer* createInitializer(Type* varType) {
-    Initializer* Init = calloc(1, sizeof(Initializer));
-    Init->initType = varType;
-
-    if (varType->Kind == TY_ARRAY_LINER) {
-        // 首先分配 (n - 1) 维度的全部的指针空间
-        Init->children = calloc(varType->arrayElemCount, sizeof(Initializer*));
-
-        for (int I = 0; I < varType->arrayElemCount; ++I)
-            // 完整实际的空间分配后再进行指针的指向
-            Init->children[I] = createInitializer(varType->Base);
-    }
-
-    return Init;
-}
-
-// 赋值元素多余 但是语法层面应该合法
-static Token* skipExcessElem(Token* tok) {
-    if (equal(tok, "{")) {
-        tok = skipExcessElem(tok->next);
-        return skip(tok, "}");
-    }
-
-    assign(&tok, tok);  // 没有 LHS 进行赋值  直接丢弃
-    return tok;
-}
-
 static Node* initializerNode(Token** rest, Token* tok, Object* var);
-static Initializer* initialize(Token** rest, Token* tok, Type* varType);
+static Initializer* initialize(Token** rest, Token* tok, Type* varType, Type** reSetType);
 static void ArrayOrStringInit(Token** rest, Token* tok, Initializer* Init);
 static void arrayRecurisve(Token** rest, Token* tok, Initializer* Init);
 static void stringInitializer(Token** rest, Token* tok, Initializer* Init);
@@ -451,6 +423,56 @@ static void arrayInitializer(Token** rest, Token* tok, Initializer* Init);
 static Node* createInitAST(Initializer* Init, Type* varType, arrayInitAST* arrayInitRoot, Token* tok);
 static Node* initDesigExpr(arrayInitAST* Desig, Token* tok);
 
+// commit[97]: 分配空间
+// Q: 数组定义维度与赋值元素维度不同怎么办  A: case1: 定义维度高 补零    case2: 赋值维度高 忽略
+static Initializer* createInitializer(Type* varType, bool IsArrayFixed) {
+    Initializer* Init = calloc(1, sizeof(Initializer));
+    Init->initType = varType;
+
+    if (varType->Kind == TY_ARRAY_LINER) {
+        // 判断的核心仍然是 BaseSize 的大小  IsArrayFixed 根据调用情况是自定义传参
+        if (IsArrayFixed == true && varType->BaseSize < 0) {
+            Init->isArrayFixed = true;
+            return Init;
+        }
+
+        // 已经声明数组空间的情况 isArrayFixed = false
+        // 首先分配 (n - 1) 维度的全部的指针空间
+        // Tip: 在 A[][] 的测试中 calloc() 的第一个参数 (-1) 被作为正数解析 (2^64 - 1)  因为 size_t 是无符号类型
+        Init->children = calloc(varType->arrayElemCount, sizeof(Initializer*));
+
+        for (int I = 0; I < varType->arrayElemCount; ++I)
+            // 完整实际的空间分配后再进行指针的指向
+            Init->children[I] = createInitializer(varType->Base, false);    // 重置到 false
+    }
+
+    return Init;    // 非数组就直接返回了一个新的 Init 结点
+}
+
+// 赋值元素多余 但是语法层面应该合法
+static Token* skipExcessElem(Token* tok) {
+    if (equal(tok, "{")) {
+        tok = skipExcessElem(tok->next);
+        return skip(tok, "}");  // 偶数维空数组的报错位置
+    }
+
+    assign(&tok, tok);  // 没有 LHS 进行赋值  直接丢弃
+    return tok;
+}
+
+static int countArrayInitElem(Token* tok, Type* varType) {
+    Initializer* Dummy = createInitializer(varType->Base, false);
+    int I = 0;
+
+    for (; !equal(tok, "}"); I++) {
+        if (I > 0)
+            tok = skip(tok, ",");
+
+        // 这个函数的目的只是确定数组长度  只有确定长度后才能二次调用 createInitializer()  所以丢弃
+        ArrayOrStringInit(&tok, tok, Dummy);
+    }
+    return I;
+}
 
 /* 常数表达式的预计算 */
 static int64_t eval(Node* ND) {
@@ -883,6 +905,7 @@ static Type* declarator(Token** rest, Token* tok, Type* Base) {
 }
 
 // commit[86]: 允许灵活数组定义
+// Tip: 即使是多维空数组 BasesSize 无法判断  但 arrayElemCount 一定是负数  也是 commit[101] 的判断方式
 static Type* arrayDimensions(Token** rest, Token* tok, Type* ArrayBaseType) {
     if (equal(tok, "]")) {
         // 无具体大小数组  人为定义为 (-1)  便于后面判断合法性
@@ -1283,17 +1306,20 @@ static Node* declaration(Token** rest, Token* tok, Type* BaseType) {
         if ((variable_count ++) > 0)
             tok = skip(tok, ",");   // Tip: 函数嵌套定义报错位置
 
+        // 在后缀判断中针对空数组定义 BaseSize < 0
+        // Tip: 仍然无法判断多维空数组
         Type* isPtr = declarator(&tok, tok, BaseType);
 
+        // Q: 为什么删掉了根据 token 报错的部分  改到了根据 Type 报错  实际上跳过了这里的 bug
+        // A: 因为此时还没有解析到后面的赋值部分  直接判断为错误是不对的  等到确认这个空数组没有赋值才能报错
         // commit[86]: 目前只能针对奇数维数组定义  因为每个空维度被记 (-1)
-        // 负负相乘为正  偶数维数组无法判断是错误的
-        if (isPtr->BaseSize < 0)
-            tokenErrorAt(tok, "variable has incomplete type");
+        // 负负相乘为正  偶数维数组无法判断
+        // if (isPtr->BaseSize < 0)
+        //     tokenErrorAt(tok, "variable has incomplete type");
 
         // commit[61]: 在 declarator() 解析完整类型后判断 void 非法
         if (isPtr->Kind == TY_VOID)
             tokenErrorAt(tok, "variable declared void");
-
         Object* var = newLocal(getVarName(isPtr->Name), isPtr);
 
         // commit[97]: 修改了判定逻辑  转移到初始化器中进行初始化
@@ -1302,6 +1328,16 @@ static Node* declaration(Token** rest, Token* tok, Type* BaseType) {
             Curr->next = createSingle(ND_STAMT, LHS, tok);
             Curr = Curr->next;
         }
+
+        // commit[101]: 从 token 报错优化到了 Type 报错
+        // Q: 为什么判断用 Object 而报错用 Type
+        // A: 针对空数组在 initialize() 通过 reSetType 重置后会更新 BaseSize
+        if (var->var_type->BaseSize < 0)
+            tokenErrorAt(isPtr->Name, "variable has incomplete type");
+
+        // Q: 这个报错是怎么考虑的
+        if (var->var_type->Kind == TY_VOID)
+            tokenErrorAt(isPtr->Name, "variable declared void");
     }
 
     // 4. 构造 Block 返回结果
@@ -1314,7 +1350,8 @@ static Node* declaration(Token** rest, Token* tok, Type* BaseType) {
 // commit[97]: 最顶层的初始化器结点
 static Node* initializerNode(Token** rest, Token* tok, Object* var) {
     // 一阶段: 完成 init 数据结构分配  赋值数值的映射
-    Initializer* init = initialize(rest, tok, var->var_type);
+    // commit[101]: 在赋值元素解析后更新 linerArray.BaseSize
+    Initializer* init = initialize(rest, tok, var->var_type, &var->var_type);
 
     // 二阶段: LHS 除了最后一个元素的所有元素完成赋值 => 针对完整的数组空间定义 codeGen 赋零操作
     arrayInitAST arrayInitRoot = {NULL, 0, var};
@@ -1327,12 +1364,17 @@ static Node* initializerNode(Token** rest, Token* tok, Object* var) {
 }
 
 // 初始化器的数据处理
-static Initializer* initialize(Token** rest, Token* tok, Type* varType) {
+static Initializer* initialize(Token** rest, Token* tok, Type* varType, Type** reSetType) {
     // 1.1: 进行初始化器的空间分配
-    Initializer* Init = createInitializer(varType);
+    // 非空数组会重置到 false 所以默认 true 传递
+    Initializer* Init = createInitializer(varType, true);
 
-    // 1.2: 完成赋值数值与数据元素的映射
+    // 1.2: 完成赋值数值与数据元素的映射  针对空数组会通过两次遍历重置 Init.children
     ArrayOrStringInit(rest, tok, Init);
+
+    // Q: 这里的 Type** 在更新什么
+    // A: 更新变量结点的 varType 从空数组 BasiSize = (-1 * arrayElem) 更新到真实大小
+    *reSetType = Init->initType;
     return Init;
 }
 
@@ -1357,14 +1399,25 @@ static void ArrayOrStringInit(Token** rest, Token* tok, Initializer* Init) {
 // 根据数组的结构进行递归
 static void arrayRecurisve(Token** rest, Token* tok, Initializer* Init) {
     // 根据递归层次找到被赋值元素的位置
-    // commit[98]: 因为默认存在和数组元素数量一致的初始化值  在赋值数量不足时防止过早结束
     tok = skip(tok, "{");
+
+    // 如果显示定义数组大小  会在 createInitializer() 中判断并重置为 false
+    if (Init->isArrayFixed) {
+        // 通过对赋值元素的递归 找到数组长度  然后重构 Init 的空间分配
+        // Tip: 因为对语法正确性的要求  存在对 createInitializer() 的重复调用  效率较低
+        int len = countArrayInitElem(tok, Init->initType);
+        *Init = *createInitializer(
+                    linerArrayType(Init->initType->Base, len),
+                    false);
+    }
+
     // Tip: 如果一个都没有根本不会进入循环
     for (int I = 0; !consume(rest, tok, "}"); I++) {
         if (I > 0)
             // 针对多余元素还要判断 "," 所以移动到循环体内部
             tok = skip(tok, ",");
 
+        // commit[98]: 默认存在和数组元素数量一致的初始化值  在赋值数量不足时防止过早结束
         if (I < Init->initType->arrayElemCount)
             // Tip: 使用完当前的数值就要更新到下一个  所以是 &tok
             // 多维字符串通过数组结构递归到 tok->TOKEN_STR 的字符串叶子  需要调用到上一层进行判断
@@ -1376,6 +1429,11 @@ static void arrayRecurisve(Token** rest, Token* tok, Initializer* Init) {
 
 // 完整字符串数组元素的映射
 static void stringInitializer(Token** rest, Token* tok, Initializer* Init) {
+    if (Init->isArrayFixed)
+        *Init = *createInitializer(
+                    linerArrayType(Init->initType->Base, tok->tokenType->arrayElemCount),
+                    false);
+
     // Tip: token_type 本身也会 + 1  所以不需要在 parse 考虑 '\0' 问题
     int stringLen = MIN(Init->initType->arrayElemCount, tok->tokenType->arrayElemCount);
 
@@ -1405,7 +1463,7 @@ static Node* createInitAST(Initializer* Init, Type* varType, arrayInitAST* array
         for (int currOffset = 0; currOffset < varType->arrayElemCount; currOffset++) {
             // desig.var在 initializerNode() 中初始化为数组的基址
             // 因为只有数组的根节点被定义  如果是 k 维数组在 initDesigExpr() 中会递归 k 次
-            // 通过字面量定义当前数组元素的基本信息  通过 upDimension 维持了链表结构
+            // 通过字面量定义当前数组元素的基本信息  通过 upDimension 维持了链表结构  找到该元素相对于当前维度基址的偏移量
             arrayInitAST arrayElemInit = {.upDimension = arrayInitRoot, .elemOffset = currOffset};
 
             // 在确定下一层的递归过程中更新根节点和元素的偏移量

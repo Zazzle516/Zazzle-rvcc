@@ -31,6 +31,19 @@ int main() {
   ASSERT('d', ({ char x[2][4]={"abc","def"}; x[1][0]; }));
   ASSERT('f', ({ char x[2][4]={"abc","def"}; x[1][2]; }));
 
+  // [101] 支持存在初始化器时省略数组长度
+  ASSERT(4, ({ int x[]={1,2,3,4}; x[3]; }));
+  ASSERT(16, ({ int x[]={1,2,3,4}; sizeof(x); }));
+  ASSERT(4, ({ char x[]="foo"; sizeof(x); }));
+
+  ASSERT(4, ({ typedef char T[]; T x="foo"; T y="x"; sizeof(x); }));
+  ASSERT(2, ({ typedef char T[]; T x="foo"; T y="x"; sizeof(y); }));
+  ASSERT(2, ({ typedef char T[]; T x="x"; T y="foo"; sizeof(x); }));
+  ASSERT(4, ({ typedef char T[]; T x="x"; T y="foo"; sizeof(y); }));
+
+// 根据右侧的赋值反推左侧的数组空间   这就有个问题  初始化分配的时候是先根据数组大小进行分配的
+// 把第一步移动到了后面  直到完成右侧赋值元素的解析才可以进行真正的分配
+
   printf("OK\n");
   return 0;
 }
