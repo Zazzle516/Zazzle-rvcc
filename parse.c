@@ -519,13 +519,24 @@ static void writeBuffer(char* buffer, uint64_t val, int Size) {
         unreachable();
 }
 
-// 找到下一个维度中每个元素的起始地址  通过 Size 跳跃  直到递归标准类型
-// eg. K[2][3][4] 第一层 Size = 48  递归返回后每次跳 48 Byte 向下找
+// 根据数据结构进行递归  找到叶子结点完成数据的写入
 static void writeGlobalData(Initializer* Init, Type* varType, char* buffer, int offset) {
+    // 找到下一个维度中每个元素的起始地址  通过 Size 跳跃  直到递归标准类型
+    // eg. K[2][3][4] 第一层 Size = 48  递归返回后每次跳 48 Byte 向下找
     if (varType->Kind == TY_ARRAY_LINER) {
         int Size = varType->Base->BaseSize;
         for (int I = 0; I < varType->arrayElemCount; I++)
             writeGlobalData(Init->children[I], varType->Base, buffer, offset + Size * I);
+        return;
+    }
+
+    if (varType->Kind == TY_STRUCT) {
+        // 支持结构体的递归方式
+        for (structMember* currMem = varType->structMemLink; currMem; currMem = currMem->next)
+            writeGlobalData(Init->children[currMem->Idx],
+                            currMem->memberType,
+                            buffer,
+                            offset + currMem->offset);
         return;
     }
 
