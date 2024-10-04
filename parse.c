@@ -386,7 +386,6 @@ static Type* unionDeclaration(Token** rest, Token* tok);
 static Node* compoundStamt(Token** rest, Token* tok);
 
 static Node* declaration(Token** rest, Token* tok, Type* BaseType);
-static Node* initializerNode(Token** rest, Token* tok, Object* var);
 
 static Node* stamt(Token** rest, Token* tok);
 static Node* exprStamt(Token** rest, Token* tok);
@@ -418,7 +417,15 @@ static Node* primary_class_expr(Token** rest, Token* tok);
 static Node* funcall(Token** rest, Token* tok);
 
 /* 初始化器 */
-static Node* initializerNode(Token** rest, Token* tok, Object* var);
+
+// 全局初始化
+static void initGlobalNode(Token** rest, Token* tok, Object* var);
+static void writeBuffer(char* buffer, uint64_t val, int Size);
+static void writeGlobalData(Initializer* Init, Type* varType, char* buffer, int offset);
+static int64_t eval(Node* ND);
+
+// 局部初始化
+static Node* initLocalNode(Token** rest, Token* tok, Object* var);
 static Initializer* initialize(Token** rest, Token* tok, Type* varType, Type** reSetType);
 static void DataInit(Token** rest, Token* tok, Initializer* Init);
 static void arrayRecurisve(Token** rest, Token* tok, Initializer* Init);
@@ -484,6 +491,7 @@ static Token* skipExcessElem(Token* tok) {
 
 // 针对空数组定义需要通过赋值元素确认数组长度
 static int countArrayInitElem(Token* tok, Type* varType) {
+    // 作为每个数组元素完成映射的存储位置  反复利用  节省空间
     Initializer* Dummy = createInitializer(varType->Base, false);
     int I = 0;
 
@@ -495,6 +503,35 @@ static int countArrayInitElem(Token* tok, Type* varType) {
         DataInit(&tok, tok, Dummy);
     }
     return I;
+}
+
+// 把类型转换为字节进行存储
+static void writeBuffer(char* buffer, uint64_t val, int Size) {
+    if (Size == 1)
+        *buffer = val;
+    else if (Size == 2)
+        *(uint16_t*)buffer = val;
+    else if (Size == 4)
+        *(uint32_t*)buffer = val;
+    else if (Size == 8)
+        *(uint64_t*)buffer = val;
+    else
+        unreachable();
+}
+
+// 找到下一个维度中每个元素的起始地址  通过 Size 跳跃  直到递归标准类型
+// eg. K[2][3][4] 第一层 Size = 48  递归返回后每次跳 48 Byte 向下找
+static void writeGlobalData(Initializer* Init, Type* varType, char* buffer, int offset) {
+    if (varType->Kind == TY_ARRAY_LINER) {
+        int Size = varType->Base->BaseSize;
+        for (int I = 0; I < varType->arrayElemCount; I++)
+            writeGlobalData(Init->children[I], varType->Base, buffer, offset + Size * I);
+        return;
+    }
+
+    if (Init->initAssignRightExpr)
+        // 本质上是在汇编的层面进行存储  必须把类型的大小转换为字节
+        writeBuffer(buffer + offset, eval(Init->initAssignRightExpr), varType->BaseSize);
 }
 
 /* 常数表达式的预计算 */
@@ -1275,12 +1312,15 @@ static Token* gloablDefinition(Token* tok, Type* globalBaseType) {
 
     while (!consume(&tok, tok, ";")) {
         if (!isLast)
-            // 目前的语法不支持全局变量的赋值  还没有办法接入 ND_ASSIGN 语法
             tok = skip(tok, ",");
         isLast = false;
 
         Type* globalType = declarator(&tok, tok, globalBaseType);
-        newGlobal(getVarName(globalType->Name), globalType);
+
+        // commit[105]: 调用 assign() 语法  支持全局变量初始化
+        Object* obj = newGlobal(getVarName(globalType->Name), globalType);
+        if (equal(tok, "="))
+            initGlobalNode(&tok, tok->next, obj);
     }
     return tok;
 }
@@ -1353,7 +1393,7 @@ static Node* declaration(Token** rest, Token* tok, Type* BaseType) {
 
         // commit[97]: 修改了判定逻辑  转移到初始化器中进行初始化
         if (equal(tok, "=")) {
-            Node* LHS = initializerNode(&tok, tok->next, var);
+            Node* LHS = initLocalNode(&tok, tok->next, var);
             Curr->next = createSingle(ND_STAMT, LHS, tok);
             Curr = Curr->next;
         }
@@ -1376,8 +1416,20 @@ static Node* declaration(Token** rest, Token* tok, Type* BaseType) {
     return multi_declara;
 }
 
+// 全局初始化相比于局部初始化  返回值是 void
+// 局部初始化开始构造 AST 交给汇编翻译  而全局需要在编译器阶段就直接计算到最终结果
+static void initGlobalNode(Token** rest, Token* tok, Object* var) {
+    // 复用了原来的局部初始化器的结构  所以也支持数组 结构体的全局初始化
+    Initializer* Init = initialize(rest, tok, var->var_type, &var->var_type);
+
+    // 通过 eval() 计算出具体结果  从汇编的层面进行存储
+    char* buffer = calloc(1, var->var_type->BaseSize);
+    writeGlobalData(Init, var->var_type, buffer, 0);
+    var->InitData = buffer;
+}
+
 // commit[97]: 最顶层的初始化器结点
-static Node* initializerNode(Token** rest, Token* tok, Object* var) {
+static Node* initLocalNode(Token** rest, Token* tok, Object* var) {
     // 一阶段: 完成 init 数据结构分配  赋值数值的映射
     // commit[101]: 在赋值元素解析后更新 linerArray.BaseSize
     Initializer* init = initialize(rest, tok, var->var_type, &var->var_type);
@@ -1548,7 +1600,7 @@ static Node* createInitAST(Initializer* Init, Type* varType, initStructInfo* arr
         Node* ND = createNode(ND_NULL_EXPR1, tok);
 
         for (int currOffset = 0; currOffset < varType->arrayElemCount; currOffset++) {
-            // desig.var在 initializerNode() 中初始化为数组的基址
+            // desig.var在 initLocalNode() 中初始化为数组的基址
             // 因为只有数组的根节点被定义  如果是 k 维数组在 initASTLeft() 中会递归 k 次
             // 通过字面量定义当前数组元素的基本信息  通过 upDimension 维持了链表结构  找到该元素相对于当前维度基址的偏移量
             initStructInfo arrayElemInit = {.upDimension = arrayInitRoot, .elemOffset = currOffset};
@@ -1585,9 +1637,10 @@ static Node* createInitAST(Initializer* Init, Type* varType, initStructInfo* arr
         return createInitAST(Init->children[0], varType->structMemLink->memberType, &unionInit, tok);
     }
 
-    if (!Init->initAssignRightExpr)
+    if (!Init->initAssignRightExpr) {
         // 针对无赋值的情况 使用 NULL 占位
         return createNode(ND_NULL_EXPR2, tok);
+    }
 
     // lvalue: 通过 DEREF 构造当前数组元素的地址
     Node* LHS = initASTLeft(arrayInitRoot, tok);
