@@ -874,14 +874,26 @@ void emitGlobalData(Object* Global) {
         // commit[34]: 针对有初始值的全局变量进行特殊处理 针对是否有赋值分别处理
         if (globalVar->InitData) {
             printLn("%s:", globalVar->var_name);
-            // Q: 这里为什么是小于 BaseSize
-            // A: 依赖 tokenize().readStringLiteral().linerArrayType 传递的字符串长度判断
-            for (int I = 0; I < globalVar->var_type->BaseSize; ++I) {
-                char C = globalVar->InitData[I];
-                if (isprint(C))
-                    printLn("  .byte %d\t# 字符: %c", C, C);
-                else
-                    printLn("  .byte %d", C);
+
+            // commit[107]: 全局变量相互赋值需要 relocation 获取目标变量信息
+            Relocation* rel = globalVar->relocatePtrData;
+            int pos = 0;
+
+            while (pos < globalVar->var_type->BaseSize) {
+                if (rel && rel->labelOffset == pos) {
+                    printLn("  # %s 全局变量", globalVar->var_name);
+                    printLn("  .quad %s%+ld", rel->globalLabel, rel->suffixCalcu);
+                    rel = rel->next;
+                    pos += 8;
+                }
+
+                else {
+                    char C = globalVar->InitData[pos++];
+                    if (isprint(C))
+                        printLn("  .byte %d\t# 字符: %c", C, C);
+                    else
+                        printLn("  .byte %d", C);
+                }
             }
         }
         

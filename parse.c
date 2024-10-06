@@ -421,8 +421,10 @@ static Node* funcall(Token** rest, Token* tok);
 // 全局初始化
 static void initGlobalNode(Token** rest, Token* tok, Object* var);
 static void writeBuffer(char* buffer, uint64_t val, int Size);
-static void writeGlobalData(Initializer* Init, Type* varType, char* buffer, int offset);
+static Relocation* writeGlobalData(Relocation* curr, Initializer* Init, Type* varType, char* buffer, int offset);
 static int64_t eval(Node* ND);
+static int64_t evalWithLabel(Node* ND, char** Label);
+static int64_t evalRightVal(Node* ND, char** Label);
 
 // 局部初始化
 static Node* initLocalNode(Token** rest, Token* tok, Object* var);
@@ -520,40 +522,85 @@ static void writeBuffer(char* buffer, uint64_t val, int Size) {
 }
 
 // 根据数据结构进行递归  找到叶子结点完成数据的写入
-static void writeGlobalData(Initializer* Init, Type* varType, char* buffer, int offset) {
+static Relocation* writeGlobalData(Relocation* curr, Initializer* Init, Type* varType, char* buffer, int offset) {
+    if (varType->Kind == TY_ARRAY_LINER) {
     // 找到下一个维度中每个元素的起始地址  通过 Size 跳跃  直到递归标准类型
     // eg. K[2][3][4] 第一层 Size = 48  递归返回后每次跳 48 Byte 向下找
-    if (varType->Kind == TY_ARRAY_LINER) {
         int Size = varType->Base->BaseSize;
         for (int I = 0; I < varType->arrayElemCount; I++)
-            writeGlobalData(Init->children[I], varType->Base, buffer, offset + Size * I);
-        return;
+            curr = writeGlobalData(curr,
+                                   Init->children[I],
+                                   varType->Base,
+                                   buffer,
+                                   offset + Size * I);
+        return curr;
     }
 
     if (varType->Kind == TY_STRUCT) {
         // 支持结构体的递归方式
         for (structMember* currMem = varType->structMemLink; currMem; currMem = currMem->next)
-            writeGlobalData(Init->children[currMem->Idx],
-                            currMem->memberType,
-                            buffer,
-                            offset + currMem->offset);
-        return;
+            curr = writeGlobalData( curr,
+                                    Init->children[currMem->Idx],
+                                    currMem->memberType,
+                                    buffer,
+                                    offset + currMem->offset);
+        return curr;
     }
 
-    if (Init->initAssignRightExpr)
-        // 本质上是在汇编的层面进行存储  必须把类型的大小转换为字节
-        writeBuffer(buffer + offset, eval(Init->initAssignRightExpr), varType->BaseSize);
+    if (varType->Kind == TY_UNION) {
+        return writeGlobalData( curr,
+                                Init->children[0],
+                                varType->structMemLink->memberType,
+                                buffer,
+                                offset);
+    }
+
+// Tip: 执行到这里一定是叶节点  具体的数据结构递归已经在上面实现  所以 Offset 直接通过传参即可
+
+    if (!Init->initAssignRightExpr)
+        // 如果没有赋值  说明只是全局变量的声明
+        return curr;
+
+    // 本质上是在汇编的层面进行存储  必须把类型的大小转换为字节
+    char* Label = NULL;
+    uint64_t calcuRes = evalWithLabel(Init->initAssignRightExpr, &Label);
+
+    if (!Label) {
+        // 针对计算式直接赋值的情况
+        writeBuffer(buffer + offset, calcuRes, varType->BaseSize);
+        return curr;
+    }
+
+    // 把需要参与计算的全局变量的信息写入链表
+    Relocation* rel = calloc(1, sizeof(Relocation));
+    rel->globalLabel = Label;       // 记录赋值式要用到的另一个全局量的名字
+    rel->labelOffset = offset;
+    rel->suffixCalcu = calcuRes;
+
+    curr->next = rel;
+    return curr->next;
 }
 
 /* 常数表达式的预计算 */
 static int64_t eval(Node* ND) {
+    return evalWithLabel(ND, NULL);
+}
+
+// 全局变量赋值预处理
+static int64_t evalWithLabel(Node* ND, char** Label) {
+    // 这里用 char** 本质上是因为内部可能更新 label 需要返回重新判断
     addType(ND);
 
     switch (ND->node_kind) {
+    // 这里只是选择把 label 存在 ND.LHS 中  然后通过调用 eval() 重置 label  得到 ND.RHS 
+    // Q: 为什么有的运算不传入 label  有的可以
+    // 因为加减操作可以有指针涉及  但凡是指针可以参与运算的  都要写 Label
+    // 和目前编译器支持的指针运算的语法规则相关  目前只定义到 newPtrAdd() 和 newPtrSub()
     case ND_ADD:
-        return eval(ND->LHS) + eval(ND->RHS);
+        return evalWithLabel(ND->LHS, Label) + eval(ND->RHS);
     case ND_SUB:
-        return eval(ND->LHS) - eval(ND->RHS);
+        // 在测试用例中可以证明不支持 两个指针的减法运算
+        return evalWithLabel(ND->LHS, Label) - eval(ND->RHS);
     case ND_MUL:
         return eval(ND->LHS) * eval(ND->RHS);
     case ND_DIV:
@@ -587,37 +634,103 @@ static int64_t eval(Node* ND) {
     case ND_GT:
         return eval(ND->LHS) > eval(ND->RHS);
     case ND_TERNARY:
-        return eval(ND->Cond_Block) ? eval(ND->If_BLOCK) : eval(ND->Else_BLOCK);
+        // 因为三元运算符本身包含两个子表达式  指针可以参与运算
+        return eval(ND->Cond_Block) ? evalWithLabel(ND->If_BLOCK, Label) : evalWithLabel(ND->Else_BLOCK, Label);
     case ND_COMMA:
-        return eval(ND->RHS);
+        return evalWithLabel(ND->RHS, Label);
     case ND_NOT:
         return !eval(ND->LHS);
     case ND_LOGAND:
         return eval(ND->LHS) && eval(ND->RHS);
     case ND_LOGOR:
         return eval(ND->LHS) || eval(ND->RHS);
+
     case ND_TYPE_CAST:
     {
+        int64_t val = evalWithLabel(ND->LHS, Label);
         if (isInteger(ND->node_type)) {
             switch (ND->node_type->BaseSize) {
             case 1:
-                return (uint8_t)eval(ND->LHS);
+                return (uint8_t)val;
             case 2:
-                return (uint16_t)eval(ND->LHS);
+                return (uint16_t)val;
             case 4:
-                return (uint32_t)eval(ND->LHS);
+                return (uint32_t)val;
             }
+        // 因为 val 在声明的时候定义为 int64 所以不需要额外的处理
         }
-        return eval(ND->LHS);
+        return val;
+    }
+
+// 没完全看懂  关于全局量和编译时常量的部分  所以这里的设计也没有理解
+
+    case ND_ADDR:
+        return evalRightVal(ND->LHS, Label);
+
+    case ND_STRUCT_MEMEBER:
+    {
+        if (!Label) // 这里的 label 是在判断什么呢 ???
+            tokenErrorAt(ND->token, "not a compile-time constant");
+
+        if (ND->node_type->Kind != TY_ARRAY_LINER)  // 这里是碰巧 ?? 如果把变量改成 a 会怎样
+            tokenErrorAt(ND->token, "invalid initializer");
+    
+        // 结构体成员本身可能会再嵌套
+        int targetMemOffset = evalRightVal(ND->LHS, Label) + ND->structTargetMember->offset;
+        return targetMemOffset;
+    }
+
+    case ND_VAR:
+    {
+        if (!Label)
+        // Q: 要求 label 必须不存在   什么情况下会调用到这个错误判断
+            tokenErrorAt(ND->token, "not a compile-time constant");
+
+        // 并列的错误判断  为什么数组判断能和函数结合到一起啊...
+        if (ND->node_type->Kind != TY_ARRAY_LINER && ND->var->var_type->Kind != TY_FUNC)
+            tokenErrorAt(ND->token, "invalid initializer");
+
+        *Label = ND->var->var_name;
+        return 0;
     }
 
     case ND_NUM:
+        // 递归终点: 数字字面量
         return ND->val;
+
     default:
         break;
     }
 
-    tokenErrorAt(ND->token, "not a compile-time constant");
+    // 针对 ND_DEREF 报错  例如数组名称  因为 DEREF 涉及解析地址的操作  所以一定不是编译时常量
+    tokenErrorAt(ND->token, "DEREF NODE is not a compile-time constant");
+    return -1;
+}
+
+// 针对 ??? 的处理  相比于 evalWithLabel() 特殊在处理 label
+static int64_t evalRightVal(Node* ND, char** Label) {
+    switch (ND->node_kind) {
+        // 这里大部分计算和上面一致   为什么要单独开一个新函数
+    case ND_VAR:
+    {
+        if (ND->var->IsLocal)
+            tokenErrorAt(ND->token, "not a global variable");
+        
+        *Label = ND->var->var_name; // 重置了 Label
+        return 0;   // 当前变量相对于自己的偏移量为 0
+    }
+
+    case ND_DEREF:
+        return evalWithLabel(ND->LHS, Label);
+
+    case ND_STRUCT_MEMEBER:
+        return evalRightVal(ND->LHS, Label) + ND->structTargetMember->offset;
+    
+    default:
+        break;
+    }
+
+    tokenErrorAt(ND->token, "invalid initializer");
     return -1;
 }
 
@@ -1434,9 +1547,13 @@ static void initGlobalNode(Token** rest, Token* tok, Object* var) {
     Initializer* Init = initialize(rest, tok, var->var_type, &var->var_type);
 
     // 通过 eval() 计算出具体结果  从汇编的层面进行存储
+    // commit[107]: 使用 relocation 记录作为赋值全局量的信息
+    Relocation HEAD = {};
     char* buffer = calloc(1, var->var_type->BaseSize);
-    writeGlobalData(Init, var->var_type, buffer, 0);
+    writeGlobalData(&HEAD, Init, var->var_type, buffer, 0);
+
     var->InitData = buffer;
+    var->relocatePtrData = HEAD.next;
 }
 
 // commit[97]: 最顶层的初始化器结点
@@ -1467,6 +1584,7 @@ static Initializer* initialize(Token** rest, Token* tok, Type* varType, Type** r
     // 1.2: 完成赋值数值与数据元素的映射
     // case1: 针对空数组会通过两次遍历重置 Init.children
     // case2: 完成结构体成员的赋值映射  &&  完成结构体实例间的赋值
+    // case3: 在全局变量的互相赋值中  通过 assign() 找到目标变量  eg. postFix().structTargetMem
     DataInit(rest, tok, Init);
 
     // Q: 这里的 Type** 在更新什么
@@ -1547,11 +1665,11 @@ static void arrayRecurisve(Token** rest, Token* tok, Initializer* Init) {
     }
 }
 
-// 完整字符串数组元素的映射
+// 完整字符串数组元素的映射  每个字符都以 ASCII 的方式存储映射
 static void stringInitializer(Token** rest, Token* tok, Initializer* Init) {
     if (Init->isArrayFixed)
         *Init = *createInitializer(
-                    // Tip: String 这里使用 tokType 和 Array 有区别
+                    // Tip: String 这里使用 tokType 新构造了一个 varType 传递用来分配空间
                     linerArrayType(Init->initType->Base, tok->tokenType->arrayElemCount),
                     false);
 

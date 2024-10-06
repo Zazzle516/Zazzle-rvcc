@@ -26,6 +26,8 @@ typedef struct structMember structMember;
 typedef struct Type Type;
 typedef struct Object Object;
 typedef struct Node Node;
+typedef struct Relocation Relocation;
+
 
 /* 工具函数 */
 #define MAX(x, y) ((x) < (y) ? (y) : (x))
@@ -170,6 +172,16 @@ Type* structBasicDeclType(void);
 // 递归性的为节点内的所有节点添加类型
 void addType(Node* ND);
 
+// 支持多个全局变量作为 RHS 被调用  
+struct Relocation {
+    Relocation* next;       // 在 codeGen.emitData 中记录赋值的全局变量信息
+
+    char* globalLabel;      // 作为指针被访问的另一个全局变量的标签
+    int labelOffset;        // 针对数组 结构体等复合类型  元素 成员变量相对于 label 的偏移量
+    long suffixCalcu;       // 当前全局变量在此基础上的一些后续计算
+};
+
+
 // 声明语法解析的输出 => HEADScope
 // 可以从 4 个角度判断   (全局 or 局部)   (变量 or 常量)    eg. 函数名也算是常量
 struct Object {
@@ -185,6 +197,7 @@ struct Object {
 
     /*  全局常量 */
     char* InitData;
+    Relocation* relocatePtrData;
 
     Node* AST;
     Object* local;
