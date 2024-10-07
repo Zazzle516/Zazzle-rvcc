@@ -1648,6 +1648,13 @@ static void DataInit(Token** rest, Token* tok, Initializer* Init) {
         return;
     }
 
+    if (equal(tok, "{")) {
+        // 非特殊数据结构直接跳过大括号即可  因为不会涉及维度解析
+        DataInit(&tok, tok->next, Init);
+        *rest = skip(tok, "}");
+        return;
+    }
+
     else {
         // 任意数据结构的递归终点
         dataInitializer(rest, tok, Init);
