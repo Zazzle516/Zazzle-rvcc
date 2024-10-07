@@ -81,7 +81,7 @@ struct initStructInfo {
 //             | "typedef" | "typedefName" | enumSpec | "static")+
 
 // enumSpec = ident? "{" enumList? "}" | ident ("{" enumList? "}")?
-// enumList = ident ("=" constExpr)? ("," ident ("=" constExpr)?)*
+// enumList = ident ("=" constExpr)? ("," ident ("=" constExpr)?)* "," ?
 
 // commit[54]: 针对 struct 和 union 提取出抽象层
 // StructOrUnionDecl = ident ? (" {" structMembers)?
@@ -365,6 +365,27 @@ static structMember* getStructMember(Type* structType, Token* tok) {
     return NULL;
 }
 
+// commit[110]: 类似 equal() 判断当前是否到终结符  但不去进行真正的跳过
+static bool isEnd(Token* tok) {
+    // 此时的终结符有两种情况
+    return equal(tok, "}") ||
+            equal(tok, ",") && equal(tok->next, "}");
+}
+
+// 类似于 consume() 的执行消耗终结符  特殊的是这里要考虑两种情况  同时更新 tok
+static bool consumeEnd(Token** rest, Token* tok) {
+    if (equal(tok, "}")) {
+        *rest = tok->next;
+        return true;
+    }
+
+    if (equal(tok, ",") && equal(tok->next, "}")) {
+        *rest = tok->next->next;
+        return true;
+    }
+
+    return false;
+}
 
 /* 语法规则 */
 
@@ -504,7 +525,7 @@ static int countArrayInitElem(Token* tok, Type* varType) {
     Initializer* Dummy = createInitializer(varType->Base, false);
     int I = 0;
 
-    for (; !equal(tok, "}"); I++) {
+    for (; !consumeEnd(&tok, tok); I++) {
         if (I > 0)
             tok = skip(tok, ",");
 
@@ -1042,7 +1063,7 @@ static Type* enumspec(Token** rest, Token* tok) {
     tok = skip(tok, "{");
     int I = 0;
     int value = 0;
-    while (!equal(tok, "}")) {
+    while (!consumeEnd(rest, tok)) {
         if (I++ > 0)
             tok = skip(tok, ",");
 
@@ -1057,7 +1078,6 @@ static Type* enumspec(Token** rest, Token* tok) {
         targetScope->enumType = newEnumType;
         targetScope->enumValue = value++;
     }
-    *rest = tok->next;
 
     if (enumTag)
         pushTagScopeToScope(enumTag, newEnumType);
@@ -1678,7 +1698,7 @@ static void arrayRecurDefault(Token** rest, Token* tok, Initializer* Init) {
     }
 
     // Tip: 如果一个都没有根本不会进入循环
-    for (int I = 0; !consume(rest, tok, "}"); I++) {
+    for (int I = 0; !consumeEnd(rest, tok); I++) {
         if (I > 0)
             // 针对多余元素还要判断 "," 所以移动到循环体内部
             tok = skip(tok, ",");
@@ -1700,7 +1720,7 @@ static void arrayRecurWithoutBrack(Token** rest, Token* tok, Initializer* Init) 
         *Init = *createInitializer(linerArrayType(Init->initType->Base, Len), false);
     }
 
-    for (int I = 0; I < Init->initType->arrayElemCount && !equal(tok, "}"); I++) {
+    for (int I = 0; I < Init->initType->arrayElemCount && !isEnd(tok); I++) {
         if (I > 0)
             tok = skip(tok, ",");
         
@@ -1741,7 +1761,7 @@ static void structInitDefault(Token** rest, Token* tok, Initializer* Init) {
     tok = skip(tok, "{");
     structMember* currMem = Init->initType->structMemLink;
 
-    while (!consume(rest, tok, "}")) {
+    while (!consumeEnd(rest, tok)) {
         if (currMem != Init->initType->structMemLink)
             // 与第一个成员进行比较  即使类型相同  通过 Idx 也能比较出区别  如果不是第一个成员就需要跳过 ","
             tok = skip(tok, ",");
@@ -1761,7 +1781,7 @@ static void structInitDefault(Token** rest, Token* tok, Initializer* Init) {
 static void structInitWithoutBrack(Token** rest, Token* tok, Initializer* Init) {
     bool First = true;
 
-    for (structMember* currMem = Init->initType->structMemLink; currMem && !equal(tok, "}"); currMem = currMem->next) {
+    for (structMember* currMem = Init->initType->structMemLink; currMem && !isEnd(tok); currMem = currMem->next) {
         if (!First)
             tok = skip(tok, ",");
         
@@ -1778,6 +1798,9 @@ static void unionInitializer(Token** rest, Token* tok, Initializer* Init) {
 
     if (equal(tok, "{")) {
         DataInit(&tok, tok->next, Init->children[0]);
+
+        // 针对可能存在的 "," 进行处理
+        consume(&tok, tok, ",");
         *rest = skip(tok, "}");
     }
 
