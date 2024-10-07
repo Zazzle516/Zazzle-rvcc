@@ -103,10 +103,10 @@ struct initStructInfo {
 
 // commit[100]: 支持字符串数组和一般数组初始化
 // commit[102]: 支持结构体初始化 ?? 和数组有关系吗
-// initializer = stringInitializer | dataInitializer | structInitializer | unionInitializer | assign
+// initializer = stringInitializer | dataInitializer | structInitDefault | unionInitializer | assign
 // stringInitializer.
 // arrayInittializer = "{" initializer ("," initializer)* "}"
-// structInitializer = "{" initializer ("," initializer)* "}"
+// structInitDefault = "{" initializer ("," initializer)* "}"
 // unionInitializer = "{" initializer "}"
 
 // commit[26] [27] [28] [86]: 含参的函数定义  对数组变量定义的支持  多维数组支持  灵活数组的定义
@@ -430,10 +430,17 @@ static int64_t evalRightVal(Node* ND, char** Label);
 static Node* initLocalNode(Token** rest, Token* tok, Object* var);
 static Initializer* initialize(Token** rest, Token* tok, Type* varType, Type** reSetType);
 static void DataInit(Token** rest, Token* tok, Initializer* Init);
-static void arrayRecurisve(Token** rest, Token* tok, Initializer* Init);
-static void stringInitializer(Token** rest, Token* tok, Initializer* Init);
+
+// commit[108]: 支持数组 | 结构体初始化省略 "{" "}"
 static void dataInitializer(Token** rest, Token* tok, Initializer* Init);
-static void structInitializer(Token** rest, Token* tok, Initializer* Init);
+
+static void arrayRecurDefault(Token** rest, Token* tok, Initializer* Init);
+static void arrayRecurWithoutBrack(Token** rest, Token* tok, Initializer* Init);
+
+static void structInitDefault(Token** rest, Token* tok, Initializer* Init);
+static void structInitWithoutBrack(Token** rest, Token* tok, Initializer* Init);
+
+static void stringInitializer(Token** rest, Token* tok, Initializer* Init);
 static void unionInitializer(Token** rest, Token* tok, Initializer* Init);
 static Node* createInitAST(Initializer* Init, Type* varType, initStructInfo* arrayInitRoot, Token* tok);
 static Node* initASTLeft(initStructInfo* initInfo, Token* tok);
@@ -1594,18 +1601,32 @@ static Initializer* initialize(Token** rest, Token* tok, Type* varType, Type** r
 }
 
 // 针对不同的数据类型进行递归找到可以进行赋值的叶子结点
+// commit[108]: 在省略 "{" "}" 的情况下  编译器只会根据顺序推导元素  所以无法再支持元素跳过
 static void DataInit(Token** rest, Token* tok, Initializer* Init) {
+// Tip: (数组 结构体) 和 联合体的 "{" 判断层次不同
+// 因为联合体只针对第一个成员进行赋值  所以不像数组或结构体需要多个 "{}" 表示维度
+// 并且只能省略最外层的大括号或所有大括号  不能只省略中间层或内层的大括号，而保留其他层次的大括号  会导致解析结构错误
+
     if (Init->initType->Kind == TY_ARRAY_LINER && tok->token_kind == TOKEN_STR) {
         stringInitializer(rest, tok, Init);
         return; // tok -> ","
     }
 
     if (Init->initType->Kind == TY_ARRAY_LINER) {
-        arrayRecurisve(rest, tok, Init);
+        if (equal(tok, "{"))
+            arrayRecurDefault(rest, tok, Init);
+
+        else
+            arrayRecurWithoutBrack(rest, tok, Init);
         return;
     }
 
     if (Init->initType->Kind == TY_STRUCT) {
+        if (equal(tok, "{")) {
+            structInitDefault(rest, tok, Init);
+            return;
+        }
+
         // commit[103]: 支持结构体实例之间的赋值
         if (!equal(tok, "{")) {
             Node* Expr = assign(rest, tok);
@@ -1618,7 +1639,7 @@ static void DataInit(Token** rest, Token* tok, Initializer* Init) {
             }
         }
 
-        structInitializer(rest, tok, Init);
+        structInitWithoutBrack(rest, tok, Init);
         return;
     }
 
@@ -1635,17 +1656,17 @@ static void DataInit(Token** rest, Token* tok, Initializer* Init) {
 }
 
 // 根据数组的结构进行递归
-static void arrayRecurisve(Token** rest, Token* tok, Initializer* Init) {
+static void arrayRecurDefault(Token** rest, Token* tok, Initializer* Init) {
     // 根据递归层次找到被赋值元素的位置
     tok = skip(tok, "{");
 
     // 如果显示定义数组大小  会在 createInitializer() 中判断并重置为 false
     if (Init->isArrayFixed) {
-        // 通过对赋值元素的递归 找到数组长度  然后重构 Init 的空间分配
+        // 通过对赋值元素的递归 找到数组长度
         // Tip: 因为对语法正确性的要求  存在对 createInitializer() 的重复调用  效率较低
         int len = countArrayInitElem(tok, Init->initType);
         *Init = *createInitializer(
-                    linerArrayType(Init->initType->Base, len),
+                    linerArrayType(Init->initType->Base, len),  // 通过 linerArrayType() 创造一个新的数组类型覆盖
                     false);     // Tip: 因为这里传递了 false  所以空数组解析只支持到一维  更高维度的 BaseSize 无法被重置
     }
 
@@ -1663,6 +1684,23 @@ static void arrayRecurisve(Token** rest, Token* tok, Initializer* Init) {
         else
             tok = skipExcessElem(tok);
     }
+}
+
+// commit[108]: 支持无括号的数组赋值递归
+static void arrayRecurWithoutBrack(Token** rest, Token* tok, Initializer* Init) {
+    if (Init->isArrayFixed) {
+        int Len = countArrayInitElem(tok, Init->initType);
+        *Init = *createInitializer(linerArrayType(Init->initType->Base, Len), false);
+    }
+
+    for (int I = 0; I < Init->initType->arrayElemCount && !equal(tok, "}"); I++) {
+        if (I > 0)
+            tok = skip(tok, ",");
+        
+        DataInit(&tok, tok, Init->children[I]);
+    }
+
+    *rest = tok;
 }
 
 // 完整字符串数组元素的映射  每个字符都以 ASCII 的方式存储映射
@@ -1692,7 +1730,7 @@ static void dataInitializer(Token** rest, Token* tok, Initializer* Init) {
 }
 
 // commit[102]: 结构体初始化
-static void structInitializer(Token** rest, Token* tok, Initializer* Init) {
+static void structInitDefault(Token** rest, Token* tok, Initializer* Init) {
     tok = skip(tok, "{");
     structMember* currMem = Init->initType->structMemLink;
 
@@ -1712,12 +1750,33 @@ static void structInitializer(Token** rest, Token* tok, Initializer* Init) {
     }
 }
 
+// commit[108]: 支持无括号的结构体赋值递归
+static void structInitWithoutBrack(Token** rest, Token* tok, Initializer* Init) {
+    bool First = true;
+
+    for (structMember* currMem = Init->initType->structMemLink; currMem && !equal(tok, "}"); currMem = currMem->next) {
+        if (!First)
+            tok = skip(tok, ",");
+        
+        First = false;
+        DataInit(&tok, tok, Init->children[currMem->Idx]);
+    }
+
+    *rest = tok;
+}
+
 // commit[103]: 联合体初始化
 static void unionInitializer(Token** rest, Token* tok, Initializer* Init) {
     // Tip: 联合体相对于结构体只有一个成员  不需要进行循环  目前默认存储在第一个成员中
-    tok = skip(tok, "{");
-    DataInit(&tok, tok, Init->children[0]);
-    *rest = skip(tok, "}");
+
+    if (equal(tok, "{")) {
+        DataInit(&tok, tok->next, Init->children[0]);
+        *rest = skip(tok, "}");
+    }
+
+    else {
+        DataInit(rest, tok, Init->children[0]);
+    }
 }
 
 // 把映射元素填入 Init 数据结构后  可以开始构造翻译到汇编的 AST 树
