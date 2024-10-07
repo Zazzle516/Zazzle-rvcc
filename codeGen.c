@@ -865,14 +865,15 @@ void emitGlobalData(Object* Global) {
         if (globalVar->IsFunction == true)
             continue;
 
-        // 关于 .data 段的汇编生成参考 
-
-        // 这里针对每一个 GlobalVar 都声明了 .data
-        printLn("  # 数据段");
-        printLn("  .data");
+        // commit[111]: 进行 BSS段和 data 段的区别
+        // BSS 不会为数据分配空间 只是记录数据所需要的空间大小  将没有初始化的全局变量用 0 进行填充
+        printLn("  .global %s", globalVar->var_name);
 
         // commit[34]: 针对有初始值的全局变量进行特殊处理 针对是否有赋值分别处理
         if (globalVar->InitData) {
+            // 这里针对每一个 GlobalVar 都声明了 .data
+            printLn("\n  # 数据段");
+            printLn("  .data");
             printLn("%s:", globalVar->var_name);
 
             // commit[107]: 全局变量相互赋值需要 relocation 获取目标变量信息
@@ -881,6 +882,7 @@ void emitGlobalData(Object* Global) {
 
             while (pos < globalVar->var_type->BaseSize) {
                 if (rel && rel->labelOffset == pos) {
+                    // RISCV.quad 加载 64 位数据的伪指令
                     printLn("  # %s 全局变量", globalVar->var_name);
                     printLn("  .quad %s%+ld", rel->globalLabel, rel->suffixCalcu);
                     rel = rel->next;
@@ -895,12 +897,14 @@ void emitGlobalData(Object* Global) {
                         printLn("  .byte %d", C);
                 }
             }
+            continue;
         }
-        
+
         else {
-            printLn("  .global %s", globalVar->var_name);
+            printLn("  # BSS 未初始化的全局变量");
+            printLn("  .bss");
             printLn("%s:", globalVar->var_name);
-            printLn("  # 零填充 %d 比特", globalVar->var_type->BaseSize);
+            printLn("  # 零填充 %d Byte", globalVar->var_type->BaseSize);
             printLn("  .zero %d", globalVar->var_type->BaseSize);
         }
     }
