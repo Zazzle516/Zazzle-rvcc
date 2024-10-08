@@ -204,6 +204,24 @@ static char* blockContinueLabel;
 // commit[93]: 同理用于通信的全局变量
 static Node* blockSwitch;
 
+// 复制结构体类型
+static Type* copyStructType(Type* type) {
+    type = copyType(type);
+
+    structMember HEAD = {};
+    structMember* Curr = &HEAD;
+
+    for (structMember* currMem = type->structMemLink; currMem; currMem = currMem->next) {
+        structMember* mem = calloc(1, sizeof(structMember));
+        *mem = *currMem;
+        Curr->next = mem;
+        Curr = Curr->next;
+    }
+
+    type->structMemLink = HEAD.next;
+    return type;
+}
+
 /* 变量域的操作定义 */
 
 // 块域 {} 执行开始
@@ -499,8 +517,23 @@ static Initializer* createInitializer(Type* varType, bool IsArrayFixed) {
         // 根据结构体的成员数量进行指针分配  每个成员都有自己的初始化器
         Init->children = calloc(len, sizeof(Initializer*));
 
-        for (structMember* currMem = varType->structMemLink; currMem; currMem = currMem->next)
-            Init->children[currMem->Idx] = createInitializer(currMem->memberType, false);   // 通过 Idx 偏移量找到目标指针
+        // commit[113]: 在遍历成员分配空间的时候  手动为灵活数组分配一个初始化器
+        for (structMember* currMem = varType->structMemLink; currMem; currMem = currMem->next) {
+            if (IsArrayFixed && varType->IsFlexible && !currMem->next) {
+                // Q: 这里为什么要判断 IsArrayFixed
+                // 判断当前成员是灵活数组 确定该结构体包含灵活数组 最后一个成员  IsFlexible 只能声明存在
+                Initializer* child = calloc(1, sizeof(Initializer));
+                child->initType = currMem->memberType;
+                child->isArrayFixed = true;
+                Init->children[currMem->Idx] = child;
+            }
+
+            else {
+                // 通过 Idx 偏移量找到目标指针
+                Init->children[currMem->Idx] = createInitializer(currMem->memberType, false);
+            }
+
+        }
 
         return Init;
     }
@@ -1295,10 +1328,12 @@ static void structMembers(Token** rest, Token* tok, Type* structType) {
     }
 
     // commit[112]: 支持结构体 *最后一个* 成员的灵活数组定义
-    // 这个数组定义不占用空间 返回 0  在使用的时候通过 malloc() | calloc() 在堆上分配空间
-    // 因为栈上的空间使用需要提前计算出来  灵活数组是无法做到的  目前 commit[112] 只能做到判断
-    if (Curr != &HEAD && Curr->memberType->Kind == TY_ARRAY_LINER && Curr->memberType->arrayElemCount < 0)
+    if (Curr != &HEAD && Curr->memberType->Kind == TY_ARRAY_LINER && Curr->memberType->arrayElemCount < 0) {
+        // 非结构体的灵活数组会定义为 (-1) 应该是有这一层考虑
         Curr->memberType = linerArrayType(Curr->memberType->Base, 0);
+        // 声明结构体中存在灵活数组
+        structType->IsFlexible = true;
+    }
 
     *rest = tok->next;
     structType->structMemLink = HEAD.next;
@@ -1315,6 +1350,7 @@ static Type* structDeclaration(Token** rest, Token* tok) {
 
     // int-char-int => 0-8-9-16-24
     int totalOffset = 0;
+    // commit[113]: 因为灵活数组的空间定义为 0 所以不会改变空间计算逻辑
     for (structMember* newStructMem = structType->structMemLink; newStructMem; newStructMem = newStructMem->next) {
         // 确定当前变量的起始位置  判断是否会对齐  => 判断 realTotal 是否为 aimAlign 的倍数
         totalOffset = alignTo(totalOffset, newStructMem->memberType->alignSize);
@@ -1619,6 +1655,21 @@ static Initializer* initialize(Token** rest, Token* tok, Type* varType, Type** r
     // case2: 完成结构体成员的赋值映射  &&  完成结构体实例间的赋值
     // case3: 在全局变量的互相赋值中  通过 assign() 找到目标变量  eg. postFix().structTargetMem
     DataInit(rest, tok, Init);
+
+    // commit[113]: 此时通过赋值已经确定了该实例中灵活数组的长度  存储在 Init.children 中
+    if ((varType->Kind == TY_STRUCT || varType->Kind == TY_UNION) && varType->IsFlexible) {
+        varType = copyStructType(varType);
+        structMember* mem = varType->structMemLink;
+        while (mem->next)
+            mem = mem->next;    // 循环到结构体的灵活数组
+
+        // 通过已经确定长度的 children 重置定义的数组类型
+        mem->memberType = Init->children[mem->Idx]->initType;
+        varType->BaseSize += mem->memberType->BaseSize;
+
+        *reSetType = varType;
+        return Init;
+    }
 
     // Q: 这里的 Type** 在更新什么
     // A: 更新变量结点的 varType 从空数组 BasiSize = (-1 * arrayElem) 更新到真实大小

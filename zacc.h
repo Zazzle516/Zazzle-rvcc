@@ -140,6 +140,7 @@ struct Type {
 
 // 结构体 | 联合体 TY_STRUCT | TY_UNION
     structMember* structMemLink;    // commit[49]: 该结构体的成员变量链表
+    bool IsFlexible;                // commit[113]: 判断是否为灵活数组成员
 };
 
 // 使用在 type.c 中定义的全局变量
