@@ -206,6 +206,7 @@ static Node* blockSwitch;
 
 // 复制结构体类型
 static Type* copyStructType(Type* type) {
+    // 同理这里因为链表重新分配空间
     type = copyType(type);
 
     structMember HEAD = {};
@@ -1235,10 +1236,10 @@ static Type* funcFormalParams(Token** rest, Token* tok, Type* returnType) {
             isPtr->Name = Name;
         }
 
-// Q: 当前的 Curr 新指向这个新的指针空间  如果注释掉是稳定报错的
-        // Curr->formalParamNext = (isPtr);
+        // Q: 为什么要通过 copyType() 赋值  如果注释掉会稳定报错
+        // A: isPtr 作为当前链表元素被赋值后  空间释放  被下一个链表元素使用
+        // 如果不去重新分配空间  会导致链表的 next 指针反复指向同一片地址空间  所以链表构造都需要通过 calloc() 分配
         Curr->formalParamNext = copyType(isPtr);
-
         Curr = Curr->formalParamNext;
     }
 
@@ -1482,7 +1483,7 @@ static Token* functionDefinition(Token* tok, Type* funcReturnBaseType, VarAttr* 
     enterScope();
 
     // 第一次更新 Local: 函数形参
-    createParamVar(funcType->formalParamLink);
+    createParamVar(funcType->formalParamLink);      // Q: 在第一个函数的地方就报错了
     function->formalParam = Local;
 
     tok = skip(tok, "{");
