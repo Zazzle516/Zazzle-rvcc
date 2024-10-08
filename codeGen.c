@@ -859,6 +859,21 @@ void emitText(Object* Global) {
     }
 }
 
+// 简单的取对数计算
+static int simpleLog2(int Num) {
+    int N = Num;
+    int E = 0;
+
+    while (N > 1) {
+        if (N % 2 == 1)
+            errorHint("unreasonable align size %d", Num);
+        
+        N /= 2;     // 辗转相除
+        ++E;
+    }
+    return E;
+}
+
 // commit[32]: 全局变量在定义的时候隐含了初始化为 0 的状态
 void emitGlobalData(Object* Global) {
     for (Object* globalVar = Global; globalVar != NULL; globalVar = globalVar->next) {
@@ -868,6 +883,12 @@ void emitGlobalData(Object* Global) {
         // commit[111]: 进行 BSS段和 data 段的区别
         // BSS 不会为数据分配空间 只是记录数据所需要的空间大小  将没有初始化的全局变量用 0 进行填充
         printLn("  .global %s", globalVar->var_name);
+
+        // commit[115]: 对齐全局变量
+        if (!globalVar->var_type->alignSize) {
+            errorHint("Align Size can not be 0");
+        }
+        printLn("  .align %d", simpleLog2(globalVar->var_type->alignSize));
 
         // commit[34]: 针对有初始值的全局变量进行特殊处理 针对是否有赋值分别处理
         if (globalVar->InitData) {
