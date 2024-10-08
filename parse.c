@@ -1294,6 +1294,12 @@ static void structMembers(Token** rest, Token* tok, Type* structType) {
         }
     }
 
+    // commit[112]: 支持结构体 *最后一个* 成员的灵活数组定义
+    // 这个数组定义不占用空间 返回 0  在使用的时候通过 malloc() | calloc() 在堆上分配空间
+    // 因为栈上的空间使用需要提前计算出来  灵活数组是无法做到的  目前 commit[112] 只能做到判断
+    if (Curr != &HEAD && Curr->memberType->Kind == TY_ARRAY_LINER && Curr->memberType->arrayElemCount < 0)
+        Curr->memberType = linerArrayType(Curr->memberType->Base, 0);
+
     *rest = tok->next;
     structType->structMemLink = HEAD.next;
 }
