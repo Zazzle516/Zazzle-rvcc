@@ -1219,6 +1219,12 @@ static Type* getTypeInfo(Token** rest, Token* tok) {
 
 // commit[26]: 利用 Type 结构定义存储形参的链表
 static Type* funcFormalParams(Token** rest, Token* tok, Type* returnType) {
+    // commit[114]: 支持 void 作为形参  空 formalParamLink 即可
+    if (equal(tok, "void") && equal(tok->next, ")")) {
+        *rest = tok->next->next;
+        return funcType(returnType);
+    }
+
     Type HEAD = {};
     Type* Curr = &HEAD;
 
