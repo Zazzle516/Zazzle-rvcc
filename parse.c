@@ -1564,6 +1564,19 @@ static Node* compoundStamt(Token** rest, Token* tok) {
                 continue;
             }
 
+            // commit[117]: 针对代码块内部的变量声明  支持在函数内部使用 extern 声明
+            // Tip: 虽然是在代码块中使用的其他文件定义的变量  生命范围也是代码块
+            // 但是因为它的外部链接性质，它仍然是一个全局概念的变量
+            if (!GlobalOrFunction(tok)) {
+                tok = functionDefinition(tok, BaseType, &Attr);
+                continue;
+            }
+
+            if (Attr.isExtern) {
+                tok = gloablDefinition(tok, BaseType, &Attr);
+                continue;
+            }
+
             Curr->next = declaration(&tok, tok, BaseType);
         }
 
