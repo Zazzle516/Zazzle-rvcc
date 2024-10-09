@@ -191,7 +191,7 @@ struct Object {
     bool IsStatic;          // 判断是否是文件域内函数
 
     /* 全局变量 */
-    bool IsFuncDefinition;
+    bool IsFuncOrVarDefine; // RVCC 先支持省略 extern 的函数声明  此时同时支持函数和变量的外部声明  所以复用
     char* var_name;
     Object* next;
     Type* var_type;

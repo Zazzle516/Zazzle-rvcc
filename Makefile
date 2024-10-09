@@ -90,7 +90,9 @@ clean:
 #	find * -type f -name '*.o' -exec {} ';'		编译的中间结果
 #	find * -type f -name '*.s' -exec {} ';'		编译结果的汇编
 
+create:
+	touch tmp.s tmp.c
 
 # 伪代码
 # 声明 test 和 clean 并没有任何文件依赖
-.PHONY: test clean
+.PHONY: test clean create

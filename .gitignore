@@ -16,7 +16,7 @@
 a.out
 
 # 方便操作的 jump 脚本
-jump.sh
+*.sh
 
 # 生成的最终的rvcc可执行文件
 /rvcc

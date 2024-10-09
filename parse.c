@@ -44,10 +44,12 @@ static Node* Labels;
 
 // commit[64]: 判断该变量是否是类型别名
 // commit[75]: 判断文件域内函数
+// commit[116]: 判断是否是其他文件定义的变量
 // 声明语句的特殊修饰符  出现在声明的第一个位置
 typedef struct {
     bool isTypeDef;
     bool isStatic;
+    bool isExtern;
 } VarAttr;
 
 /* 数组初始化器 */
@@ -78,7 +80,7 @@ struct initStructInfo {
 
 // commit[49] [54] [64] [74]: 支持 struct | union | typedef | enum 语法解析
 // declspec = ("int" | "char" | "long" | "short" | "void" | structDeclaration | unionDeclaration
-//             | "typedef" | "typedefName" | enumSpec | "static")+
+//             | "typedef" | "typedefName" | enumSpec | "static" | "extern")+
 
 // enumSpec = ident? "{" enumList? "}" | ident ("{" enumList? "}")?
 // enumList = ident ("=" constExpr)? ("," ident ("=" constExpr)?)* "," ?
@@ -323,6 +325,13 @@ static Object* newLocal(char* varName, Type* localVarType) {
 static Object* newGlobal(char* varName, Type* globalVarType) {
     Object* obj = newVariable(varName, globalVarType);
     obj->next = Global;
+
+    // commit[116]: 表面上看把这里注释掉没问题  单独对程序进行测试也没问题
+    // 但是在链接 test/*.s 文件的时候会报错  因为测试脚本中使用的 ASSERT 宏会把测试代码本身作为 StringLiteral 传入
+    // 使用到 parse.newStringLiteral().newAnonyGlobalVar  该匿名变量不会被设置为 true 已定义
+    // 则不会在 .data 段记录  导致 codeGen 报错
+    obj->IsFuncOrVarDefine = true;
+
     Global = obj;
     return obj;
 }
@@ -360,7 +369,7 @@ static char* getVarName(Token* tok) {
 static bool isTypeName(Token* tok) {
     static char* typeNameKeyWord[] = {
         "void", "char", "int", "long", "struct", "union",
-        "short", "typedef", "_Bool", "enum", "static",
+        "short", "typedef", "_Bool", "enum", "static", "extern",
     };
 
     for (int I = 0; I < sizeof(typeNameKeyWord) / sizeof(*typeNameKeyWord); I++) {
@@ -409,7 +418,7 @@ static bool consumeEnd(Token** rest, Token* tok) {
 /* 语法规则 */
 
 static Token* functionDefinition(Token* tok, Type* funcReturnBaseType, VarAttr* varAttr);
-static Token* gloablDefinition(Token* tok, Type* globalBaseType);
+static Token* gloablDefinition(Token* tok, Type* globalBaseType, VarAttr* varAttr);
 static Token* parseTypeDef(Token* tok, Type* BaseType);
 
 static Type* declspec(Token** rest, Token* tok, VarAttr* varAttr);
@@ -964,19 +973,21 @@ static Type* declspec(Token** rest, Token* tok, VarAttr* varAttr) {
     // 同时处理 typedef 的链式声明 {typedef int a; typedef a b;}
     while (isTypeName(tok)) {
 
-        if (equal(tok, "typedef") || equal(tok, "static")) {
+        if (equal(tok, "typedef") || equal(tok, "static") || equal(tok, "extern")) {
             if (!varAttr)
                 // 通过判断 varAttr 是否为空  人为控制 typedef 语法是否可以使用
                 tokenErrorAt(tok, "storage class specifier is not allowed in this context");
 
             if (equal(tok, "typedef"))
                 varAttr->isTypeDef = true;
-            else
+            else if (equal(tok, "static"))
                 varAttr->isStatic = true;
+            else
+                varAttr->isExtern = true;
 
             // typedef 不会与 static 一起使用
-            if (varAttr->isTypeDef && varAttr->isStatic)
-                tokenErrorAt(tok, "typydef and static may not be used together");
+            if (varAttr->isTypeDef && (varAttr->isStatic || varAttr->isExtern))
+                tokenErrorAt(tok, "typydef, extern and static may not be used together");
 
             tok = tok->next;
             continue;
@@ -1471,13 +1482,13 @@ static Token* functionDefinition(Token* tok, Type* funcReturnBaseType, VarAttr* 
     Object* function = newGlobal(getVarName(funcType->Name), funcType);
     function->IsFunction = true;
 
-    // commit[60]: 判断函数定义
-    function->IsFuncDefinition = !consume(&tok, tok, ";");
+    // commit[60]: 判断函数声明
+    function->IsFuncOrVarDefine = !consume(&tok, tok, ";");
 
     // commit[75]: 判断是否是文件域内函数
     function->IsStatic = varAttr->isStatic;
 
-    if (!function->IsFuncDefinition)
+    if (!function->IsFuncOrVarDefine)
         return tok;
 
     currFunc = function;
@@ -1489,7 +1500,7 @@ static Token* functionDefinition(Token* tok, Type* funcReturnBaseType, VarAttr* 
     enterScope();
 
     // 第一次更新 Local: 函数形参
-    createParamVar(funcType->formalParamLink);      // Q: 在第一个函数的地方就报错了
+    createParamVar(funcType->formalParamLink);
     function->formalParam = Local;
 
     tok = skip(tok, "{");
@@ -1506,7 +1517,7 @@ static Token* functionDefinition(Token* tok, Type* funcReturnBaseType, VarAttr* 
 }
 
 // commit[32]: 正式在 AST 中加入全局变量的处理
-static Token* gloablDefinition(Token* tok, Type* globalBaseType) {
+static Token* gloablDefinition(Token* tok, Type* globalBaseType, VarAttr* varAttr) {
     // Tip: 结构体的全局声明会提前在 parse.declspec() 中存储
     bool isLast = true;
 
@@ -1519,6 +1530,12 @@ static Token* gloablDefinition(Token* tok, Type* globalBaseType) {
 
         // commit[105]: 调用 assign() 语法  支持全局变量初始化
         Object* obj = newGlobal(getVarName(globalType->Name), globalType);
+
+        // commit[116]: 判断为外部变量定义
+        // Tip: 未初始化的全局变量会被视为 COMMON 变量  是可以进行全局重复定义的  由链接器处理
+        // Tip: 通过 headerFile 定义的全局变量不需要 extern 声明  因为预处理本质是复制  extern 是重复声明
+        obj->IsFuncOrVarDefine = !varAttr->isExtern;
+
         if (equal(tok, "="))
             initGlobalNode(&tok, tok->next, obj);
     }
@@ -2789,7 +2806,7 @@ Object* parse(Token* tok) {
 
         else {
             Type* globalBaseType = copyType(BaseType);
-            tok = gloablDefinition(tok, globalBaseType);
+            tok = gloablDefinition(tok, globalBaseType, &Attr);
         }
     }
 

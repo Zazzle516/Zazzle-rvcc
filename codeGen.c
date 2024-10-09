@@ -783,7 +783,7 @@ static void exprGen(Node* AST) {
 // commit[32]: 完成汇编的 .text 段
 void emitText(Object* Global) {
     for (Object* currFunc = Global; currFunc; currFunc = currFunc->next) {
-        if (!currFunc->IsFunction || !currFunc->IsFuncDefinition)
+        if (!currFunc->IsFunction || !currFunc->IsFuncOrVarDefine)
             // 对于数据和函数声明不进行任何处理
             continue;
 
@@ -877,8 +877,10 @@ static int simpleLog2(int Num) {
 // commit[32]: 全局变量在定义的时候隐含了初始化为 0 的状态
 void emitGlobalData(Object* Global) {
     for (Object* globalVar = Global; globalVar != NULL; globalVar = globalVar->next) {
-        if (globalVar->IsFunction == true)
+        if (globalVar->IsFunction == true || !globalVar->IsFuncOrVarDefine) {
+            // printf("%s is function %d\n", globalVar->var_name, globalVar->IsFunction);
             continue;
+        }
 
         // commit[111]: 进行 BSS段和 data 段的区别
         // BSS 不会为数据分配空间 只是记录数据所需要的空间大小  将没有初始化的全局变量用 0 进行填充
