@@ -194,6 +194,7 @@ struct initStructInfo {
 // commit[24]: 函数调用 在 primary_class_expr 前看一个字符确认是函数声明后的定义
 // funcall = ident "(" (expr ("," expr)*)? ")"
 
+// 在传递到 codeGen 的时候  只有 Global 是暴露在外的  Local 会被写入 Func.local 中
 Object* Local;      // 函数内部变量
 Object* Global;     // 全局变量 + 函数定义(因为 C 不能发生函数嵌套 所以一定是全局的层面)
 
@@ -1668,6 +1669,21 @@ static Node* declaration(Token** rest, Token* tok, Type* BaseType, VarAttr* varA
         // commit[61]: 在 declarator() 解析完整类型后判断 void 非法
         if (isPtr->Kind == TY_VOID)
             tokenErrorAt(tok, "variable declared void");
+
+        // commit[120]: 支持局部的 static 变量
+        // Tip: 和全局变量的区别 static 修饰的变量生命周期虽然是整个程序  但是作用域仍然是代码块
+        if (varAttr && varAttr->isStatic) {
+            // step1: 匿名存储到全局链表中  在 codeGen 进行初始化
+            // step2: 任何对该全局变量的访问通过该匿名变量进行  通过 Global.varList 进行实际使用
+            // 通过实际定义的名称  完成全局匿名量的调用  很巧妙这个地方  把全局量写入 VarScope 满足作用域范围
+            Object* anonyGlobalVar = newAnonyGlobalVar(isPtr);
+            pushVarScopeToScope(getVarName(isPtr->Name))->varList = anonyGlobalVar;
+
+            if (equal(tok, "="))
+                initGlobalNode(&tok, tok->next, anonyGlobalVar);
+            continue;
+        }
+
         Object* var = newLocal(getVarName(isPtr->Name), isPtr);
 
         if (varAttr && varAttr->Align)
