@@ -4,6 +4,7 @@
 // commit[42]: checkout 查看注释
 // commit[64]: checkout 查看注释
 // commit[95]: checkout 查看注释
+// 注意复合字面量可以是左值！ 局部变量可以但是全局变量不行？
 
 // commit[54]: 同时支持结构体 联合体的类型模板存储
 typedef struct TagScope TagScope;
@@ -186,6 +187,7 @@ struct initStructInfo {
 //                      | "sizeof" third_class_expr
 //                      | "sizeof" "(" typeName")"
 //                      | "_Alignof" third_class_expr
+//                      | "(" typeName ")" "{" initializerList "}"
 
 // commit[65]: 在编译阶段解析 sizeof 对类型的求值
 // typeName = declspec abstractDeclarator
@@ -1426,6 +1428,9 @@ static Type* structDeclaration(Token** rest, Token* tok) {
         if (structType->alignSize < newStructMem->Align)
             structType->alignSize = newStructMem->Align;
     }
+    // 结构体本身无法嵌套  因为空间无法计算  因为访问到自己的一定是指针  不存在 BaseSize 无解的情况
+    // 通过 typedef 定义的结构体  通过 (totalOffset += *) 迭代成员的 BaseSize
+    // Tip: 所以一定要使用链表
 
     // 比如 int-char 这种情况  最后的 char 也要单独留出 8B 否则 9B 中另外的 7B 读取会出问题
     structType->BaseSize = alignTo(totalOffset, structType->alignSize);
@@ -1462,7 +1467,9 @@ static Type* StructOrUnionDecl(Token** rest, Token* tok) {
         tok = tok->next;
     }
 
-    // Tip: 结构体定义和使用结构体标签定义变量是相同的语法前缀  分叉点在 "{"  所以这里进行一次判断
+    // case1: 结构体声明
+    // case2: 结构体内部指向自己的指针
+    // case3: 使用结构体标签定义变量
     if ((newTag != NULL) && !equal(tok, "{")) {
         // 因为判断逻辑的更改  所以移动到上面
         *rest = tok;
@@ -1470,8 +1477,10 @@ static Type* StructOrUnionDecl(Token** rest, Token* tok) {
         // 如果判断不存在  要声明该 tag 同时把 BaseSize 更新为 (-1) 无法使用
         Type* tagType = findStructTag(newTag);
         if (tagType)
+            // 在第一个结构体指针成员指向自己后  结构体名称就已经写入了 TagScope 可以直接返回
             return tagType;
 
+        // Tip: 针对 case1 和 case2 都要等待定义解析结束后  在 structDeclaration() 中更新 BaseSize
         tagType = structBasicDeclType();
         tagType->BaseSize = -1;
 
@@ -1488,7 +1497,10 @@ static Type* StructOrUnionDecl(Token** rest, Token* tok) {
     if (newTag) {
         // 判断是否是已经前向声明的结构体  进行更新
         for (TagScope* currTagScope = HEADScope->tagScope; currTagScope; currTagScope = currTagScope->next) {
+            // Tip: 在结构体未解析完成的时候  只能把 TagLabel 存入 TagScope 中  无法更新到 VarScope 中
+            // 此时 TagScope 的 BaseSize < 0 通过 structBasicDeclType() 重置
             if (equal(newTag, currTagScope->tagName)) {
+                // 真实的 BaseSize 要在 structDeclaration 中迭代得到
                 *(currTagScope->tagType) = *structType;
                 return currTagScope->tagType;
             }
@@ -1716,7 +1728,7 @@ static Node* declaration(Token** rest, Token* tok, Type* BaseType, VarAttr* varA
 }
 
 // 全局初始化相比于局部初始化  返回值是 void
-// 局部初始化开始构造 AST 交给汇编翻译  而全局需要在编译器阶段就直接计算到最终结果
+// 局部初始化开始构造 AST 交给汇编翻译  而全局需要在编译器阶段就直接计算到最终结果  所以没有返回值
 static void initGlobalNode(Token** rest, Token* tok, Object* var) {
     // 复用了原来的局部初始化器的结构  所以也支持数组 结构体的全局初始化
     Initializer* Init = initialize(rest, tok, var->var_type, &var->var_type);
@@ -1928,6 +1940,8 @@ static void structInitDefault(Token** rest, Token* tok, Initializer* Init) {
         if (currMem != Init->initType->structMemLink)
             // 与第一个成员进行比较  即使类型相同  通过 Idx 也能比较出区别  如果不是第一个成员就需要跳过 ","
             tok = skip(tok, ",");
+        
+        // 如果规定了结构体结构  通过 currMem 判断当前的赋值是否有对应的左值  多余的跳过
 
         if (currMem) {
             DataInit(&tok, tok, Init->children[currMem->Idx]);
@@ -2619,6 +2633,11 @@ static Node* typeCast(Token** rest, Token* tok) {
         Type* castTargetType = getTypeInfo(&tok, tok->next);
         tok = skip(tok, ")");
 
+        // commit[121]: 注意复合字面量的语法和强制类型转换前缀相同
+        if (equal(tok, "{"))
+            // 从开始的位置重新解析
+            return third_class_expr(rest, Start);
+
         // 通过 ")" 明确此时已经解析 k 层的目标转换类型  如果存在 (k - 1) 层   递归寻找
         Node* ND = newCastNode(typeCast(rest, tok), castTargetType);
         ND->token = Start;
@@ -2693,6 +2712,32 @@ static Node *postIncNode(Node *ND, Token *tok, int AddOrSub) {
 
 // 对变量的特殊后缀进行判断
 static Node* postFix(Token** rest, Token* tok) {
+    if (equal(tok, "(") && isTypeName(tok->next)) {
+        // 1. 获取复合字面量的类型
+        Token* Start = tok;
+        Type* varType = getTypeInfo(&tok, tok->next);
+        tok = skip(tok, ")");
+
+        // 2. 对匿名复合字面量进行赋值
+        // Tip: 局部复合字面量可以通过修改赋值的 但是全局定义在 .rodata 段 不可以修改
+
+        // 通过 HEADScope 判断是否是全局复合字面量声明
+        if (HEADScope->next == NULL) {
+            // 对比 Local 解析  无法被赋值  但是可以作为 RHS 进行赋值
+            Object* obj = newAnonyGlobalVar(varType);
+            initGlobalNode(rest, tok, obj);
+            return singleVarNode(obj, tok);
+        }
+
+        else {
+            // 局部复合字面量可以作为 LHS 被赋值
+            Object* newObj = newLocal("", varType);
+            Node* LHS = initLocalNode(rest, tok, newObj);
+            Node* RHS = singleVarNode(newObj, tok);
+            return createAST(ND_COMMA, LHS, RHS, Start);
+        }
+    }
+
     Node* ND = primary_class_expr(&tok, tok);
     // 访问结构体成员: 使用 "->" 的变量是指针  结构体实例使用 "."
 
