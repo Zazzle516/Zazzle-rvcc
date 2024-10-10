@@ -92,7 +92,8 @@ static bool isKeyWords(Token* input) {
     static char* keywords[] = {"if", "else", "return", "for", "while","sizeof", "static", "goto",
                                 "break", "continue", "switch", "case", "default",
                                 "char", "struct", "union", "_Bool", "enum",
-                                "long", "short", "void", "typedef", "int", "extern"
+                                "long", "short", "void", "typedef", "int", "extern",
+                                "_Alignof", "_Alignas"
                             };
 
     for (int i = 0; i < sizeof(keywords) / sizeof(*keywords); i ++) {

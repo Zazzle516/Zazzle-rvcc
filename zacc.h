@@ -112,6 +112,7 @@ struct structMember {
 
     Type* memberType;
     Token* memberName;
+    int Align;              // commit[118]: 细化到支持结构体成员本身的对齐
     int offset;             // 从字节角度: 记录该成员相对于结构体的偏移量
 
     int Idx;                // 从逻辑角度: 记录每个成员的下标  同时也作为成员比较的标志
@@ -189,7 +190,8 @@ struct Object {
     bool IsLocal;
     bool IsFunction;
     bool IsStatic;          // 判断是否是文件域内函数
-
+    int Align;              // commit[118]: 任意类型的基本对齐属性
+// 感觉是把类型的对齐量参数传递到 Object 中
     /* 全局变量 */
     bool IsFuncOrVarDefine; // RVCC 先支持省略 extern 的函数声明  此时同时支持函数和变量的外部声明  所以复用
     char* var_name;

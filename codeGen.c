@@ -211,7 +211,7 @@ static void preAllocStackSpace(Object* func) {
             realTotal += obj->var_type->BaseSize;
 
             // commit[51]: 支持变量对齐
-            realTotal = alignTo(realTotal, obj->var_type->alignSize);
+            realTotal = alignTo(realTotal, obj->Align);
 
             // Tip: 很巧妙!     在计算空间的时候同时顺序得到变量在栈空间(B区域)的偏移量
             // 由于 AST 的 ND_VAR 指向 Local 所以随着 func.local 遍历会同时改变 AST.var.offset
@@ -887,10 +887,10 @@ void emitGlobalData(Object* Global) {
         printLn("  .global %s", globalVar->var_name);
 
         // commit[115]: 对齐全局变量
-        if (!globalVar->var_type->alignSize) {
+        if (!globalVar->Align) {
             errorHint("Align Size can not be 0");
         }
-        printLn("  .align %d", simpleLog2(globalVar->var_type->alignSize));
+        printLn("  .align %d", simpleLog2(globalVar->Align));
 
         // commit[34]: 针对有初始值的全局变量进行特殊处理 针对是否有赋值分别处理
         if (globalVar->InitData) {

@@ -42,14 +42,17 @@ struct Scope {
 static Node* GOTOs;
 static Node* Labels;
 
-// commit[64]: 判断该变量是否是类型别名
-// commit[75]: 判断文件域内函数
-// commit[116]: 判断是否是其他文件定义的变量
+// commit[64] [75] [116]: 判断该变量是否是类型别名 | 文件域内函数 | 否是其他文件定义的变量
+// commit[118]: 因为 declspec() 本身的循环判断  在 _Alignas(*) type var 读取到 var 后会覆盖原来的 * 类型
+// 所以需要把 align 值存储在 VarAttr 中
 // 声明语句的特殊修饰符  出现在声明的第一个位置
+// Tip: 针对循环体 和 函数传参  并不支持这些变量属性
 typedef struct {
     bool isTypeDef;
     bool isStatic;
     bool isExtern;
+
+    int Align;
 } VarAttr;
 
 /* 数组初始化器 */
@@ -79,8 +82,13 @@ struct initStructInfo {
 // parse() = (functionDefinition | globalVariable | typedef)*
 
 // commit[49] [54] [64] [74]: 支持 struct | union | typedef | enum 语法解析
+// commit[117]: 支持 C11 标准的两个关键字
+// _Alignas: 指定类型或者变量的对齐方式  修改对齐  eg. {_Alignas(16) int val;}
+// _Alignof: 获取类型或者变量的对齐方式  查询对齐
 // declspec = ("int" | "char" | "long" | "short" | "void" | structDeclaration | unionDeclaration
-//             | "typedef" | "typedefName" | enumSpec | "static" | "extern")+
+//             | "typedef" | "typedefName" | enumSpec | "static" | "extern"
+//             | "_Alignas" ("(" typeName | constExpr ")")
+//            )+
 
 // enumSpec = ident? "{" enumList? "}" | ident ("{" enumList? "}")?
 // enumList = ident ("=" constExpr)? ("," ident ("=" constExpr)?)* "," ?
@@ -173,10 +181,11 @@ struct initStructInfo {
 // postFix = primary_calss_expr ("[" expr"]" | ("." ident)* | ("->" ident) | "++" | "--")*
 
 // commit[23] [30] [39]: 添加对零参函数名 | "sizeof" | ND_GNU_EXPR 声明的支持
-// primary_class_expr = "(" "{" stamt+ "}" ")" |
-//                      "(" expr ")" | num | ident fun_args? | str |
-//                      "sizeof" third_class_expr |
-//                      "sizeof" "(" typeName")"
+// primary_class_expr = "(" "{" stamt+ "}" ")"
+//                      | "(" expr ")" | num | ident fun_args? | str
+//                      | "sizeof" third_class_expr
+//                      | "sizeof" "(" typeName")"
+//                      | "_Alignof" "(" typeName ")"
 
 // commit[65]: 在编译阶段解析 sizeof 对类型的求值
 // typeName = declspec abstractDeclarator
@@ -205,6 +214,9 @@ static char* blockContinueLabel;
 
 // commit[93]: 同理用于通信的全局变量
 static Node* blockSwitch;
+
+/* 工具函数声明 */
+static Type* getTypeInfo(Token** rest, Token* tok);
 
 // 复制结构体类型
 static Type* copyStructType(Type* type) {
@@ -303,6 +315,9 @@ static Object* newVariable(char* varName, Type* varType) {
     obj->var_type = varType;
     obj->var_name = varName;
 
+    // 进行默认赋值  如果是 _Alignas 会手动更新
+    obj->Align = varType->alignSize;
+
     pushVarScopeToScope(varName)->varList = obj;
 
     return obj;
@@ -368,8 +383,10 @@ static char* getVarName(Token* tok) {
 // commit[33]: 判断当前读取的类型是否为类型
 static bool isTypeName(Token* tok) {
     static char* typeNameKeyWord[] = {
+        // Tip: "_Alignof" 并不是定义类型的关键字  只是操作关键字  有这样的区别
+        // 在 tokenize() 中是都添加的
         "void", "char", "int", "long", "struct", "union",
-        "short", "typedef", "_Bool", "enum", "static", "extern",
+        "short", "typedef", "_Bool", "enum", "static", "extern", "_Alignas",
     };
 
     for (int I = 0; I < sizeof(typeNameKeyWord) / sizeof(*typeNameKeyWord); I++) {
@@ -434,7 +451,7 @@ static Type* unionDeclaration(Token** rest, Token* tok);
 
 static Node* compoundStamt(Token** rest, Token* tok);
 
-static Node* declaration(Token** rest, Token* tok, Type* BaseType);
+static Node* declaration(Token** rest, Token* tok, Type* BaseType, VarAttr* varAttr);
 
 static Node* stamt(Token** rest, Token* tok);
 static Node* exprStamt(Token** rest, Token* tok);
@@ -993,6 +1010,25 @@ static Type* declspec(Token** rest, Token* tok, VarAttr* varAttr) {
             continue;
         }
 
+        if (equal(tok, "_Alignas")) {
+            // 自定义对齐值  写入 VarAttr.Align 中  进行后续的信息传递
+            if (!varAttr)
+                // 针对不存在对齐属性的变量  无法设置对齐值报错
+                tokenErrorAt(tok, "_Alignas is not allowed in this context");
+            tok = skip(tok->next, "(");
+
+            // 根据 _Alignas 接受的不同类型的参数进行处理
+            // case1: 已经存在的标准类型 | 通过 isTypeName 也支持 typedef 重命名类型
+            // case2: 具体数值
+            if (isTypeName(tok))
+                varAttr->Align = getTypeInfo(&tok, tok)->alignSize;
+            else
+                varAttr->Align = constExpr(&tok, tok);
+            
+            tok = skip(tok, ")");
+            continue;
+        }
+
         Type* definedType = findTypeDef(tok);
         if (equal(tok, "struct") || equal(tok, "union") || definedType || equal(tok, "enum")) {
             if (typeCounter)
@@ -1321,8 +1357,10 @@ static void structMembers(Token** rest, Token* tok, Type* structType) {
     int Idx = 0;
 
     while (!equal(tok, "}")) {
+        // commit[118]: 支持结构体成员自己进行对齐
         // Tip: typedef 不可以在 struct 定义内部使用  必须是标准类型
-        Type* memberType = declspec(&tok, tok, NULL);
+        VarAttr varAttr = {};
+        Type* memberBaseType = declspec(&tok, tok, &varAttr);
 
         int First = true;
         while (!consume(&tok, tok, ";")) {
@@ -1335,9 +1373,13 @@ static void structMembers(Token** rest, Token* tok, Type* structType) {
 
             // Tip: 因为现在无法确定 STRUCT or UNION 所以只处理 Idx 而不是 Offset
             // 根据 declspec 类型前缀 使用 declarator 解析各自的类型后缀
-            newStructMember->memberType = declarator(&tok, tok, memberType);
+            newStructMember->memberType = declarator(&tok, tok, memberBaseType);
             newStructMember->memberName = newStructMember->memberType->Name;
             newStructMember->Idx = Idx++;
+
+            // Tip: 对齐值 declspec._Alignas 已经预存在 VarAttr.Align 中  如果存在则优先
+            // 这样后续在 structDeclaration | unionDeclaration 中才可以直接使用
+            newStructMember->Align = varAttr.Align ? (varAttr.Align) : (newStructMember->memberType->alignSize);
 
             // 此时的成员变量是顺序存在 structType 中  因为涉及后续的 Offset 的 maxOffset  所以必须是顺序的
             Curr->next = newStructMember;
@@ -1370,8 +1412,9 @@ static Type* structDeclaration(Token** rest, Token* tok) {
     int totalOffset = 0;
     // commit[113]: 因为灵活数组的空间定义为 0 所以不会改变空间计算逻辑
     for (structMember* newStructMem = structType->structMemLink; newStructMem; newStructMem = newStructMem->next) {
+        // commit[118]: 细化到每个结构体成员根据对齐定义值计算对齐值
         // 确定当前变量的起始位置  判断是否会对齐  => 判断 realTotal 是否为 aimAlign 的倍数
-        totalOffset = alignTo(totalOffset, newStructMem->memberType->alignSize);
+        totalOffset = alignTo(totalOffset, newStructMem->Align);
         newStructMem->offset = totalOffset;
 
         // 为下一个变量计算起始位置准备
@@ -1379,8 +1422,8 @@ static Type* structDeclaration(Token** rest, Token* tok) {
         totalOffset += newStructMem->memberType->BaseSize;
 
         // 判断是否更新结构体对齐最大值  本质上 structType->alignSize = maxSingleOffset
-        if (structType->alignSize < newStructMem->memberType->alignSize)
-            structType->alignSize = newStructMem->memberType->alignSize;
+        if (structType->alignSize < newStructMem->Align)
+            structType->alignSize = newStructMem->Align;
     }
 
     // 比如 int-char 这种情况  最后的 char 也要单独留出 8B 否则 9B 中另外的 7B 读取会出问题
@@ -1396,8 +1439,9 @@ static Type* unionDeclaration(Token** rest, Token* tok) {
 
     // union 的偏移量设置为成员中最大的  并且由于空间共用  所有成员的偏移量都是 0
     for (structMember* newUnionMem = unionType->structMemLink; newUnionMem; newUnionMem = newUnionMem->next) {
-        if (unionType->alignSize < newUnionMem->memberType->alignSize)
-            unionType->alignSize = newUnionMem->memberType->alignSize;
+        // Tip: 注意 BaseSize 是针对变量的  Align 是针对类型的
+        if (unionType->alignSize < newUnionMem->Align)
+            unionType->alignSize = newUnionMem->Align;
 
         if (unionType->BaseSize < newUnionMem->memberType->BaseSize)
             unionType->BaseSize = newUnionMem->memberType->BaseSize;
@@ -1536,6 +1580,10 @@ static Token* gloablDefinition(Token* tok, Type* globalBaseType, VarAttr* varAtt
         // Tip: 通过 headerFile 定义的全局变量不需要 extern 声明  因为预处理本质是复制  extern 是重复声明
         obj->IsFuncOrVarDefine = !varAttr->isExtern;
 
+        // commit[118]: 针对变量如果存在自定义对齐值则更新
+        if (varAttr->Align)
+            obj->Align = varAttr->Align;
+
         if (equal(tok, "="))
             initGlobalNode(&tok, tok->next, obj);
     }
@@ -1565,7 +1613,7 @@ static Node* compoundStamt(Token** rest, Token* tok) {
             }
 
             // commit[117]: 针对代码块内部的变量声明  支持在函数内部使用 extern 声明
-            // Tip: 虽然是在代码块中使用的其他文件定义的变量  生命范围也是代码块
+            // Tip: 虽然是在代码块中使用的其他文件定义的变量  生命范围也是该代码块
             // 但是因为它的外部链接性质，它仍然是一个全局概念的变量
             if (!GlobalOrFunction(tok)) {
                 tok = functionDefinition(tok, BaseType, &Attr);
@@ -1577,7 +1625,8 @@ static Node* compoundStamt(Token** rest, Token* tok) {
                 continue;
             }
 
-            Curr->next = declaration(&tok, tok, BaseType);
+            // commit[118]: 如果存在 _Alignas 定义  会更新 VarAttr.Align
+            Curr->next = declaration(&tok, tok, BaseType, &Attr);
         }
 
         else {
@@ -1596,7 +1645,7 @@ static Node* compoundStamt(Token** rest, Token* tok) {
 }
 
 // 对变量定义语句的解析
-static Node* declaration(Token** rest, Token* tok, Type* BaseType) {
+static Node* declaration(Token** rest, Token* tok, Type* BaseType, VarAttr* varAttr) {
     Node HEAD = {};
     Node* Curr = &HEAD;
 
@@ -1620,6 +1669,10 @@ static Node* declaration(Token** rest, Token* tok, Type* BaseType) {
         if (isPtr->Kind == TY_VOID)
             tokenErrorAt(tok, "variable declared void");
         Object* var = newLocal(getVarName(isPtr->Name), isPtr);
+
+        if (varAttr && varAttr->Align)
+            // commit[118]: 如果存在自定义对齐  此时也已经解析结束  直接覆盖就可以了
+            var->Align = varAttr->Align;
 
         // commit[97]: 修改了判定逻辑  转移到初始化器中进行初始化
         if (equal(tok, "=")) {
@@ -2053,7 +2106,7 @@ static Node* stamt(Token** rest, Token* tok) {
 
         if (isTypeName(tok)) {
             Type* Basetype = declspec(&tok, tok, NULL);
-            ND->For_Init = declaration(&tok, tok, Basetype);
+            ND->For_Init = declaration(&tok, tok, Basetype, NULL);
         }
         else
             ND->For_Init = exprStamt(&tok, tok);
@@ -2703,6 +2756,15 @@ static Node* primary_class_expr(Token** rest, Token* tok) {
         Node* ND = third_class_expr(rest, tok->next);
         addType(ND);
         return numNode(ND->node_type->BaseSize, tok);
+    }
+
+    if (equal(tok, "_Alignof")) {
+        tok = skip(tok->next, "(");
+        Type* varType = getTypeInfo(&tok, tok);
+        *rest = skip(tok, ")");
+
+        // Tip: 即使是超级大的数组  它的对齐值也只能基本类型相关  所以需要单独的变量
+        return numNode(varType->alignSize, tok);
     }
 
     if ((tok->token_kind) == TOKEN_NUM) {
