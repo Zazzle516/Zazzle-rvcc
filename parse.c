@@ -185,7 +185,7 @@ struct initStructInfo {
 //                      | "(" expr ")" | num | ident fun_args? | str
 //                      | "sizeof" third_class_expr
 //                      | "sizeof" "(" typeName")"
-//                      | "_Alignof" "(" typeName ")"
+//                      | "_Alignof" third_class_expr
 
 // commit[65]: 在编译阶段解析 sizeof 对类型的求值
 // typeName = declspec abstractDeclarator
@@ -2758,13 +2758,20 @@ static Node* primary_class_expr(Token** rest, Token* tok) {
         return numNode(ND->node_type->BaseSize, tok);
     }
 
-    if (equal(tok, "_Alignof")) {
-        tok = skip(tok->next, "(");
-        Type* varType = getTypeInfo(&tok, tok);
+    if (equal(tok, "_Alignof") && equal(tok->next, "(") && isTypeName(tok->next->next)) {
+        // 针对类型的解析
+        Type* varType = getTypeInfo(&tok, tok->next->next);
         *rest = skip(tok, ")");
 
         // Tip: 即使是超级大的数组  它的对齐值也只能基本类型相关  所以需要单独的变量
         return numNode(varType->alignSize, tok);
+    }
+
+    if (equal(tok, "_Alignof")) {
+        // 针对变量的解析  因为变量只能有一个  所以理论上不需要括号
+        Node* ND = third_class_expr(rest, tok->next);
+        addType(ND);
+        return numNode(ND->node_type->alignSize, tok);
     }
 
     if ((tok->token_kind) == TOKEN_NUM) {
