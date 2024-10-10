@@ -127,7 +127,7 @@ struct initStructInfo {
 // funcFormalParams = (formalParam ("," formalParam)*)? ")"
 // formalParam = declspec declarator
 
-// stamt = "return" expr ";"
+// stamt = "return" expr? ";"       支持空返回语句
 //          | exprStamt
 //          | "{" compoundStamt
 //          | "if" "(" cond-expr ")" stamt ("else" stamt)?
@@ -2086,6 +2086,9 @@ static Node* structRef(Node* VAR_STRUCT_UNION, Token* tok) {
 static Node* stamt(Token** rest, Token* tok) {
     if (equal(tok, "return")) {
         Node* retLeftNode = createNode(ND_RETURN, tok);
+
+        if (consume(rest, tok->next, ";"))
+            return retLeftNode;
         Node* retRightNode = expr(&tok, tok->next);
         *rest = skip(tok, ";");
 

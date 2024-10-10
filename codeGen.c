@@ -628,7 +628,10 @@ static void exprGen(Node* AST) {
     case ND_RETURN:
     {
         printLn("  # 返回到当前执行函数的 return 标签");
-        calcuGen(AST->LHS);
+
+        // 只有非空语句才翻译
+        if (AST->LHS)
+            calcuGen(AST->LHS);
         printLn("  j .L.return.%s", currFuncFrame->var_name);
         return;
     }
