@@ -124,7 +124,7 @@ struct initStructInfo {
 // typeSuffix = ("(" funcFormalParams | "[" arrayDimensions | ε
 // arrayDemensions =  constExpr? "]" typeSuffix
 
-// funcFormalParams = (formalParam ("," formalParam)*)? ")"
+// funcFormalParams = ("void" | formalParam ("," formalParam)* ("," "...")? )? ")"
 // formalParam = declspec declarator
 
 // stamt = "return" expr? ";"       支持空返回语句
@@ -1280,10 +1280,21 @@ static Type* funcFormalParams(Token** rest, Token* tok, Type* returnType) {
 
     Type HEAD = {};
     Type* Curr = &HEAD;
+    // commit[127]: 默认函数参数不支持可变参数
+    bool isVariadic = false;
 
     while (!equal(tok, ")")) {
         if (Curr != &HEAD)
             tok = skip(tok, ",");
+
+        if (equal(tok, "...")) {
+            // 如果存在可变参数传参  则对判断覆盖
+            isVariadic = true;
+            tok = tok->next;
+            skip(tok, ")");
+            break;
+        }
+
         // Tip: 也不能在函数参数中使用
         Type* formalBaseType = declspec(&tok, tok, NULL);
         Type* isPtr = declarator(&tok, tok, formalBaseType);

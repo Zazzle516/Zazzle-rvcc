@@ -132,6 +132,7 @@ struct Type {
     Type* Base;                     // 指针基类涉及空间计算
 
 // 函数 TY_FUNC
+    bool IsVariadic;                // commit[127]: 该函数是否接受可变参数长度
     Type* ReturnType;               // commit[25]: 根据 Token 保存返回值类型
     Type* formalParamLink;
     Type* formalParamNext;          // commit[26]: 支持函数形参链表结构
