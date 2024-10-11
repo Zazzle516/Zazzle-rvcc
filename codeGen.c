@@ -885,9 +885,20 @@ void emitGlobalData(Object* Global) {
             continue;
         }
 
-        // commit[111]: 进行 BSS段和 data 段的区别
-        // BSS 不会为数据分配空间 只是记录数据所需要的空间大小  将没有初始化的全局变量用 0 进行填充
-        printLn("  .global %s", globalVar->var_name);
+        // commit[123]: 汇编对变量的 .local .global 声明是文件的角度
+        // .global: 在准备链接的多个 *.o 文件中都可以使用
+        // .local: 只能在当前文件中使用  eg. static
+
+        if (globalVar->IsStatic) {
+            printLn("\n  # static 全局变量 %s", globalVar->var_name);
+            printLn("  .local %s", globalVar->var_name);
+        }
+
+        else {
+            // commit[111]: 进行 BSS段和 data 段的区别
+            // BSS 不会为数据分配空间 只是记录数据所需要的空间大小  将没有初始化的全局变量用 0 进行填充
+            printLn("  .global %s", globalVar->var_name);
+        }
 
         // commit[115]: 对齐全局变量
         if (!globalVar->Align) {

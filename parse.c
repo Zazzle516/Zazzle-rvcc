@@ -344,6 +344,8 @@ static Object* newGlobal(char* varName, Type* globalVarType) {
     Object* obj = newVariable(varName, globalVarType);
     obj->next = Global;
 
+    obj->IsStatic = true;   // 默认定义为 static
+
     // commit[116]: 表面上看把这里注释掉没问题  单独对程序进行测试也没问题
     // 但是在链接 test/*.s 文件的时候会报错  因为测试脚本中使用的 ASSERT 宏会把测试代码本身作为 StringLiteral 传入
     // 使用到 parse.newStringLiteral().newAnonyGlobalVar  该匿名变量不会被设置为 true 已定义
@@ -1592,6 +1594,9 @@ static Token* gloablDefinition(Token* tok, Type* globalBaseType, VarAttr* varAtt
         // Tip: 未初始化的全局变量会被视为 COMMON 变量  是可以进行全局重复定义的  由链接器处理
         // Tip: 通过 headerFile 定义的全局变量不需要 extern 声明  因为预处理本质是复制  extern 是重复声明
         obj->IsFuncOrVarDefine = !varAttr->isExtern;
+
+        // commit[123]: 在执行 newGlobal() 后根据 VarAttr 的解析覆盖
+        obj->IsStatic = varAttr->isStatic;
 
         // commit[118]: 针对变量如果存在自定义对齐值则更新
         if (varAttr->Align)
