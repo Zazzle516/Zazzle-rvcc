@@ -436,6 +436,37 @@ static void calcuGen(Node* AST) {
             printLn("  addi sp, sp, 8");
         }
 
+        // commit[126]: 支持被调用函数的返回值类型对短整数进行 reg 的高位截断
+        // eg. short bool char
+        switch (AST->node_type->Kind) {
+        // 将寄存器内容逻辑左移后逻辑右移来清除高位的内容
+        case TY_BOOL:
+        {
+            printLn("  # 清除 Bool 类型的高位");
+            printLn("  slli a0, a0, 63");
+            printLn("  srli a0, a0, 63");
+            return;
+        }
+
+        case TY_CHAR:
+        {
+            printLn("  # 清除 Char 类型的高位");
+            printLn("  slli a0, a0, 56");
+            printLn("  srai a0, a0, 56");
+            return;
+        }
+
+        case TY_SHORT:
+        {
+            printLn("  # 清除 Short 类型的高位");
+            printLn("  slli a0, a0, 48");
+            printLn("  srai a0, a0, 48");
+            return;
+        }
+        
+        default:
+            break;
+        }
         return;
     }
 
