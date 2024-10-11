@@ -419,8 +419,23 @@ static void calcuGen(Node* AST) {
             pop_stack(ArgReg[i]);
         }
 
-        printLn("  # 调用 %s 函数", AST->FuncName);
-        printLn("  call %s", AST->FuncName);
+        // 在 RISC-V 中  强制要求栈指针对齐到 16 字节边界
+        // Tip: 在 call funcName 之后  从一个新的空间开始  提高新函数内部的执行效率
+
+        if (StackDepth % 2 == 0) {
+            // 因为 Depth 的加减单位是 8
+            printLn("  # 调用 %s 函数", AST->FuncName);
+            printLn("  call %s", AST->FuncName);
+        }
+
+        else {
+            // 如果是奇数  需要跳过 8 个字节
+            printLn("  # 新函数执行空间进行 16 字节对齐");
+            printLn("  addi sp, sp, -8");
+            printLn("  call %s", AST->FuncName);
+            printLn("  addi sp, sp, 8");
+        }
+
         return;
     }
 
