@@ -190,8 +190,8 @@ struct Object {
     bool IsLocal;
     bool IsFunction;
     bool IsStatic;          // 判断是否是文件域内函数
-    int Align;              // commit[118]: 任意类型的基本对齐属性
-// 感觉是把类型的对齐量参数传递到 Object 中
+    int Align;              // commit[118]: 暂存自定义对齐值  防止覆盖
+
     /* 全局变量 */
     bool IsFuncOrVarDefine; // RVCC 先支持省略 extern 的函数声明  此时同时支持函数和变量的外部声明  所以复用
     char* var_name;
@@ -285,6 +285,7 @@ typedef enum {
     ND_LABEL,
     ND_SWITCH,
     ND_CASE,                    // default 作为一种特殊 case
+    ND_DOWHILE,
 } NODE_KIND;
 
 // 根据结点具体的操作类型保存额外数据
@@ -352,5 +353,5 @@ void codeGen(Object* Prog, FILE* result);
 
 int alignTo(int realTotal, int aimAlign);
 
-// ???
+// 针对链表空间分配的封装
 Type* copyType(Type* origin);

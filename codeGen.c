@@ -725,6 +725,27 @@ static void exprGen(Node* AST) {
         return;
     }
 
+    case ND_DOWHILE:
+    {
+        int C = count();
+        printLn("\n#  ==== do-while %d 语句 ====", C);
+        printLn(".L.begin.%d:", C);
+        printLn("\n# ==== ND_IFBLOCK ====");
+        exprGen(AST->If_BLOCK);
+
+        // 顺序执行到判断语句  是否需要退出
+        // Tip: 循环体内部可能使用 continue; 跳过执行语句直接进入条件判断
+        printLn("\n# ==== ND_COND ====");
+        printLn("%s:", AST->ContinueLabel);
+        calcuGen(AST->Cond_Block);
+        printLn("\n# 跳转到循环 %d 的 .L.begin.%d 段", C, C);
+        printLn("  bnez a0, .L.begin.%d", C);
+
+        // 所有执行语句翻译完成  提供出口  后续顺序执行
+        printLn("%s:", AST->BreakLabel);
+        return;
+    }
+
     case ND_GOTO:
     {
         printLn("  j %s", AST->gotoUniqueLabel);

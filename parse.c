@@ -133,6 +133,7 @@ struct initStructInfo {
 //          | "if" "(" cond-expr ")" stamt ("else" stamt)?
 //          | "for" "(" exprStamt expr? ";" expr? ")" "{" stamt
 //          | "while" "(" expr ")" stamt
+//          | "do" stamt "while" "(" expr ")" ";"
 //          | "goto" ident ";"
 //          | ident ":" stamt
 //          | break ";"
@@ -2194,6 +2195,30 @@ static Node* stamt(Token** rest, Token* tok) {
         blockContinueLabel = whileContinueLabel;
 
         *rest = tok;
+        return ND;
+    }
+
+    if (equal(tok, "do")) {
+        Node* ND = createNode(ND_DOWHILE, tok);
+
+        char* currBreakLabel = blockBreakLabel;
+        char* currContLabel = blockContinueLabel;
+
+        blockBreakLabel = ND->BreakLabel = newUniqueName();
+        blockContinueLabel = ND->ContinueLabel = newUniqueName();
+
+        ND->If_BLOCK = stamt(&tok, tok->next);
+
+        blockBreakLabel = currBreakLabel;
+        blockContinueLabel = currContLabel;
+
+        tok = skip(tok, "while");
+        tok = skip(tok, "(");
+
+        ND->Cond_Block = expr(&tok, tok);
+
+        tok = skip(tok, ")");
+        *rest = skip(tok, ";");
         return ND;
     }
 
