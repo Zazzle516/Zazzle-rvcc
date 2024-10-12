@@ -89,6 +89,7 @@ struct initStructInfo {
 // declspec = ("int" | "char" | "long" | "short" | "void" | structDeclaration | unionDeclaration
 //             | "typedef" | "typedefName" | enumSpec | "static" | "extern"
 //             | "_Alignas" ("(" typeName | constExpr ")")
+//             | "signed"
 //            )+
 
 // enumSpec = ident? "{" enumList? "}" | ident ("{" enumList? "}")?
@@ -393,6 +394,7 @@ static bool isTypeName(Token* tok) {
         // 在 tokenize() 中是都添加的
         "void", "char", "int", "long", "struct", "union",
         "short", "typedef", "_Bool", "enum", "static", "extern", "_Alignas",
+        "signed",
     };
 
     for (int I = 0; I < sizeof(typeNameKeyWord) / sizeof(*typeNameKeyWord); I++) {
@@ -987,6 +989,7 @@ static Type* declspec(Token** rest, Token* tok, VarAttr* varAttr) {
         INT = 1 << 8,
         LONG = 1 << 10,
         OTHER = 1 << 12,
+        SIGNED = 1 << 13,   // Tip: 符号声明独立于类型  无法被加法覆盖
     };
     
     Type* BaseType = TYINT_GLOBAL;  // 缺省默认 INT
@@ -1079,6 +1082,8 @@ static Type* declspec(Token** rest, Token* tok, VarAttr* varAttr) {
             typeCounter += INT;
         else if (equal(tok, "long"))
             typeCounter += LONG;
+        else if (equal(tok, "signed"))
+            typeCounter |= SIGNED;
         else
             unreachable();
 
@@ -1094,21 +1099,31 @@ static Type* declspec(Token** rest, Token* tok, VarAttr* varAttr) {
             break;
 
         case CHAR:
+        case SIGNED + CHAR:
             BaseType = TYCHAR_GLOBAL;
             break;
 
         case SHORT:
         case SHORT + INT:
+        case SIGNED + SHORT:
+        case SIGNED + SHORT + INT:
             BaseType = TYSHORT_GLOBAL;
             break;
 
         case INT:
+        case SIGNED:
+        case SIGNED + INT:
             BaseType = TYINT_GLOBAL;
             break;
 
         case LONG:
         case LONG + INT:
         case LONG + LONG:
+        case LONG + LONG + INT:
+        case SIGNED + LONG:
+        case SIGNED + LONG + INT:
+        case SIGNED + LONG + LONG:
+        case SIGNED + LONG + LONG + INT:
             BaseType = TYLONG_GLOBAL;
             break;
 
