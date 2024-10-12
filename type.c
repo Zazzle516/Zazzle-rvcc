@@ -7,6 +7,13 @@ Type* TYLONG_GLOBAL = &(Type){.Kind = TY_LONG, .BaseSize = 8, .alignSize = 8};
 Type* TYSHORT_GLOBAL = &(Type){.Kind = TY_SHORT, .BaseSize = 2, .alignSize = 2};
 Type* TYBOOL_GLOBAL = &(Type){.Kind = TY_BOOL, .BaseSize = 1, .alignSize = 1};
 
+// commit[131]: 无符号类型字面量
+Type* TY_UNSIGNED_CHAR_GLOBAL = &(Type){.Kind = TY_CHAR, .BaseSize = 1, .alignSize = 1, .IsUnsigned = true};
+Type* TY_UNSIGNED_SHORT_GLOBAL = &(Type){.Kind = TY_SHORT, .BaseSize = 2, .alignSize = 2, .IsUnsigned = true};
+Type* TY_UNSIGNED_INT_GLOBAL = &(Type){.Kind = TY_INT, .BaseSize = 4, .alignSize = 4, .IsUnsigned = true};
+Type* TY_UNSIGNED_LONG_GLOBAL = &(Type){.Kind = TY_LONG, .BaseSize = 8, .alignSize = 8, .IsUnsigned = true};
+
+
 // Q: 为什么给 void 大小和对齐  这里定义为 1 和后面的 void* 任意类型定义有关吗
 // A: 在 commit[61] 的测试改 0 是可以的  我一开始猜想可能和 BaseSize 的运算有关
 // 但是合法的 void* 在 newptr() 的执行中指针大小是通过常量赋值的  和 TY_VOID.BaseSize 无关 所以我也不知道了
@@ -96,11 +103,22 @@ static Type* singleLongType(Type* leftType, Type* rightType) {
     if (leftType->Base)
         return newPointerTo(leftType->Base);
 
-    // 针对其他数据类型  根据长度判断
-    if (leftType->BaseSize == 8 || rightType->BaseSize == 8)
-        return TYLONG_GLOBAL;
+    // commit[131]: C 语言隐式转换到 INT 类型
+    if (leftType->BaseSize < 4)
+        leftType = TYINT_GLOBAL;
 
-    return TYINT_GLOBAL;
+    if (rightType->BaseSize < 4)
+        rightType = TYINT_GLOBAL;
+
+    // 优先选择 BaseSize 更大的类型
+    if (leftType->BaseSize != rightType->BaseSize)
+        return (leftType->BaseSize < rightType->BaseSize) ? (rightType) : (leftType);
+
+    // C语言中同类型下  无符号类型更大
+    if (rightType->IsUnsigned)
+        return rightType;
+
+    return leftType;
 }
 
 // commit[68]: 针对双返回结果的 ND 结点进行类型判断

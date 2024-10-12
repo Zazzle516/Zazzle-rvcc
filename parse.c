@@ -89,7 +89,7 @@ struct initStructInfo {
 // declspec = ("int" | "char" | "long" | "short" | "void" | structDeclaration | unionDeclaration
 //             | "typedef" | "typedefName" | enumSpec | "static" | "extern"
 //             | "_Alignas" ("(" typeName | constExpr ")")
-//             | "signed"
+//             | "signed" | "unsigned"
 //            )+
 
 // enumSpec = ident? "{" enumList? "}" | ident ("{" enumList? "}")?
@@ -394,7 +394,7 @@ static bool isTypeName(Token* tok) {
         // 在 tokenize() 中是都添加的
         "void", "char", "int", "long", "struct", "union",
         "short", "typedef", "_Bool", "enum", "static", "extern", "_Alignas",
-        "signed",
+        "signed", "unsigned",
     };
 
     for (int I = 0; I < sizeof(typeNameKeyWord) / sizeof(*typeNameKeyWord); I++) {
@@ -982,14 +982,15 @@ static Node* newPtrSub(Node* LHS, Node* RHS, Token* tok) {
 static Type* declspec(Token** rest, Token* tok, VarAttr* varAttr) {
     // commit[62]: 支持组合类型的声明  比如 long int | int long 类型声明
     enum {
-        VOID = 1 << 0,  // Tip: 连续 void 定义或者穿插 void 定义是错误的
+        VOID = 1 << 0,         // Tip: 连续 void 定义或者穿插 void 定义是错误的
         BOOL = 1 << 2,
         CHAR = 1 << 4,
         SHORT = 1 << 6,
         INT = 1 << 8,
         LONG = 1 << 10,
         OTHER = 1 << 12,
-        SIGNED = 1 << 13,   // Tip: 符号声明独立于类型  无法被加法覆盖
+        SIGNED = 1 << 13,       // Tip: 符号声明独立于类型  无法被加法覆盖
+        UNSIGNED = 1 << 14,
     };
     
     Type* BaseType = TYINT_GLOBAL;  // 缺省默认 INT
@@ -1084,6 +1085,8 @@ static Type* declspec(Token** rest, Token* tok, VarAttr* varAttr) {
             typeCounter += LONG;
         else if (equal(tok, "signed"))
             typeCounter |= SIGNED;
+        else if (equal(tok, "unsigned"))
+            typeCounter |= UNSIGNED;
         else
             unreachable();
 
@@ -1099,6 +1102,11 @@ static Type* declspec(Token** rest, Token* tok, VarAttr* varAttr) {
             break;
 
         case CHAR:
+        case UNSIGNED + CHAR:
+            // char 类型在 RISCV 默认是无符号类型的
+            BaseType = TY_UNSIGNED_CHAR_GLOBAL;
+            break;
+
         case SIGNED + CHAR:
             BaseType = TYCHAR_GLOBAL;
             break;
@@ -1110,10 +1118,20 @@ static Type* declspec(Token** rest, Token* tok, VarAttr* varAttr) {
             BaseType = TYSHORT_GLOBAL;
             break;
 
+        case UNSIGNED + SHORT:
+        case UNSIGNED + SHORT + INT:
+            BaseType = TY_UNSIGNED_SHORT_GLOBAL;
+            break;
+
         case INT:
         case SIGNED:
         case SIGNED + INT:
             BaseType = TYINT_GLOBAL;
+            break;
+
+        case UNSIGNED:
+        case UNSIGNED + INT:
+            BaseType = TY_UNSIGNED_INT_GLOBAL;
             break;
 
         case LONG:
@@ -1125,6 +1143,13 @@ static Type* declspec(Token** rest, Token* tok, VarAttr* varAttr) {
         case SIGNED + LONG + LONG:
         case SIGNED + LONG + LONG + INT:
             BaseType = TYLONG_GLOBAL;
+            break;
+
+        case UNSIGNED + LONG:
+        case UNSIGNED + LONG + INT:
+        case UNSIGNED + LONG + LONG:
+        case UNSIGNED + LONG + LONG + INT:
+            BaseType = TY_UNSIGNED_LONG_GLOBAL;
             break;
 
         default:

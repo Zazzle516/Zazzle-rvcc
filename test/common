@@ -39,3 +39,10 @@ int add_all(int n, ...) {
     sum += va_arg(ap, int);
   return sum;
 }
+
+// [131] 支持无符号整型
+int uchar_fn() { return (2<<10)-1-4; }
+int ushort_fn() { return (2<<20)-1-7; }
+
+int schar_fn() { return (2<<10)-1-4; }
+int sshort_fn() { return (2<<20)-1-7; }

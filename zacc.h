@@ -124,6 +124,7 @@ struct Type {
     Typekind Kind;
     int alignSize;                  // 该类型内存对齐标准
     int BaseSize;                   // commit[27]: 类型 sizeof() 计算的返回值
+    bool IsUnsigned;                // commit[131]: 支持符号定义
 
 // 被声明变量的基础信息 (结构体 | 函数 | ...)
     Token* Name;
@@ -152,6 +153,11 @@ extern Type* TYLONG_GLOBAL;
 extern Type* TYSHORT_GLOBAL;
 extern Type* TYVOID_GLOBAL;
 extern Type* TYBOOL_GLOBAL;
+
+extern Type* TY_UNSIGNED_CHAR_GLOBAL;
+extern Type* TY_UNSIGNED_SHORT_GLOBAL;
+extern Type* TY_UNSIGNED_INT_GLOBAL;
+extern Type* TY_UNSIGNED_LONG_GLOBAL;
 
 // 判断是否是指针
 bool isInteger(Type* TY);

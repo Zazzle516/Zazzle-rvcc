@@ -7,20 +7,20 @@ static int StackDepth;
 static char* ArgReg[] = {"a0", "a1", "a2", "a3", "a4", "a5", "a6", "a7"};
 
 // commit[67]: 枚举可以互相转换的类型
-enum {I8, I16, I32, I64};
+enum {I8, I16, I32, I64, U8, U16, U32, U64};
 
 // commit[67]: 判断当前类型需要的存储空间
 // Tip: 好巧妙的设计... 感叹自己活着的无意义(
 static int getTypeMappedId(Type* keyType) {
     switch (keyType->Kind) {
     case TY_CHAR:
-        return I8;
+        return keyType->IsUnsigned ? U8 : I8;
     case TY_SHORT:
-        return I16;
+        return keyType->IsUnsigned ? U16 : I16;
     case TY_INT:
-        return I32;
+        return keyType->IsUnsigned ? U32 : I32;
     default:
-        return I64;
+        return U64;
     }
 }
 
@@ -38,13 +38,39 @@ static char i64i32[] = "  # 转换为 I32 类型\n"
                        "  slli a0, a0, 32\n"
                        "  srai a0, a0, 32";
 
+// commit[131]: 支持有符号的强制转换
+// 先逻辑左移 N 位，再逻辑右移 N 位 支持无符号类型转换
+static char i64u8[] = "  # 转换为 U8 类型\n"
+                      "  slli a0, a0, 56\n"
+                      "  srli a0, a0, 56";
+
+static char i64u16[] = "  # 转换为 U16 类型\n"
+                       "  slli a0, a0, 48\n"
+                       "  srli a0, a0, 48";
+
+static char i64u32[] = "  # 转换为 U32 类型\n"
+                       "  slli a0, a0, 32\n"
+                       "  srli a0, a0, 32";
+
+// 无符号扩大类型  纯逻辑移位
+static char u32i64[] = "  # 转换为 I64 类型\n"
+                       "  slli a0, a0, 32\n"
+                       "  srli a0, a0, 32";
+
 // commit[67]: 建立类型转换的映射表 | 二维数组
 // 这里的每一个数组元素都是对应的类型转换汇编语句
-static char* castTable[10][10] = {
-    {NULL,      NULL,       NULL,       NULL},
-    {i64i8,     NULL,       NULL,       NULL},
-    {i64i8,     i64i16,     NULL,       NULL},
-    {i64i8,     i64i16,     i64i32,     NULL},
+// commit[131]: 新增对无符号类型的强制转换
+static char* castTable[11][11] = {
+//  {i8         i16         i32         i64         u8          u16         u32         u64}      Target
+    {NULL,      NULL,       NULL,       NULL,       i64u8,      i64u16,     i64u32,     NULL},  //  i8
+    {i64i8,     NULL,       NULL,       NULL,       i64u8,      i64u16,     i64u32,     NULL},  //  i16
+    {i64i8,     i64i16,     NULL,       NULL,       i64u8,      i64u16,     i64u32,     NULL},  //  i32
+    {i64i8,     i64i16,     i64i32,     NULL,       i64u8,      i64u16,     i64u32,     NULL},  //  i64
+
+    {i64i8,     NULL,       NULL,       NULL,       NULL,       NULL,       NULL,       NULL},  //  u8
+    {i64i8,     i64i16,     NULL,       NULL,       i64u8,      NULL,       NULL,       NULL},  //  u16
+    {i64i8,     i64i16,     i64i32,     u32i64,     i64u8,      i64u16,     NULL,       u32i64},//  u32
+    {i64i8,     i64i16,     i64i32,     NULL,       i64u8,      i64u16,     i64u32,     NULL},  //  u64
 };
 
 
@@ -115,15 +141,19 @@ static void Load(Type* type) {
     if (type->Kind == TY_STRUCT || type->Kind == TY_UNION)
         return;
 
-    printLn("  # 读取 a0 储存的地址的内容 并存入 a0");
+    // 汇编阶段 通过 Type 传递的信息对数字解析添加后缀
+    // 因为读取的字节数不一定能填满寄存器的 64bit 所以需要进行符号扩展  所以 Load 指令有符号后缀
+    // 同时 STORE 指令不需要考虑那么多  不需要考虑符号的影响
+    char* dataSuffix = type->IsUnsigned ? ("u") : ("");
 
+    printLn("  # 读取 a0 储存的地址的内容 并存入 a0");
     if (type->BaseSize == 1)
         // Tip: 在汇编代码部分 类型只能体现在大小  根据 Kind 区分没有意义
-        printLn("  lb a0, 0(a0)");
+        printLn("  lb%s a0, 0(a0)", dataSuffix);
     else if (type->BaseSize == 2)
-        printLn("  lh a0, 0(a0)");
+        printLn("  lh%s a0, 0(a0)", dataSuffix);
     else if (type->BaseSize == 4)
-        printLn("  lw a0, 0(a0)");
+        printLn("  lw%s a0, 0(a0)", dataSuffix);
     else
         printLn("  ld a0, 0(a0)");
 }
@@ -439,6 +469,7 @@ static void calcuGen(Node* AST) {
 
         // commit[126]: 支持被调用函数的返回值类型对短整数进行 reg 的高位截断
         // eg. short bool char
+        // commit[131]: 在返回短整数的情况中  针对无符号数进行逻辑移位运算
         switch (AST->node_type->Kind) {
         // 将寄存器内容逻辑左移后逻辑右移来清除高位的内容
         case TY_BOOL:
@@ -452,22 +483,35 @@ static void calcuGen(Node* AST) {
         case TY_CHAR:
         {
             printLn("  # 清除 Char 类型的高位");
-            printLn("  slli a0, a0, 56");
-            printLn("  srai a0, a0, 56");
+            if (AST->node_type->IsUnsigned) {
+                printLn("  slli a0, a0, 56");
+                printLn("  srli a0, a0, 56");
+            }
+            else {
+                printLn("  slli a0, a0, 56");
+                printLn("  srai a0, a0, 56");
+            }
             return;
         }
 
         case TY_SHORT:
         {
             printLn("  # 清除 Short 类型的高位");
-            printLn("  slli a0, a0, 48");
-            printLn("  srai a0, a0, 48");
+            if (AST->node_type->IsUnsigned) {
+                printLn("  slli a0, a0, 48");
+                printLn("  srli a0, a0, 48");
+            }
+            else {
+                printLn("  slli a0, a0, 48");
+                printLn("  srai a0, a0, 48");
+            }
             return;
         }
-        
+
         default:
             break;
         }
+
         return;
     }
 
@@ -601,12 +645,25 @@ static void calcuGen(Node* AST) {
     case ND_MUL:
         printLn("  mul%s a0, a0, a1", Suffix);
         return;
+
     case ND_DIV:
-        printLn("  div%s a0, a0, a1", Suffix);
+    {
+        if (AST->node_type->IsUnsigned)
+            printLn("  divu%s a0, a0, a1", Suffix);
+        else
+            printLn("  div%s a0, a0, a1", Suffix);
         return;
+    }
+
     case ND_MOD:
-        printLn("  rem%s a0, a0, a1", Suffix);
+    {
+        if (AST->node_type->IsUnsigned)
+            printLn("  remu%s a0, a0, a1", Suffix);
+        else
+            printLn("  rem%s a0, a0, a1", Suffix);
         return;
+    }
+
     case ND_BITAND:
         printLn("  and a0, a0, a1");
         return;
@@ -619,6 +676,19 @@ static void calcuGen(Node* AST) {
 
     case ND_EQ:
     case ND_NEQ:
+    {
+        if (AST->LHS->node_type->IsUnsigned && AST->LHS->node_type->Kind == TY_INT) {
+            printLn("  # LHS 为 U32 类型进行截断");
+            printLn("slli a0, a0, 32");
+            printLn("srli a0, a0, 32");
+        }
+
+        if (AST->RHS->node_type->IsUnsigned && AST->RHS->node_type->Kind == TY_INT) {
+            printLn("  # RHS 为 U32 类型进行截断");
+            printLn("slli a0, a0, 32");
+            printLn("srli a0, a0, 32");
+        }
+
         // 汇编层面通过 xor 比较结果
         printLn("  xor a0, a0, a1");       // 异或结果储存在 a0 中
         if (AST->node_kind == ND_EQ) 
@@ -626,23 +696,45 @@ static void calcuGen(Node* AST) {
         if (AST->node_kind == ND_NEQ)
             printLn("  snez a0, a0");      // 判断结果 > 0
         return;
+    }
 
     case ND_GT:
-        printLn("  sgt a0, a0, a1");
+    {
+        if (AST->node_type->IsUnsigned)
+            printLn("  sgtu a0, a0, a1");
+        else
+            printLn("  sgt a0, a0, a1");
         return;
-    case ND_LT:
-        printLn("  slt a0, a0, a1");
+    }
+
+    case ND_LT: {
+        if (AST->node_type->IsUnsigned)
+            printLn("  sltu a0, a0, a1");
+        else
+            printLn("  slt a0, a0, a1");
         return;
+    }
 
     case ND_GE:
+    {
         // 转换为判断是否小于
-        printLn("  slt a0, a0, a1");       // 先判断 > 情况
+        if (AST->node_type->IsUnsigned)
+            printLn("  sltu a0, a0, a1");       // 先判断 > 情况
+        else
+            printLn("  slt a0, a0, a1");
         printLn("  xori a0, a0, 1");       // 再判断 == 情况
         return;
+    }
+
     case ND_LE:
-        printLn("  sgt a0, a0, a1");
+    {
+        if (AST->node_type->IsUnsigned)
+            printLn("  sgtu a0, a0, a1");
+        else
+            printLn("  sgt a0, a0, a1");
         printLn("  xori a0, a0, 1");
         return;
+    }
 
     case ND_SHL:
     {
@@ -653,8 +745,12 @@ static void calcuGen(Node* AST) {
 
     case ND_SHR:
     {
+        // commit[131]: 无符号针对算数右移特殊处理  逻辑移位没区别
         printLn("  # a0 算数右移 a1 比特");
-        printLn("  sra%s a0, a0, a1", Suffix);
+        if (AST->node_type->IsUnsigned)
+            printLn("  srl%s a0, a0, a1", Suffix);
+        else
+            printLn("  sra%s a0, a0, a1", Suffix);
         return;
     }
 
