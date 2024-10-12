@@ -1313,6 +1313,10 @@ static Type* funcFormalParams(Token** rest, Token* tok, Type* returnType) {
         Curr = Curr->formalParamNext;
     }
 
+    if (Curr == &HEAD)
+        // 针对无参函数设定为可变参数  虽然没什么卵用
+        isVariadic = true;
+
     *rest = skip(tok, ")");
 
     // 封装函数结点类型
