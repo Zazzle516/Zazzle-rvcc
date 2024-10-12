@@ -1287,11 +1287,11 @@ static Type* funcFormalParams(Token** rest, Token* tok, Type* returnType) {
         if (Curr != &HEAD)
             tok = skip(tok, ",");
 
-        if (equal(tok, "...")) {
+        if (equal(tok, "...")) {    // 如果存在可变参数  只是作为一个标志  并没有内容存储到参数链表中
             // 如果存在可变参数传参  则对判断覆盖
             isVariadic = true;
             tok = tok->next;
-            skip(tok, ")");
+            skip(tok, ")"); // 对可变参数作为最后一个参数进行语法判断  跳出循环
             break;
         }
 
@@ -1316,10 +1316,11 @@ static Type* funcFormalParams(Token** rest, Token* tok, Type* returnType) {
     *rest = skip(tok, ")");
 
     // 封装函数结点类型
-    Type* funcNode = funcType(returnType);
-    funcNode->formalParamLink = HEAD.formalParamNext;
+    Type* currFuncType = funcType(returnType);
+    currFuncType->formalParamLink = HEAD.formalParamNext;
+    currFuncType->IsVariadic = isVariadic;
 
-    return funcNode;
+    return currFuncType;
 }
 
 // commit[26]: 对多参函数的传参顺序进行构造 添加到 Local 链表
@@ -1573,6 +1574,11 @@ static Token* functionDefinition(Token* tok, Type* funcReturnBaseType, VarAttr* 
     // 第一次更新 Local: 函数形参
     createParamVar(funcType->formalParamLink);
     function->formalParam = Local;
+
+    if (funcType->IsVariadic)
+        // Q: 如果存在可变参数  那么一定在最后一个  手动添加到 Local 链表中
+        // Tip: 这里设置为 64 字节因为和 reg 支持的大小强绑定
+        function->VariadicParam = newLocal("__va_area__", linerArrayType(TYCHAR_GLOBAL, 64));
 
     tok = skip(tok, "{");
     // 第二次更新 Local: 更新函数内部定义变量
@@ -2054,7 +2060,7 @@ static Node* createInitAST(Initializer* Init, Type* varType, initStructInfo* arr
         return createNode(ND_NULL_EXPR2, tok);
     }
 
-    // lvalue: 通过 DEREF 构造当前数组元素的地址
+    // lvalue: 通过 DEREF 构造当前元素的地址
     Node* LHS = initASTLeft(arrayInitRoot, tok);
     // rvalue: 找到在一阶段解析的对应数值
     Node* RHS = Init->initAssignRightExpr;

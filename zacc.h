@@ -207,6 +207,8 @@ struct Object {
     Object* local;
     int StackSize;
     Object* formalParam;
+    // Tip: 编译器无法确认可变参数类型  要等到运行的时候推断  所以该属性并不能写到 Type 中
+    Object* VariadicParam;  // commit[128]: 支持可变参数
 
     /* 局部变量 */
     int offset;

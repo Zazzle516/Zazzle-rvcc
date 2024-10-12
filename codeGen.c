@@ -4,7 +4,7 @@
 static int StackDepth;
 
 // 全局变量定义传参用到的至多 6 个寄存器
-static char* ArgReg[] = {"a0", "a1", "a2", "a3", "a4", "a5"};
+static char* ArgReg[] = {"a0", "a1", "a2", "a3", "a4", "a5", "a6", "a7"};
 
 // commit[67]: 枚举可以互相转换的类型
 enum {I8, I16, I32, I64};
@@ -211,6 +211,7 @@ static void preAllocStackSpace(Object* func) {
             realTotal += obj->var_type->BaseSize;
 
             // commit[51]: 支持变量对齐
+            // Tip: 这里 "可变参数" 提前根据 __va_area__ 提前进行了 64B 的分配
             realTotal = alignTo(realTotal, obj->Align);
 
             // Tip: 很巧妙!     在计算空间的时候同时顺序得到变量在栈空间(B区域)的偏移量
@@ -897,7 +898,22 @@ void emitText(Object* Global) {
 
         // commit[56]: 针对函数传参抽象函数 storeGenral
         for (Object* obj = currFunc->formalParam; obj; obj = obj->next) {
+            // 根据 ABI 将寄存器的内容写到栈中
             storeGenral(I++, obj->offset, obj->var_type->BaseSize);
+        }
+
+        // commit[128]: 并没有真正实现 "可变" 参数的传参  只是支持到 8 个传参的可变形式
+        if (currFunc->VariadicParam) {
+            // Tip: 在 C 中可变参数必须作为最后一个参数  并且 C 无法推断出参数的类型
+            int offset = currFunc->VariadicParam->offset;
+
+            while (I < 8) {
+                printLn("  # 当前可变参数相对于 %s 偏移量 %d", currFunc->VariadicParam->var_name,
+                                                            offset - currFunc->VariadicParam->offset);
+                // Tip: 这里的 I 的下标是已经处理 formalParam 后的下标
+                storeGenral(I++, offset, 8);
+                offset += 8;
+            }
         }
 
         // commit[13]: 现在的 AST-root 是单节点不是链表了
