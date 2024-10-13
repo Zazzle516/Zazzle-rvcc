@@ -1,8 +1,7 @@
 #include "zacc.h"
 
-// Tip: 在 commit[134] 修改了两个 bug (不知道为什么之前没发现  无语
-// case1: 把加载立即数通过伪指令 li 执行  通过寄存器间接执行
-// case2: 在 ND_GT ND_LT 的判断结点  更正为用 LHS.node_type 判断
+// Tip: 在 commit[134] 修改了一个 bug (不知道为什么之前没发现  无语
+// 在 ND_GT ND_LT 的判断结点  更正为用 LHS.node_type 判断
 
 // 记录当前的栈深度 用于后续的运算合法性判断
 static int StackDepth;

@@ -699,10 +699,14 @@ static int64_t evalWithLabel(Node* ND, char** Label) {
     case ND_MUL:
         return eval(ND->LHS) * eval(ND->RHS);
     case ND_DIV:
+        if (ND->node_type->IsUnsigned)
+            return (uint64_t)eval(ND->LHS) / eval(ND->RHS);
         return eval(ND->LHS) / eval(ND->RHS);
     case ND_NEG:
         return -eval(ND->LHS);
     case ND_MOD:
+        if (ND->node_type->IsUnsigned)
+            return (uint64_t)eval(ND->LHS) % eval(ND->RHS);
         return eval(ND->LHS) % eval(ND->RHS);
     case ND_BITAND:
         return eval(ND->LHS) & eval(ND->RHS);
@@ -715,18 +719,28 @@ static int64_t evalWithLabel(Node* ND, char** Label) {
     case ND_SHL:
         return eval(ND->LHS) << eval(ND->RHS);
     case ND_SHR:
+        if (ND->node_type->IsUnsigned && ND->node_type->BaseSize == 8)
+            return (uint64_t)eval(ND->LHS) >> eval(ND->RHS);
         return eval(ND->LHS) >> eval(ND->RHS);
     case ND_EQ:
         return eval(ND->LHS) == eval(ND->RHS);
     case ND_NEQ:
         return eval(ND->LHS) != eval(ND->RHS);
     case ND_LE:
+        if (ND->LHS->node_type->IsUnsigned)
+            return (uint64_t)eval(ND->LHS) <= eval(ND->RHS);
         return eval(ND->LHS) <= eval(ND->RHS);
     case ND_LT:
+        if (ND->LHS->node_type->IsUnsigned)
+            return (uint64_t)eval(ND->LHS) < eval(ND->RHS);
         return eval(ND->LHS) < eval(ND->RHS);
     case ND_GE:
+        if (ND->LHS->node_type->IsUnsigned)
+            return (uint64_t)eval(ND->LHS) >= eval(ND->RHS);
         return eval(ND->LHS) >= eval(ND->RHS);
     case ND_GT:
+        if (ND->LHS->node_type->IsUnsigned)
+            return (uint64_t)eval(ND->LHS) > eval(ND->RHS);
         return eval(ND->LHS) > eval(ND->RHS);
     case ND_TERNARY:
         // 因为三元运算符本身包含两个子表达式  指针可以参与运算
@@ -746,11 +760,11 @@ static int64_t evalWithLabel(Node* ND, char** Label) {
         if (isInteger(ND->node_type)) {
             switch (ND->node_type->BaseSize) {
             case 1:
-                return (uint8_t)val;
+                return ND->node_type->IsUnsigned ? (uint8_t)val : (int8_t)val;
             case 2:
-                return (uint16_t)val;
+                return ND->node_type->IsUnsigned ? (uint16_t)val : (int16_t)val;
             case 4:
-                return (uint32_t)val;
+                return ND->node_type->IsUnsigned ? (uint32_t)val : (int32_t)val;
             }
         // 因为 val 在声明的时候定义为 int64 所以不需要额外的处理
         }
