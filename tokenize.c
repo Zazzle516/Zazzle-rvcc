@@ -1,5 +1,14 @@
 #include "zacc.h"
 
+// commit[136]: 进行 C 关键字的忽略
+// auto: 在 C 中所有局部变量默认就是 auto 类型  和 C++ 的自动推导类型区分
+// volatile: 该变量的值随时可能被外部修改 eg. 硬件设备 信号 多线程  禁止编译器进行优化
+// register: 建议编译器将该变量存储在 cpu 中  提高效率
+// _Noreturn: 修饰无返回函数 C11 新特性
+// restrict: 通知编译器 指针是访问该对象的唯一手段  允许编译器进行更多优化 (int* restrict)
+// __restrict: GNU 扩展
+// __restrict__: GNU 扩展
+
 // 全局变量 记录输入流的起始位置(方便后续找到具体的错误位置)
 // 写在最上面 如果只是定义在 main() 上面的话 tokenize() 找不到
 static char* InputHEAD;
@@ -97,6 +106,8 @@ static bool isKeyWords(Token* input) {
                                 "char", "struct", "union", "_Bool", "enum",
                                 "long", "short", "void", "typedef", "int", "extern",
                                 "_Alignof", "_Alignas", "do", "signed", "unsigned",
+                                "const", "volatile", "auto", "register", "restrict", "__restrict",
+                                "__restrict__", "_Noreturn",
                             };
 
     for (int i = 0; i < sizeof(keywords) / sizeof(*keywords); i ++) {

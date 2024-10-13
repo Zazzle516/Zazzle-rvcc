@@ -88,7 +88,7 @@ struct initStructInfo {
 // declspec = ("int" | "char" | "long" | "short" | "void" | structDeclaration | unionDeclaration
 //             | "typedef" | "typedefName" | enumSpec | "static" | "extern"
 //             | "_Alignas" ("(" typeName | constExpr ")")
-//             | "signed" | "unsigned"
+//             | "signed" | "unsigned" | uselessType
 //            )+
 
 // enumSpec = ident? "{" enumList? "}" | ident ("{" enumList? "}")?
@@ -101,7 +101,8 @@ struct initStructInfo {
 // structMembers = (declspec declarator ("," declarator)* ";")*
 
 // commit[59]: 支持类型的嵌套定义
-// declarator = "*"* ("(" ident ")" | "(" declarator ")" | ident) typeSuffix
+// declarator = uselessTypeDecl ("(" ident ")" | "(" declarator ")" | ident) typeSuffix
+// uselessTypeDecl = ("*" ("const" | "volatile" | "restrict")* )*
 
 // commit[22]: 声明语句的语法定义 支持连续定义
 // commit[25]: 函数定义 目前只支持 'int' 并且无参  eg. int* funcName() {...}
@@ -393,7 +394,8 @@ static bool isTypeName(Token* tok) {
         // 在 tokenize() 中是都添加的
         "void", "char", "int", "long", "struct", "union",
         "short", "typedef", "_Bool", "enum", "static", "extern", "_Alignas",
-        "signed", "unsigned",
+        "signed", "unsigned", "const", "auto", "volatile", "register",
+        "restrict", "__restrict", "__restrict__", "_Noreturn",
     };
 
     for (int I = 0; I < sizeof(typeNameKeyWord) / sizeof(*typeNameKeyWord); I++) {
@@ -447,6 +449,8 @@ static Token* parseTypeDef(Token* tok, Type* BaseType);
 
 static Type* declspec(Token** rest, Token* tok, VarAttr* varAttr);
 static Type* enumspec(Token** rest, Token* tok);
+
+static Type* uselessTypeDecl(Token** rest, Token* tok, Type* varType);
 static Type* declarator(Token** rest, Token* tok, Type* Base);
 static Type* typeSuffix(Token** rest, Token* tok, Type* BaseType);
 static Type *abstractDeclarator(Token **rest, Token *tok, Type* BaseType);
@@ -1041,6 +1045,11 @@ static Type* declspec(Token** rest, Token* tok, VarAttr* varAttr) {
             continue;
         }
 
+        if (consume(&tok, tok, "const")        || consume(&tok, tok, "volatile") || consume(&tok, tok, "auto") ||
+            consume(&tok, tok, "register")     || consume(&tok, tok, "restrict") || consume(&tok, tok, "__restrict") ||
+            consume(&tok, tok, "__restrict__") || consume(&tok, tok, "_Noreturn"))
+            continue;
+
         if (equal(tok, "_Alignas")) {
             // 自定义对齐值  写入 VarAttr.Align 中  进行后续的信息传递
             if (!varAttr)
@@ -1233,11 +1242,23 @@ static Type* enumspec(Token** rest, Token* tok) {
     return newEnumType;
 }
 
+// commit[136]: ignore these useless keyWords
+static Type* uselessTypeDecl(Token** rest, Token* tok, Type* varType) {
+    while (consume(&tok, tok, "*")) {
+        varType = newPointerTo(varType);
+
+        while (equal(tok, "const") || equal(tok, "volatile") || equal(tok, "restrict") ||
+               equal(tok, "__restrict") || equal(tok, "__restrict__"))
+            tok = tok->next;
+    }
+    *rest = tok;
+    return varType;
+}
+
 // 类型后缀判断  包括函数定义的形参解析
 static Type* declarator(Token** rest, Token* tok, Type* Base) {
-    while (consume(&tok, tok, "*")) {
-        Base = newPointerTo(Base);
-    }
+    // commit[136]: 调用抽象的 uselessTypeDecl 跳过关键字
+    Base = uselessTypeDecl(&tok, tok, Base);
 
     // commit[59]: 除了嵌套的结构体和多维数组  其余的嵌套情况基本都是通过 (ptr) 实现
     if (equal(tok, "(")) {
@@ -1302,10 +1323,7 @@ static Type* typeSuffix(Token** rest, Token* tok, Type* BaseType) {
 
 // commit[65]: 参考 declarator 的结构  只不过是匿名嵌套类型声明
 static Type* abstractDeclarator(Token **rest, Token *tok, Type* BaseType) {
-    while (equal(tok, "*")) {
-        BaseType = newPointerTo(BaseType);
-        tok = tok->next;
-    }
+    BaseType = uselessTypeDecl(&tok, tok, BaseType);
 
     // 等待外层类型解析后再重新解析内层类型
     if (equal(tok, "(")) {
