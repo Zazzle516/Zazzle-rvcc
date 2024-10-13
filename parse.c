@@ -2931,6 +2931,9 @@ static Node* primary_class_expr(Token** rest, Token* tok) {
 
     if ((tok->token_kind) == TOKEN_NUM) {
         Node* ND = numNode(tok->value, tok);
+
+        // commit[132]: 根据 tokenize 解析的数字类型结果进行覆盖
+        ND->node_type = tok->tokenType;
         *rest = tok->next;
         return ND;
     }

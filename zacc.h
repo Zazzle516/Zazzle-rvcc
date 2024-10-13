@@ -65,7 +65,7 @@ struct Token {
     unsigned int length;
 
     char* strContent;
-    Type* tokenType;    // 本身只是记录数字和字符串的
+    Type* tokenType;    // commit[132]: 在词法解析部分自定义数值后缀
 };
 
 Token* tokenizeFile(char* filePath);

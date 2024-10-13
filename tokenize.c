@@ -52,7 +52,7 @@ void errorAt(int errorLineNum, char* place, char* FMT, va_list VA) {
     fprintf(stderr, "^ ");
 
     // 打印错误信息
-    fprintf(stderr, FMT, VA);
+    vfprintf(stderr, FMT, VA);
     fprintf(stderr, "\n");
 
     // 在这里统一清除变长参数
@@ -87,6 +87,9 @@ void charErrorAt(char* place, char* FMT, ...) {
     errorAt(errorLineNum, place, FMT, VA);
 }
 
+/* 工具函数声明 */
+static bool strCmp(char* input_ptr, char* target);
+
 // 关键字声明
 static bool isKeyWords(Token* input) {
     static char* keywords[] = {"if", "else", "return", "for", "while","sizeof", "static", "goto",
@@ -120,7 +123,7 @@ bool equal(Token* input_token, char* target) {
 // 指定 target 去跳过
 Token* skip(Token* input_token, char* target) {
     if (!equal(input_token, target)) {
-        tokenErrorAt(input_token, "expected: %s", target);
+        tokenErrorAt(input_token, "expected: '%s'", target);
     }
     return input_token->next;
 }
@@ -323,6 +326,9 @@ static Token* readCharLiteral(char* start) {
     // 通过 ASCII 的方式进行存储
     Token* tok = newToken(TOKEN_NUM, start, end + 1);
     tok->value = C;
+
+    // commit[132]: 针对字符字面量默认使用 INT 类型  如果有自定义后续会覆盖
+    tok->tokenType = TYINT_GLOBAL;
     return tok;
 }
 
@@ -352,13 +358,80 @@ static Token* readNumLiteral(char* start) {
     }
 
     // 处理真正的数字阶段 + 真正的合法性判断
-    long numVal = strtoul(P, &P, Base);
+    int64_t numVal = strtoul(P, &P, Base);
+
+    // commtiit[132]: L 后缀表示 LONG   U 后缀表示 Unsigned
+    bool Suffix_L = false;
+    bool Suffix_U = false;
+
+    // 组合后缀 (ll | u) | (l | u) | (ll) | (l) | (u)
+    if (strCmp(P, "LLU") || strCmp(P, "LLu") || strCmp(P, "llU") || strCmp(P, "llu") ||
+        strCmp(P, "ULL") || strCmp(P, "Ull") || strCmp(P, "uLL") || strCmp(P, "ull")) {
+            P += 3;
+            Suffix_L = Suffix_U = true;
+    }
+
+    else if (!strncasecmp(P, "lu", 2) || !strncasecmp(P, "ul", 2)) {
+        P += 2;
+        Suffix_L = Suffix_U = true;
+    }
+
+    else if (strCmp(P, "LL") || strCmp(P, "ll")) {
+        P += 2;
+        Suffix_L = true;
+    }
+
+    else if (*P == 'L' || *P == 'l') {
+        P += 1;
+        Suffix_L = true;
+    }
+
+    else if (*P == 'U' || *P == 'u') {
+        P += 1;
+        Suffix_U = true;
+    }
+
+    // 在后缀匹配完成后不应该还有数字  这里进行语法检查
     if (isalnum(*P))
         charErrorAt(P, "invalid digit");
 
+    Type* numType;
+    if (Base == 10) {   // 为什么十进制和其他进制分开讨论呢  都是移位其他进制却可以放在一起
+        if (Suffix_L && Suffix_U)
+            numType = TY_UNSIGNED_LONG_GLOBAL;
+        else if (Suffix_L)
+            numType = TYLONG_GLOBAL;
+        else if (Suffix_U)
+            numType = (numVal >> 32) ? TY_UNSIGNED_LONG_GLOBAL : TY_UNSIGNED_INT_GLOBAL;
+        else
+            // 没有任何后缀的情况  根据大小默认有符号
+            numType = (numVal >> 31) ? TYLONG_GLOBAL : TYINT_GLOBAL;
+    }
+
+    else {
+        if (Suffix_L && Suffix_U)
+            numType = TY_UNSIGNED_LONG_GLOBAL;
+        else if (Suffix_L)
+            numType = (numVal >> 63) ? TY_UNSIGNED_LONG_GLOBAL : TYLONG_GLOBAL;
+        else if (Suffix_U)
+            numType = (numVal >> 32) ? TY_UNSIGNED_LONG_GLOBAL : TY_UNSIGNED_INT_GLOBAL;
+        
+        // 无后缀情况(虽然很奇怪...  确实改变了解析方式但是保证了数字的安全
+        // case1: 符号位为 1：说明这个数是负数，所以需要将它解释为 unsigned long（避免溢出）
+        // case2: 符号位为 0：说明这个数是非负数，可以直接使用 long 类型
+        else if (numVal >> 63)
+            numType = TY_UNSIGNED_LONG_GLOBAL;
+        else if (numVal >> 32)
+            numType = TYLONG_GLOBAL;
+        else if (numVal >> 31)
+            numType = TY_UNSIGNED_INT_GLOBAL;
+        else
+            numType = TYINT_GLOBAL;
+    }
+
     Token* tok = newToken(TOKEN_NUM, start, P);
     tok->value = numVal;
-
+    tok->tokenType = numType;
     return tok;
 }
 

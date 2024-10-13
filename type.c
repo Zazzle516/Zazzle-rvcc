@@ -167,7 +167,9 @@ void addType(Node* ND) {
     {
         // 判断强转为 int 类型后是否仍然完整  否则用 long 类型存储
         // 结合 parse.numNode() 并没有分配空间  进行额外类型判断
-        ND->node_type = (ND->val == (int)ND->val) ? TYINT_GLOBAL : TYLONG_GLOBAL;
+        // commit[132]: 默认设置为 INT 后续通过 tokenType 覆盖
+        // ND->node_type = (ND->val == (int)ND->val) ? TYINT_GLOBAL : TYLONG_GLOBAL;
+        ND->node_type = TYINT_GLOBAL;
         return;
     }
 

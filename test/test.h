@@ -21,8 +21,7 @@
 // [69] 对未定义或未声明的函数报错
 void assert(int expected, int actual, char *code);
 
-// commit[60]: 支持函数声明
-// commit[127]: 新增对可变参数的解析
+// [60] 支持函数声明
 int printf(char *fmt, ...);
 
 // [107] 为全局变量处理联合体初始化
