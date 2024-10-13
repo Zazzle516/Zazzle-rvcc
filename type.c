@@ -43,7 +43,7 @@ bool isInteger(Type* TY) {
 Type* newPointerTo(Type* Base) {
     Type* returnType = newType(TY_PTR, 8, 8);
     returnType->Base = Base;
-
+    returnType->IsUnsigned = true;
     return returnType;
 }
 

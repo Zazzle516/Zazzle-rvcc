@@ -1,5 +1,9 @@
 #include "zacc.h"
 
+// Tip: 在 commit[134] 修改了两个 bug (不知道为什么之前没发现  无语
+// case1: 把加载立即数通过伪指令 li 执行  通过寄存器间接执行
+// case2: 在 ND_GT ND_LT 的判断结点  更正为用 LHS.node_type 判断
+
 // 记录当前的栈深度 用于后续的运算合法性判断
 static int StackDepth;
 
@@ -198,22 +202,24 @@ static void Store(Type* type) {
 // commit[56]: 将整形寄存器的值写入栈中
 static void storeGenral(int sourceReg, int offset, int targetSize) {
     printLn("  # 将 %s 寄存器的内容写入 %d(fp) 的栈地址中", ArgReg[sourceReg], offset);
+    printLn("  li t0, %d", offset);
+    printLn("  add t0, fp, t0");
 
     switch (targetSize) {
     case 1:
-        printLn("  sb %s, %d(fp)", ArgReg[sourceReg], offset);
+        printLn("  sb %s, 0(t0)", ArgReg[sourceReg], offset);
         return;
 
     case 2:
-        printLn("  sh %s, %d(fp)", ArgReg[sourceReg], offset);
+        printLn("  sh %s, 0(t0)", ArgReg[sourceReg], offset);
         return;
 
     case 4:
-        printLn("  sw %s, %d(fp)", ArgReg[sourceReg], offset);
+        printLn("  sw %s, 0(t0)", ArgReg[sourceReg], offset);
         return;
 
     case 8:
-        printLn("  sd %s, %d(fp)", ArgReg[sourceReg], offset);
+        printLn("  sd %s, 0(t0)", ArgReg[sourceReg], offset);
         return;
     }
 
@@ -263,7 +269,8 @@ static void getAddr(Node* nd_assign) {
             printLn("  # 获取变量 %s 的栈内地址 %d(fp)", nd_assign->var->var_name, nd_assign->var->offset);
             // parse.primary_class_expr().singleVarNode() + codeGen.preAllocStackSpace()
             // 栈帧是内存的一部分 虽然都是寄存器运算 但是最终 a0 会指向内存中该栈帧所储存的变量指针
-            printLn("  addi a0, fp, %d", nd_assign->var->offset);
+            printLn("  li t0, %d", nd_assign->var->offset);
+            printLn("  add a0, fp, t0");
         }
 
         else {
@@ -398,8 +405,11 @@ static void calcuGen(Node* AST) {
 
         // Tip: 这里的 I 表示该元素的实际大小  要考虑到 BaseSize
         // Q: 这里没有视频里提到的优化  为什么  分配空间超过了 int 的表示范围  和 int 无关  是 sb 指令的问题
-        for (int I = 0; I < AST->var->var_type->BaseSize; I++)
-            printLn("  sb zero, %d(fp)", AST->var->offset + I);
+        for (int I = 0; I < AST->var->var_type->BaseSize; I++) {
+            printLn("  li t0, %d", AST->var->offset + I);
+            printLn("  add t0, fp, t0");
+            printLn("  sb zero, 0(t0)");
+        }
         return;
     }
 
@@ -700,7 +710,7 @@ static void calcuGen(Node* AST) {
 
     case ND_GT:
     {
-        if (AST->node_type->IsUnsigned)
+        if (AST->LHS->node_type->IsUnsigned)
             printLn("  sgtu a0, a0, a1");
         else
             printLn("  sgt a0, a0, a1");
@@ -708,7 +718,7 @@ static void calcuGen(Node* AST) {
     }
 
     case ND_LT: {
-        if (AST->node_type->IsUnsigned)
+        if (AST->LHS->node_type->IsUnsigned)
             printLn("  sltu a0, a0, a1");
         else
             printLn("  slt a0, a0, a1");
@@ -987,7 +997,8 @@ void emitText(Object* Global) {
 
         // 在 preAllocStackSpace() 中得到的是总空间 需要添加负号哦
         printLn("  # 分配当前函数所需要的栈空间");
-        printLn("  addi sp, sp, -%d", currFunc->StackSize);
+        printLn("  li t0, -%d", currFunc->StackSize);
+        printLn("  add sp, sp, t0");
 
         // commot[26]: 支持函数传参
         int I = 0;
