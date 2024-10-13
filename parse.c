@@ -4,7 +4,6 @@
 // commit[42]: checkout 查看注释
 // commit[64]: checkout 查看注释
 // commit[95]: checkout 查看注释
-// 注意复合字面量可以是左值！ 局部变量可以但是全局变量不行？
 
 // commit[54]: 同时支持结构体 联合体的类型模板存储
 typedef struct TagScope TagScope;
@@ -862,6 +861,14 @@ static Node* longNode(int64_t val, Token* tok) {
     return newNode;
 }
 
+// commit[133]: 用 Long 代替 Int 类型在 Parse 中的使用
+static Node* unsignedLongNode(long val, Token* tok) {
+    Node* ND = numNode(ND_NUM, tok);
+    ND->val = val;
+    ND->node_type = TY_UNSIGNED_LONG_GLOBAL;
+    return ND;
+}
+
 // 针对变量结点的定义
 static Node* singleVarNode(Object* var, Token* tok) {
     Node* varNode = createNode(ND_VAR, tok);
@@ -946,7 +953,7 @@ static Node* newPtrSub(Node* LHS, Node* RHS, Token* tok) {
     // ptr - ptr 合法运算  得到数组元素个数
     if (LHS->node_type->Base && RHS->node_type->Base) {
         Node* ND = createAST(ND_SUB, LHS, RHS, tok);
-        ND->node_type = TYINT_GLOBAL;
+        ND->node_type = TYLONG_GLOBAL;
 
         // 挂载到 LHS: LHS / RHS(8)     除法需要区分左右子树
         return createAST(ND_DIV, ND, numNode(LHS->node_type->Base->BaseSize, tok), tok);
@@ -2904,13 +2911,13 @@ static Node* primary_class_expr(Token** rest, Token* tok) {
         *rest = skip(tok, ")");
 
         // sizeof 在编译器阶段直接进行处理  不需要 codeGen 的额外操作
-        return numNode(targetType->BaseSize, Start);
+        return unsignedLongNode(targetType->BaseSize, Start);
     }
 
     if (equal(tok, "sizeof")) {
         Node* ND = third_class_expr(rest, tok->next);
         addType(ND);
-        return numNode(ND->node_type->BaseSize, tok);
+        return unsignedLongNode(ND->node_type->BaseSize, tok);
     }
 
     if (equal(tok, "_Alignof") && equal(tok->next, "(") && isTypeName(tok->next->next)) {
@@ -2919,14 +2926,14 @@ static Node* primary_class_expr(Token** rest, Token* tok) {
         *rest = skip(tok, ")");
 
         // Tip: 即使是超级大的数组  它的对齐值也只能基本类型相关  所以需要单独的变量
-        return numNode(varType->alignSize, tok);
+        return unsignedLongNode(varType->alignSize, tok);
     }
 
     if (equal(tok, "_Alignof")) {
         // 针对变量的解析  因为变量只能有一个  所以理论上不需要括号
         Node* ND = third_class_expr(rest, tok->next);
         addType(ND);
-        return numNode(ND->node_type->alignSize, tok);
+        return unsignedLongNode(ND->node_type->alignSize, tok);
     }
 
     if ((tok->token_kind) == TOKEN_NUM) {
