@@ -137,6 +137,7 @@ struct Type {
     Type* ReturnType;               // commit[25]: 根据 Token 保存返回值类型
     Type* formalParamLink;
     Type* formalParamNext;          // commit[26]: 支持函数形参链表结构
+    Token* namePos;                 // commit[138]: 记录函数声明中形参定义的位置  Q: 任意变量都有这个属性吗
 
 // 数组 TY_ARRAY_LINER
     int arrayElemCount;             // commit[27]: 数组的元素个数 newSubPtr()
@@ -204,6 +205,7 @@ struct Object {
     char* var_name;
     Object* next;
     Type* var_type;
+    Token* token;           // Q: 对应的终结符 ???
 
     /*  全局常量 */
     char* InitData;

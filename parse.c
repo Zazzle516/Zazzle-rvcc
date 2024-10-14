@@ -1275,15 +1275,21 @@ static Type* declarator(Token** rest, Token* tok, Type* Base) {
         return declarator(&tok, Start->next, Base);
     }
 
-    // 接下来要读取 funcName | identName
-    if (tok->token_kind != TOKEN_IDENT) {
-        tokenErrorAt(tok, "expected a variable name or a function name");
+    // commit[138]: 针对变量 | 函数定义  记录名称位置
+    // 因为所有的定义都通过 declarator 解析  所以只要改这里  其他地方判断一下就好了
+    Token* varName = NULL;
+    Token* varNamePos = tok;
+
+    if (tok->token_kind == TOKEN_IDENT) {
+        // 如果存在名称  那么进行覆盖
+        varName = tok;
+        tok = tok->next;
     }
 
     // 变量声明 | 函数定义 | 数组等  后续交给 typeSuffix 判断
-    Base = typeSuffix(rest, tok->next, Base);
-    Base->Name = tok;
-
+    Base = typeSuffix(rest, tok, Base);
+    Base->Name = varName;
+    Base->namePos = varNamePos;
     return Base;
 }
 
@@ -1379,19 +1385,19 @@ static Type* funcFormalParams(Token** rest, Token* tok, Type* returnType) {
 
         // Tip: 也不能在函数参数中使用
         Type* formalBaseType = declspec(&tok, tok, NULL);
-        Type* isPtr = declarator(&tok, tok, formalBaseType);
+        Type* formalType = declarator(&tok, tok, formalBaseType);
 
         // commit[87]: 把形参中的数组传参转换为指针
-        if (isPtr->Kind == TY_ARRAY_LINER) {
-            Token* Name = isPtr->Name;
-            isPtr = newPointerTo(isPtr->Base);
-            isPtr->Name = Name;
+        if (formalType->Kind == TY_ARRAY_LINER) {
+            Token* Name = formalType->Name;
+            formalType = newPointerTo(formalType->Base);
+            formalType->Name = Name;
         }
 
         // Q: 为什么要通过 copyType() 赋值  如果注释掉会稳定报错
         // A: isPtr 作为当前链表元素被赋值后  空间释放  被下一个链表元素使用
         // 如果不去重新分配空间  会导致链表的 next 指针反复指向同一片地址空间  所以链表构造都需要通过 calloc() 分配
-        Curr->formalParamNext = copyType(isPtr);
+        Curr->formalParamNext = copyType(formalType);
         Curr = Curr->formalParamNext;
     }
 
@@ -1413,6 +1419,11 @@ static Type* funcFormalParams(Token** rest, Token* tok, Type* returnType) {
 static void createParamVar(Type* param) {
     if (param) {
         createParamVar(param->formalParamNext);
+
+        // commit[138]: 在被 functionDefinition 调用时必须有形参名称
+        if (!param->Name)
+            tokenErrorAt(param->namePos, "parameter name omitted");
+
         newLocal(getVarName(param->Name), param);
     }
 }
@@ -1626,6 +1637,9 @@ static Token* parseTypeDef(Token* tok, Type* BaseType){
         First = false;
 
         Type* definedType = declarator(&tok, tok, BaseType);
+        if (!definedType->Name)
+            tokenErrorAt(definedType->namePos, "typedef name omitted");
+
         pushVarScopeToScope(getVarName(definedType->Name))->typeDefined = definedType;
     }
 
@@ -1635,6 +1649,8 @@ static Token* parseTypeDef(Token* tok, Type* BaseType){
 // 函数作为变量写入 HEADScope.varList 中
 static Token* functionDefinition(Token* tok, Type* funcReturnBaseType, VarAttr* varAttr) {
     Type* funcType = declarator(&tok, tok, funcReturnBaseType);
+    if (!funcType->Name)
+        tokenErrorAt(funcType->namePos, "funcName omitted");
 
     // commit[31]: 构造函数结点本身
     Object* function = newGlobal(getVarName(funcType->Name), funcType);
@@ -1690,6 +1706,8 @@ static Token* gloablDefinition(Token* tok, Type* globalBaseType, VarAttr* varAtt
         isLast = false;
 
         Type* globalType = declarator(&tok, tok, globalBaseType);
+        if (!globalType->Name)
+            tokenErrorAt(globalType->namePos, "variable name omitted");
 
         // commit[105]: 调用 assign() 语法  支持全局变量初始化
         Object* obj = newGlobal(getVarName(globalType->Name), globalType);
@@ -1790,6 +1808,9 @@ static Node* declaration(Token** rest, Token* tok, Type* BaseType, VarAttr* varA
         // commit[61]: 在 declarator() 解析完整类型后判断 void 非法
         if (isPtr->Kind == TY_VOID)
             tokenErrorAt(tok, "variable declared void");
+
+        if (!isPtr->namePos)
+            tokenErrorAt(isPtr->namePos, "variable name omitted");
 
         // commit[120]: 支持局部的 static 变量
         // Tip: 和全局变量的区别 static 修饰的变量生命周期虽然是整个程序  但是作用域仍然是代码块
