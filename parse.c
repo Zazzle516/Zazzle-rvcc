@@ -123,7 +123,7 @@ struct initStructInfo {
 
 // commit[26] [27] [28] [86]: 含参的函数定义  对数组变量定义的支持  多维数组支持  灵活数组的定义
 // typeSuffix = ("(" funcFormalParams | "[" arrayDimensions | ε
-// arrayDemensions =  constExpr? "]" typeSuffix
+// arrayDemensions =  ("static" | "restrict")* constExpr? "]" typeSuffix
 
 // funcFormalParams = ("void" | formalParam ("," formalParam)* ("," "...")? )? ")"
 // formalParam = declspec declarator
@@ -1290,6 +1290,9 @@ static Type* declarator(Token** rest, Token* tok, Type* Base) {
 // commit[86]: 允许灵活数组定义
 // Tip: 即使是多维空数组 BasesSize 无法判断  但 arrayElemCount 一定是负数  也是 commit[101] 的判断方式
 static Type* arrayDimensions(Token** rest, Token* tok, Type* ArrayBaseType) {
+    while (equal(tok, "static") || equal(tok, "restrict"))
+        tok = tok->next;
+
     if (equal(tok, "]")) {
         // 无具体大小数组  人为定义为 (-1)  便于后面判断合法性
         ArrayBaseType = typeSuffix(rest, tok->next, ArrayBaseType);
