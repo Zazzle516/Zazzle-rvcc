@@ -4,13 +4,13 @@
 // commit[42]: checkout 查看注释
 // commit[64]: checkout 查看注释
 // commit[95]: checkout 查看注释
+// commit[138]: checkout 查看注释   declaration的错误判断  全局赋值  指针减法类型  funcall判断
 
 // commit[54]: 同时支持结构体 联合体的类型模板存储
 typedef struct TagScope TagScope;
 struct TagScope {
     TagScope* next;
     char* tagName;
-
     Type* tagType;
 };
 
@@ -24,7 +24,7 @@ struct VarInScope {
 
     Type* typeDefined;  // commit[64]: 别名自定义类型变量
 
-    // 枚举类型的大小是固定的  (TY_INT, 4, 4)  结构体是不固定的
+    // 枚举类型的大小是固定的  (TY_INT, 4, 4)  结构体是不固定的  所以枚举类型不需要 Object
     Type* enumType;
     int enumValue;
 };
@@ -42,10 +42,8 @@ struct Scope {
 static Node* GOTOs;
 static Node* Labels;
 
-// commit[64] [75] [116]: 判断该变量是否是类型别名 | 文件域内函数 | 否是其他文件定义的变量
 // commit[118]: 因为 declspec() 本身的循环判断  在 _Alignas(*) type var 读取到 var 后会覆盖原来的 * 类型
 // 所以需要把 align 值存储在 VarAttr 中
-// 声明语句的特殊修饰符  出现在声明的第一个位置
 // Tip: 针对循环体 和 函数传参  并不支持这些变量属性
 typedef struct {
     bool isTypeDef;
@@ -64,7 +62,7 @@ struct Initializer {
     Type* initType;
     Token* tok;
     Initializer** children;     // 针对多维数组
-    bool isArrayFixed;          // 标志当前数组大小是否已经固定  如果未声明  需要等到右侧解析完成后重新构造
+    bool isArrayFixed;          // 标志当前数组本身是否已经固定  如果未声明  需要等到右侧解析完成后重新构造
 
     Node* initAssignRightExpr;  // 储存初始化映射的赋值语句
 };
@@ -104,8 +102,6 @@ struct initStructInfo {
 // declarator = uselessTypeDecl ("(" ident ")" | "(" declarator ")" | ident) typeSuffix
 // uselessTypeDecl = ("*" ("const" | "volatile" | "restrict")* )*
 
-// commit[22]: 声明语句的语法定义 支持连续定义
-// commit[25]: 函数定义 目前只支持 'int' 并且无参  eg. int* funcName() {...}
 // functionDefinition = declspec declarator "{" compoundStamt*
 
 // compoundStamt = (typedef | declaration | stamt)* "}"
@@ -113,8 +109,6 @@ struct initStructInfo {
 // declaration = declspec (declarator ("=" initializer)?
 //                          ("," declarator ("=" initializer)?)*)? ";"
 
-// commit[100]: 支持字符串数组和一般数组初始化
-// commit[102]: 支持结构体初始化 ?? 和数组有关系吗
 // initializer = stringInitializer | dataInitializer | structInitDefault | unionInitializer | assign
 // stringInitializer.
 // arrayInittializer = "{" initializer ("," initializer)* "}"
@@ -214,10 +208,8 @@ static char* blockBreakLabel;
 
 // commit[92]: 同理支持 continue 跳过后面表达式进入下一次循环
 // 和 break 的区别在于保存的断点不同 => 汇编代码调用的位置不同  parse 基本一致
-// 在循环条件的运算前打上标签  可以让 continue; 翻译的 GOTO 跳转
 static char* blockContinueLabel;
 
-// commit[93]: 同理用于通信的全局变量
 static Node* blockSwitch;
 
 /* 工具函数声明 */
@@ -227,7 +219,6 @@ static Type* getTypeInfo(Token** rest, Token* tok);
 static Type* copyStructType(Type* type) {
     // 同理这里因为链表重新分配空间
     type = copyType(type);
-
     structMember HEAD = {};
     structMember* Curr = &HEAD;
 
@@ -287,7 +278,6 @@ static VarInScope* findVar(Token* tok) {
                 return currVarScope;
         }
     }
-
     return NULL;
 }
 
@@ -319,12 +309,9 @@ static Object* newVariable(char* varName, Type* varType) {
     Object* obj = calloc(1, sizeof(Object));
     obj->var_type = varType;
     obj->var_name = varName;
-
-    // 进行默认赋值  如果是 _Alignas 会手动更新
-    obj->Align = varType->alignSize;
+    obj->Align = varType->alignSize;    // 进行默认赋值  如果是 _Alignas 会手动更新
 
     pushVarScopeToScope(varName)->varList = obj;
-
     return obj;
 }
 
@@ -345,13 +332,10 @@ static Object* newLocal(char* varName, Type* localVarType) {
 static Object* newGlobal(char* varName, Type* globalVarType) {
     Object* obj = newVariable(varName, globalVarType);
     obj->next = Global;
-
     obj->IsStatic = true;   // 默认定义为 static
 
-    // commit[116]: 表面上看把这里注释掉没问题  单独对程序进行测试也没问题
-    // 但是在链接 test/*.s 文件的时候会报错  因为测试脚本中使用的 ASSERT 宏会把测试代码本身作为 StringLiteral 传入
-    // 使用到 parse.newStringLiteral().newAnonyGlobalVar  该匿名变量不会被设置为 true 已定义
-    // 则不会在 .data 段记录  导致 codeGen 报错
+    // 测试代码本身作为 StringLiteral 用到 parse.newStringLiteral().newAnonyGlobalVar
+    // 如果注释掉匿名变量不会被设置为 true 导致 codeGen 报错
     obj->IsFuncOrVarDefine = true;
 
     Global = obj;
@@ -391,7 +375,6 @@ static char* getVarName(Token* tok) {
 static bool isTypeName(Token* tok) {
     static char* typeNameKeyWord[] = {
         // Tip: "_Alignof" 并不是定义类型的关键字  只是操作关键字  有这样的区别
-        // 在 tokenize() 中是都添加的
         "void", "char", "int", "long", "struct", "union",
         "short", "typedef", "_Bool", "enum", "static", "extern", "_Alignas",
         "signed", "unsigned", "const", "auto", "volatile", "register",
@@ -523,21 +506,19 @@ static Node* createInitAST(Initializer* Init, Type* varType, initStructInfo* arr
 static Node* initASTLeft(initStructInfo* initInfo, Token* tok);
 
 // commit[97]: 分配空间
-// Q: 数组定义维度与赋值元素维度不同怎么办  A: case1: 定义维度高 补零    case2: 赋值维度高 忽略
 static Initializer* createInitializer(Type* varType, bool IsArrayFixed) {
     Initializer* Init = calloc(1, sizeof(Initializer));
     Init->initType = varType;
 
     if (varType->Kind == TY_ARRAY_LINER) {
-        // 判断的核心仍然是 BaseSize 的大小  IsArrayFixed 根据调用情况是自定义传参
+        // 判断的核心仍然是 BaseSize 的大小
+        // Tip: 通过 IsArrayFixed 决定了灵活数组的 (1+) 维度不能为空
         if (IsArrayFixed == true && varType->BaseSize < 0) {
             Init->isArrayFixed = true;
             return Init;
         }
 
-        // 已经声明数组空间的情况 isArrayFixed = false
         // 首先分配 (n - 1) 维度的全部的指针空间
-        // Tip: 在 A[][] 的测试中 calloc() 的第一个参数 (-1) 被作为正数解析 (2^64 - 1)  因为 size_t 是无符号类型
         Init->children = calloc(varType->arrayElemCount, sizeof(Initializer*));
 
         for (int I = 0; I < varType->arrayElemCount; ++I)
@@ -545,21 +526,19 @@ static Initializer* createInitializer(Type* varType, bool IsArrayFixed) {
             Init->children[I] = createInitializer(varType->Base, false);    // 重置到 false
     }
 
-    // Tip: 这里直接复用有问题的  这里是根据成员的数量分配空间的  而不是大小  后面应该会改掉 Q??
     if (varType->Kind == TY_STRUCT || varType->Kind == TY_UNION) {
         // Idx 是成员内部的属性  而成员本身又是链表存储的  没办法直接读取  所以需要遍历
+        // Tip: UNION 仍然是强类型的  虽然可以作为一片内存空间使用
         int len = 0;
         for (structMember* currMem = varType->structMemLink; currMem; currMem = currMem->next)
             ++len;
-
-        // 根据结构体的成员数量进行指针分配  每个成员都有自己的初始化器
         Init->children = calloc(len, sizeof(Initializer*));
 
         // commit[113]: 在遍历成员分配空间的时候  手动为灵活数组分配一个初始化器
         for (structMember* currMem = varType->structMemLink; currMem; currMem = currMem->next) {
             if (IsArrayFixed && varType->IsFlexible && !currMem->next) {
-                // Q: 这里为什么要判断 IsArrayFixed
-                // 判断当前成员是灵活数组 确定该结构体包含灵活数组 最后一个成员  IsFlexible 只能声明存在
+                // 判断当前成员是灵活数组 确定该结构体包含灵活数组 最后一个成员
+                // 只判断 IsFlexible 只能声明该结构体存在灵活数组
                 Initializer* child = calloc(1, sizeof(Initializer));
                 child->initType = currMem->memberType;
                 child->isArrayFixed = true;
@@ -570,9 +549,7 @@ static Initializer* createInitializer(Type* varType, bool IsArrayFixed) {
                 // 通过 Idx 偏移量找到目标指针
                 Init->children[currMem->Idx] = createInitializer(currMem->memberType, false);
             }
-
         }
-
         return Init;
     }
 
@@ -623,8 +600,8 @@ static void writeBuffer(char* buffer, uint64_t val, int Size) {
 // 根据数据结构进行递归  找到叶子结点完成数据的写入
 static Relocation* writeGlobalData(Relocation* curr, Initializer* Init, Type* varType, char* buffer, int offset) {
     if (varType->Kind == TY_ARRAY_LINER) {
-    // 找到下一个维度中每个元素的起始地址  通过 Size 跳跃  直到递归标准类型
-    // eg. K[2][3][4] 第一层 Size = 48  递归返回后每次跳 48 Byte 向下找
+        // 找到下一个维度中每个元素的起始地址  通过 Size 跳跃  直到递归标准类型
+        // eg. K[2][3][4] 第一层 Size = 48  递归返回后每次跳 48 Byte 向下找
         int Size = varType->Base->BaseSize;
         for (int I = 0; I < varType->arrayElemCount; I++)
             curr = writeGlobalData(curr,
@@ -636,7 +613,6 @@ static Relocation* writeGlobalData(Relocation* curr, Initializer* Init, Type* va
     }
 
     if (varType->Kind == TY_STRUCT) {
-        // 支持结构体的递归方式
         for (structMember* currMem = varType->structMemLink; currMem; currMem = currMem->next)
             curr = writeGlobalData( curr,
                                     Init->children[currMem->Idx],
@@ -657,10 +633,11 @@ static Relocation* writeGlobalData(Relocation* curr, Initializer* Init, Type* va
 // Tip: 执行到这里一定是叶节点  具体的数据结构递归已经在上面实现  所以 Offset 直接通过传参即可
 
     if (!Init->initAssignRightExpr)
-        // 如果没有赋值  说明只是全局变量的声明
         return curr;
 
     // 本质上是在汇编的层面进行存储  必须把类型的大小转换为字节
+    // label: 使用的用于赋值的其他全局量的名称  Q: 需要看完 CSAPP 再重新看一下 ???
+    // Tip: 这里没有对 RHS 的类型进行判断  如果 RHS 是一个强转到 void 的赋值无法检测
     char* Label = NULL;
     uint64_t calcuRes = evalWithLabel(Init->initAssignRightExpr, &Label);
 
@@ -670,7 +647,6 @@ static Relocation* writeGlobalData(Relocation* curr, Initializer* Init, Type* va
         return curr;
     }
 
-    // 把需要参与计算的全局变量的信息写入链表
     Relocation* rel = calloc(1, sizeof(Relocation));
     rel->globalLabel = Label;       // 记录赋值式要用到的另一个全局量的名字
     rel->labelOffset = offset;
@@ -694,7 +670,7 @@ static int64_t evalWithLabel(Node* ND, char** Label) {
     // 这里只是选择把 label 存在 ND.LHS 中  然后通过调用 eval() 重置 label  得到 ND.RHS 
     // Q: 为什么有的运算不传入 label  有的可以
     // 因为加减操作可以有指针涉及  但凡是指针可以参与运算的  都要写 Label
-    // 和目前编译器支持的指针运算的语法规则相关  目前只定义到 newPtrAdd() 和 newPtrSub()
+    // 感觉和目前编译器支持的指针运算的语法规则相关  目前只定义到 newPtrAdd() 和 newPtrSub()
     case ND_ADD:
         return evalWithLabel(ND->LHS, Label) + eval(ND->RHS);
     case ND_SUB:
@@ -782,10 +758,10 @@ static int64_t evalWithLabel(Node* ND, char** Label) {
 
     case ND_STRUCT_MEMEBER:
     {
-        if (!Label) // 这里的 label 是在判断什么呢 ???
+        if (!Label)
             tokenErrorAt(ND->token, "not a compile-time constant");
 
-        if (ND->node_type->Kind != TY_ARRAY_LINER)  // 这里是碰巧 ?? 如果把变量改成 a 会怎样
+        if (ND->node_type->Kind != TY_ARRAY_LINER)
             tokenErrorAt(ND->token, "invalid initializer");
     
         // 结构体成员本身可能会再嵌套
@@ -796,7 +772,6 @@ static int64_t evalWithLabel(Node* ND, char** Label) {
     case ND_VAR:
     {
         if (!Label)
-        // Q: 要求 label 必须不存在   什么情况下会调用到这个错误判断
             tokenErrorAt(ND->token, "not a compile-time constant");
 
         // 并列的错误判断  为什么数组判断能和函数结合到一起啊...
@@ -820,7 +795,7 @@ static int64_t evalWithLabel(Node* ND, char** Label) {
     return -1;
 }
 
-// 针对 ??? 的处理  相比于 evalWithLabel() 特殊在处理 label
+// 不懂
 static int64_t evalRightVal(Node* ND, char** Label) {
     switch (ND->node_kind) {
         // 这里大部分计算和上面一致   为什么要单独开一个新函数
@@ -863,9 +838,8 @@ static Node* createNode(NODE_KIND node_kind, Token* tok) {
     return newNode;
 }
 
-// 针对数字结点的额外的值定义(数字节点相对特殊 但是在 AST 扮演的角色没区别)
+// 针对数字结点的额外的值定义
 static Node* numNode(int64_t val, Token* tok) {
-    // 结合 commit[68] 的更新  类型交给 addType() 判断是 int | long
     Node* newNode = createNode(ND_NUM, tok);
     newNode->val = val;
     return newNode;
@@ -903,8 +877,6 @@ Node* newCastNode(Node* lastNode, Type* currTypeTarget) {
     castTypeNode->node_kind = ND_TYPE_CAST;
     castTypeNode->token = lastNode->token;
     castTypeNode->LHS = lastNode;
-
-    // Q: 这里注释掉倒是不会报错 ?
     castTypeNode->node_type = copyType(currTypeTarget);
 
     return castTypeNode;
@@ -927,13 +899,10 @@ static Node* createSingle(NODE_KIND node_kind, Node* single_side, Token* tok) {
 
 /* 指针的加减运算 */
 
-// commit[21]: 新增对指针的加法运算支持
-// commit[68]: 修改支持 64 位指针存储
+// 指针的加法运算
 static Node* newPtrAdd(Node* LHS, Node* RHS, Token* tok) {
     addType(LHS);
     addType(RHS);
-
-    // 根据 LHS 和 RHS 的类型进行不同的计算
     
     // ptr + ptr 非法运算
     if ((!isInteger(LHS->node_type)) && (!isInteger(RHS->node_type))) {
@@ -985,13 +954,9 @@ static Node* newPtrSub(Node* LHS, Node* RHS, Token* tok) {
     // LHS: ptr  -  RHS: int   
     if (LHS->node_type->Base && isInteger(RHS->node_type)) {
         Node* newRHS = createAST(ND_MUL, longNode(LHS->node_type->Base->BaseSize, tok), RHS, tok);
-
-        // Q: ???   为什么加法不需要减法需要
         addType(newRHS);
 
         Node* ND = createAST(ND_SUB, LHS, newRHS, tok);
-
-        // Q: 最后要声明该结点类型 ???  在 compoundStamt() 中不可以吗
         ND->node_type = LHS->node_type;
         return ND;
     }
@@ -1007,7 +972,7 @@ static Node* newPtrSub(Node* LHS, Node* RHS, Token* tok) {
 static Type* declspec(Token** rest, Token* tok, VarAttr* varAttr) {
     // commit[62]: 支持组合类型的声明  比如 long int | int long 类型声明
     enum {
-        VOID = 1 << 0,         // Tip: 连续 void 定义或者穿插 void 定义是错误的
+        VOID = 1 << 0,          // Tip: 连续 void 定义或者穿插 void 定义是错误的
         BOOL = 1 << 2,
         CHAR = 1 << 4,
         SHORT = 1 << 6,
@@ -1037,7 +1002,6 @@ static Type* declspec(Token** rest, Token* tok, VarAttr* varAttr) {
             else
                 varAttr->isExtern = true;
 
-            // typedef 不会与 static 一起使用
             if (varAttr->isTypeDef && (varAttr->isStatic || varAttr->isExtern))
                 tokenErrorAt(tok, "typydef, extern and static may not be used together");
 
@@ -1053,7 +1017,7 @@ static Type* declspec(Token** rest, Token* tok, VarAttr* varAttr) {
         if (equal(tok, "_Alignas")) {
             // 自定义对齐值  写入 VarAttr.Align 中  进行后续的信息传递
             if (!varAttr)
-                // 针对不存在对齐属性的变量  无法设置对齐值报错
+                // 函数传参  循环体变量  无法使用自定义对齐
                 tokenErrorAt(tok, "_Alignas is not allowed in this context");
             tok = skip(tok->next, "(");
 
@@ -1120,7 +1084,6 @@ static Type* declspec(Token** rest, Token* tok, VarAttr* varAttr) {
         else
             unreachable();
 
-        // 根据 typeCounter 值进行映射
         switch (typeCounter)
         {
         case VOID:
@@ -1133,8 +1096,7 @@ static Type* declspec(Token** rest, Token* tok, VarAttr* varAttr) {
 
         case CHAR:
         case UNSIGNED + CHAR:
-            // char 类型在 RISCV 默认是无符号类型的
-            BaseType = TY_UNSIGNED_CHAR_GLOBAL;
+            BaseType = TY_UNSIGNED_CHAR_GLOBAL;     // char 类型在 RISCV 默认是无符号类型的
             break;
 
         case SIGNED + CHAR:
@@ -1203,7 +1165,6 @@ static Type* enumspec(Token** rest, Token* tok) {
         tok = tok->next;
     }
 
-    // 使用 enum tag 定义实例 var  Tip: 如果是别名会在 isTypeName 判断取出 definedType
     if (enumTag && !equal(tok, "{")) {
         Type* definedEnumType = findStructTag(enumTag);
 
@@ -1212,7 +1173,6 @@ static Type* enumspec(Token** rest, Token* tok) {
         if (definedEnumType->Kind != TY_ENUM)
             tokenErrorAt(enumTag, "not an enum tag");
 
-        // 这里声明 var 是 enumTag 类型
         *rest = tok;
         return definedEnumType;
     }
@@ -1260,7 +1220,6 @@ static Type* declarator(Token** rest, Token* tok, Type* Base) {
     // commit[136]: 调用抽象的 uselessTypeDecl 跳过关键字
     Base = uselessTypeDecl(&tok, tok, Base);
 
-    // commit[59]: 除了嵌套的结构体和多维数组  其余的嵌套情况基本都是通过 (ptr) 实现
     if (equal(tok, "(")) {
         // 在外层类型完成后  重新解析内层类型  通过 Start 记录该断点
         Token* Start = tok;
@@ -1281,12 +1240,10 @@ static Type* declarator(Token** rest, Token* tok, Type* Base) {
     Token* varNamePos = tok;
 
     if (tok->token_kind == TOKEN_IDENT) {
-        // 如果存在名称  那么进行覆盖
         varName = tok;
         tok = tok->next;
     }
 
-    // 变量声明 | 函数定义 | 数组等  后续交给 typeSuffix 判断
     Base = typeSuffix(rest, tok, Base);
     Base->Name = varName;
     Base->namePos = varNamePos;
@@ -1334,14 +1291,12 @@ static Type* typeSuffix(Token** rest, Token* tok, Type* BaseType) {
 static Type* abstractDeclarator(Token **rest, Token *tok, Type* BaseType) {
     BaseType = uselessTypeDecl(&tok, tok, BaseType);
 
-    // 等待外层类型解析后再重新解析内层类型
     if (equal(tok, "(")) {
         Token* Start = tok;
         Type Dummy = {};
         abstractDeclarator(&tok, Start->next, &Dummy);
         tok = skip(tok,")");
 
-        // 解析外层类型后缀  重新解析内层类型的  通过 &tok 更新 tok 位置
         BaseType = typeSuffix(rest, tok, BaseType);
         return abstractDeclarator(&tok, Start->next, BaseType);
     }
@@ -1353,7 +1308,6 @@ static Type* abstractDeclarator(Token **rest, Token *tok, Type* BaseType) {
 
 // 根据类型本身的 token 返回真正有意义的类型结点
 static Type* getTypeInfo(Token** rest, Token* tok) {
-    // 匿名类型  和 declarator 有一点差别  但是结构类似
     Type* BaseType = declspec(&tok, tok, NULL);
     return abstractDeclarator(rest, tok, BaseType);
 }
@@ -1368,22 +1322,19 @@ static Type* funcFormalParams(Token** rest, Token* tok, Type* returnType) {
 
     Type HEAD = {};
     Type* Curr = &HEAD;
-    // commit[127]: 默认函数参数不支持可变参数
     bool isVariadic = false;
 
     while (!equal(tok, ")")) {
         if (Curr != &HEAD)
             tok = skip(tok, ",");
 
-        if (equal(tok, "...")) {    // 如果存在可变参数  只是作为一个标志  并没有内容存储到参数链表中
-            // 如果存在可变参数传参  则对判断覆盖
+        if (equal(tok, "...")) {
             isVariadic = true;
             tok = tok->next;
-            skip(tok, ")"); // 对可变参数作为最后一个参数进行语法判断  跳出循环
+            skip(tok, ")");     // 对可变参数作为最后一个参数进行语法判断  跳出循环
             break;
         }
 
-        // Tip: 也不能在函数参数中使用
         Type* formalBaseType = declspec(&tok, tok, NULL);
         Type* formalType = declarator(&tok, tok, formalBaseType);
 
@@ -1400,14 +1351,10 @@ static Type* funcFormalParams(Token** rest, Token* tok, Type* returnType) {
         Curr->formalParamNext = copyType(formalType);
         Curr = Curr->formalParamNext;
     }
-
     if (Curr == &HEAD)
-        // 针对无参函数设定为可变参数  虽然没什么卵用
-        isVariadic = true;
-
+        isVariadic = true;  // 空参数默认是可变参数
     *rest = skip(tok, ")");
 
-    // 封装函数结点类型
     Type* currFuncType = funcType(returnType);
     currFuncType->formalParamLink = HEAD.formalParamNext;
     currFuncType->IsVariadic = isVariadic;
@@ -1436,7 +1383,6 @@ static bool GlobalOrFunction(Token* tok) {
     if (equal(tok, ";"))
         return Global;
 
-    // 这里进一步针对其他 TYPE 进行解析 数组或者其他什么  二次判断
     Type Dummy = {};
     Type* ty = declarator(&tok, tok, &Dummy);
     if (ty->Kind == TY_FUNC)
@@ -1473,7 +1419,9 @@ static void structMembers(Token** rest, Token* tok, Type* structType) {
 
     while (!equal(tok, "}")) {
         // commit[118]: 支持结构体成员自己进行对齐
-        // Tip: typedef 不可以在 struct 定义内部使用  必须是标准类型
+        // Tip: C 标准中 typedef 不可以在 struct 定义内部使用
+        // 在 RVCC 中  可以使用 typedef 语句  通过 declspec() 和 varAttr 正常解析
+        // 但是没有调用 parseTypeDef 不会被写入 definedType
         VarAttr varAttr = {};
         Type* memberBaseType = declspec(&tok, tok, &varAttr);
 
@@ -1483,17 +1431,11 @@ static void structMembers(Token** rest, Token* tok, Type* structType) {
                 tok = skip(tok, ",");
             First = false;
 
-            // 结构体中的每一个成员都作为 struct structMember 存储
-            structMember* newStructMember = calloc(1, sizeof(structMember));
-
             // Tip: 因为现在无法确定 STRUCT or UNION 所以只处理 Idx 而不是 Offset
-            // 根据 declspec 类型前缀 使用 declarator 解析各自的类型后缀
+            structMember* newStructMember = calloc(1, sizeof(structMember));
             newStructMember->memberType = declarator(&tok, tok, memberBaseType);
             newStructMember->memberName = newStructMember->memberType->Name;
             newStructMember->Idx = Idx++;
-
-            // Tip: 对齐值 declspec._Alignas 已经预存在 VarAttr.Align 中  如果存在则优先
-            // 这样后续在 structDeclaration | unionDeclaration 中才可以直接使用
             newStructMember->Align = varAttr.Align ? (varAttr.Align) : (newStructMember->memberType->alignSize);
 
             // 此时的成员变量是顺序存在 structType 中  因为涉及后续的 Offset 的 maxOffset  所以必须是顺序的
@@ -1506,7 +1448,6 @@ static void structMembers(Token** rest, Token* tok, Type* structType) {
     if (Curr != &HEAD && Curr->memberType->Kind == TY_ARRAY_LINER && Curr->memberType->arrayElemCount < 0) {
         // 非结构体的灵活数组会定义为 (-1) 应该是有这一层考虑
         Curr->memberType = linerArrayType(Curr->memberType->Base, 0);
-        // 声明结构体中存在灵活数组
         structType->IsFlexible = true;
     }
 
@@ -1527,13 +1468,12 @@ static Type* structDeclaration(Token** rest, Token* tok) {
     int totalOffset = 0;
     // commit[113]: 因为灵活数组的空间定义为 0 所以不会改变空间计算逻辑
     for (structMember* newStructMem = structType->structMemLink; newStructMem; newStructMem = newStructMem->next) {
-        // commit[118]: 细化到每个结构体成员根据对齐定义值计算对齐值
         // 确定当前变量的起始位置  判断是否会对齐  => 判断 realTotal 是否为 aimAlign 的倍数
         totalOffset = alignTo(totalOffset, newStructMem->Align);
         newStructMem->offset = totalOffset;
 
         // 为下一个变量计算起始位置准备
-        // commit[86]: 在更新空数组定义后  累加偏移量会出现 bug  起始成员的 BaseSize 会覆盖多个空数组定义
+        // commit[86]: 空数组的 -BaseSize 随着成员累加会被覆盖  无法被检测到语法错误
         totalOffset += newStructMem->memberType->BaseSize;
 
         // 判断是否更新结构体对齐最大值  本质上 structType->alignSize = maxSingleOffset
@@ -1564,7 +1504,6 @@ static Type* unionDeclaration(Token** rest, Token* tok) {
         if (unionType->BaseSize < newUnionMem->memberType->BaseSize)
             unionType->BaseSize = newUnionMem->memberType->BaseSize;
     }
-
     unionType->BaseSize = alignTo(unionType->BaseSize, unionType->alignSize);
 
     return unionType;
@@ -1573,7 +1512,6 @@ static Type* unionDeclaration(Token** rest, Token* tok) {
 // commit[54]: 基于 union 和 struct 共同的语法结构复用
 static Type* StructOrUnionDecl(Token** rest, Token* tok) {
     Token* newTag = NULL;
-
     if (tok->token_kind == TOKEN_IDENT) {
         newTag = tok;
         tok = tok->next;
@@ -1583,14 +1521,12 @@ static Type* StructOrUnionDecl(Token** rest, Token* tok) {
     // case2: 结构体内部指向自己的指针
     // case3: 使用结构体标签定义变量
     if ((newTag != NULL) && !equal(tok, "{")) {
-        // 因为判断逻辑的更改  所以移动到上面
         *rest = tok;
 
         // 如果判断不存在  要声明该 tag 同时把 BaseSize 更新为 (-1) 无法使用
         Type* tagType = findStructTag(newTag);
         if (tagType)
-            // 在第一个结构体指针成员指向自己后  结构体名称就已经写入了 TagScope 可以直接返回
-            return tagType;
+            return tagType; // 在第一个结构体指针成员指向自己后  结构体名称已经写入了 TagScope 可以直接返回
 
         // Tip: 针对 case1 和 case2 都要等待定义解析结束后  在 structDeclaration() 中更新 BaseSize
         tagType = structBasicDeclType();
@@ -1600,7 +1536,7 @@ static Type* StructOrUnionDecl(Token** rest, Token* tok) {
         return tagType;
     }
 
-    // 进入结构体定义的内部  并分配基础结构体类型  Tip: 这里没有赋值 (-1) 空结构体是合法的
+    // 进入结构体定义的内部  并分配基础结构体类型  Tip: 这里没有赋值 (-1) 所以空结构体是合法的
     tok = skip(tok, "{");
     Type* structType = structBasicDeclType();
 
@@ -1610,6 +1546,7 @@ static Type* StructOrUnionDecl(Token** rest, Token* tok) {
         // 判断是否是已经前向声明的结构体  进行更新
         for (TagScope* currTagScope = HEADScope->tagScope; currTagScope; currTagScope = currTagScope->next) {
             // Tip: 在结构体未解析完成的时候  只能把 TagLabel 存入 TagScope 中  无法更新到 VarScope 中
+            // varScope 的更新要通过 gloablDefinition | declaration 实现
             // 此时 TagScope 的 BaseSize < 0 通过 structBasicDeclType() 重置
             if (equal(newTag, currTagScope->tagName)) {
                 // 真实的 BaseSize 要在 structDeclaration 中迭代得到
@@ -1642,7 +1579,6 @@ static Token* parseTypeDef(Token* tok, Type* BaseType){
 
         pushVarScopeToScope(getVarName(definedType->Name))->typeDefined = definedType;
     }
-
     return tok;
 }
 
@@ -1652,16 +1588,10 @@ static Token* functionDefinition(Token* tok, Type* funcReturnBaseType, VarAttr* 
     if (!funcType->Name)
         tokenErrorAt(funcType->namePos, "funcName omitted");
 
-    // commit[31]: 构造函数结点本身
     Object* function = newGlobal(getVarName(funcType->Name), funcType);
     function->IsFunction = true;
-
-    // commit[60]: 判断函数声明
     function->IsFuncOrVarDefine = !consume(&tok, tok, ";");
-
-    // commit[75]: 判断是否是文件域内函数
     function->IsStatic = varAttr->isStatic;
-
     if (!function->IsFuncOrVarDefine)
         return tok;
 
@@ -1669,24 +1599,19 @@ static Token* functionDefinition(Token* tok, Type* funcReturnBaseType, VarAttr* 
 
     // 初始化函数帧内部变量
     Local = NULL;
-
-    // 为了包含代码块解析的语法解析情况  这里为函数传参单独分配一个 Scope
-    enterScope();
+    enterScope();       // 为了匹配代码块语法  传参有自己的 Scope
 
     // 第一次更新 Local: 函数形参
     createParamVar(funcType->formalParamLink);
     function->formalParam = Local;
-
     if (funcType->IsVariadic)
-        // Q: 如果存在可变参数  那么一定在最后一个  手动添加到 Local 链表中
-        // Tip: 这里设置为 64 字节因为和 reg 支持的大小强绑定
+        // 如果存在可变参数  那么一定在最后一个  手动添加到 Local 链表中
+        // Tip: 这里设置为 64 字节因为和 reg 支持的大小强绑定  目前是伪可变  只能支持到 8 个寄存器
         function->VariadicParam = newLocal("__va_area__", linerArrayType(TYCHAR_GLOBAL, 64));
 
     tok = skip(tok, "{");
-    // 第二次更新 Local: 更新函数内部定义变量
     function->AST = compoundStamt(&tok, tok);
     function->local = Local;
-
     leaveScope();
 
     // 因为 goto 语句和标签定义语句的顺序不固定  所以最后处理映射
@@ -1698,6 +1623,7 @@ static Token* functionDefinition(Token* tok, Type* funcReturnBaseType, VarAttr* 
 // commit[32]: 正式在 AST 中加入全局变量的处理
 static Token* gloablDefinition(Token* tok, Type* globalBaseType, VarAttr* varAttr) {
     // Tip: 结构体的全局声明会提前在 parse.declspec() 中存储
+    // Tip: 全局变量的空间可以等到链接确认  所以任意维度的空数组声明都是允许的
     bool isLast = true;
 
     while (!consume(&tok, tok, ";")) {
@@ -1709,18 +1635,14 @@ static Token* gloablDefinition(Token* tok, Type* globalBaseType, VarAttr* varAtt
         if (!globalType->Name)
             tokenErrorAt(globalType->namePos, "variable name omitted");
 
-        // commit[105]: 调用 assign() 语法  支持全局变量初始化
         Object* obj = newGlobal(getVarName(globalType->Name), globalType);
 
         // commit[116]: 判断为外部变量定义
         // Tip: 未初始化的全局变量会被视为 COMMON 变量  是可以进行全局重复定义的  由链接器处理
-        // Tip: 通过 headerFile 定义的全局变量不需要 extern 声明  因为预处理本质是复制  extern 是重复声明
         obj->IsFuncOrVarDefine = !varAttr->isExtern;
 
         // commit[123]: 在执行 newGlobal() 后根据 VarAttr 的解析覆盖
         obj->IsStatic = varAttr->isStatic;
-
-        // commit[118]: 针对变量如果存在自定义对齐值则更新
         if (varAttr->Align)
             obj->Align = varAttr->Align;
 
@@ -1739,16 +1661,13 @@ static Node* compoundStamt(Token** rest, Token* tok) {
 
     enterScope();
     while (!equal(tok, "}")) {
-
         if (isTypeName(tok) && !equal(tok->next, ":")) {
-            // 针对 typedef 进行预判断  不会更新 tok 的位置
             VarAttr Attr = {};
+            // commit[118]: 如果存在 _Alignas 定义  会更新 VarAttr.Align
             Type* BaseType = declspec(&tok, tok, &Attr);
 
             if (Attr.isTypeDef) {
                 tok = parseTypeDef(tok, BaseType);
-
-                // Tip: typedef 别名定义 与 变量定义赋值不能同时发生
                 continue;
             }
 
@@ -1757,15 +1676,11 @@ static Node* compoundStamt(Token** rest, Token* tok) {
             // 但是因为它的外部链接性质，它仍然是一个全局概念的变量
             if (!GlobalOrFunction(tok)) {
                 tok = functionDefinition(tok, BaseType, &Attr);
-                continue;
-            }
-
+                continue; }
             if (Attr.isExtern) {
                 tok = gloablDefinition(tok, BaseType, &Attr);
-                continue;
-            }
+                continue; }
 
-            // commit[118]: 如果存在 _Alignas 定义  会更新 VarAttr.Align
             Curr->next = declaration(&tok, tok, BaseType, &Attr);
         }
 
@@ -1780,7 +1695,6 @@ static Node* compoundStamt(Token** rest, Token* tok) {
 
     ND->Body = HEAD.next;
     *rest = tok->next;
-
     return ND;
 }
 
@@ -1795,17 +1709,9 @@ static Node* declaration(Token** rest, Token* tok, Type* BaseType, VarAttr* varA
             tok = skip(tok, ",");   // Tip: 函数嵌套定义报错位置
 
         // 在后缀判断中针对空数组定义 BaseSize < 0
-        // Tip: 仍然无法判断多维空数组
+        // Tip: 仍然无法判断多维空数组  负负相乘为正  偶数维空数组无法判断
         Type* isPtr = declarator(&tok, tok, BaseType);
 
-        // Q: 为什么删掉了根据 token 报错的部分  改到了根据 Type 报错  实际上跳过了这里的 bug
-        // A: 因为此时还没有解析到后面的赋值部分  直接判断为错误是不对的  等到确认这个空数组没有赋值才能报错
-        // commit[86]: 目前只能针对奇数维数组定义  因为每个空维度被记 (-1)
-        // 负负相乘为正  偶数维数组无法判断
-        // if (isPtr->BaseSize < 0)
-        //     tokenErrorAt(tok, "variable has incomplete type");
-
-        // commit[61]: 在 declarator() 解析完整类型后判断 void 非法
         if (isPtr->Kind == TY_VOID)
             tokenErrorAt(tok, "variable declared void");
 
@@ -1813,11 +1719,8 @@ static Node* declaration(Token** rest, Token* tok, Type* BaseType, VarAttr* varA
             tokenErrorAt(isPtr->namePos, "variable name omitted");
 
         // commit[120]: 支持局部的 static 变量
-        // Tip: 和全局变量的区别 static 修饰的变量生命周期虽然是整个程序  但是作用域仍然是代码块
         if (varAttr && varAttr->isStatic) {
-            // step1: 匿名存储到全局链表中  在 codeGen 进行初始化
-            // step2: 任何对该全局变量的访问通过该匿名变量进行  通过 Global.varList 进行实际使用
-            // 通过实际定义的名称  完成全局匿名量的调用  很巧妙这个地方  把全局量写入 VarScope 满足作用域范围
+            // 任何对该全局变量的访问通过该匿名变量进行  通过 Global.varList 进行实际使用
             Object* anonyGlobalVar = newAnonyGlobalVar(isPtr);
             pushVarScopeToScope(getVarName(isPtr->Name))->varList = anonyGlobalVar;
 
@@ -1829,7 +1732,6 @@ static Node* declaration(Token** rest, Token* tok, Type* BaseType, VarAttr* varA
         Object* var = newLocal(getVarName(isPtr->Name), isPtr);
 
         if (varAttr && varAttr->Align)
-            // commit[118]: 如果存在自定义对齐  此时也已经解析结束  直接覆盖就可以了
             var->Align = varAttr->Align;
 
         // commit[97]: 修改了判定逻辑  转移到初始化器中进行初始化
@@ -1839,32 +1741,27 @@ static Node* declaration(Token** rest, Token* tok, Type* BaseType, VarAttr* varA
             Curr = Curr->next;
         }
 
-        // commit[101]: 从 token 报错优化到了 Type 报错
-        // Q: 为什么判断用 Object 而报错用 Type
-        // A: 针对空数组在 initialize() 通过 reSetType 重置后会更新 BaseSize
+        // 针对空数组在 initialize() 通过 reSetType 重置后会更新 BaseSize
         if (var->var_type->BaseSize < 0)
+            // 局部变量只能针对奇数位空数组报错
             tokenErrorAt(isPtr->Name, "variable has incomplete type");
 
-        // Q: 这个报错是怎么考虑的
+        // Q: 这个报错是怎么考虑的 ???
         if (var->var_type->Kind == TY_VOID)
             tokenErrorAt(isPtr->Name, "variable declared void");
     }
 
-    // 4. 构造 Block 返回结果
     Node* multi_declara = createNode(ND_BLOCK, tok);
     multi_declara->Body = HEAD.next;
     *rest = tok->next;
     return multi_declara;
 }
 
-// 全局初始化相比于局部初始化  返回值是 void
-// 局部初始化开始构造 AST 交给汇编翻译  而全局需要在编译器阶段就直接计算到最终结果  所以没有返回值
+// 全局需要在编译器阶段就直接计算到最终结果  没有返回值
 static void initGlobalNode(Token** rest, Token* tok, Object* var) {
-    // 复用了原来的局部初始化器的结构  所以也支持数组 结构体的全局初始化
     Initializer* Init = initialize(rest, tok, var->var_type, &var->var_type);
 
-    // 通过 eval() 计算出具体结果  从汇编的层面进行存储
-    // commit[107]: 使用 relocation 记录作为赋值全局量的信息
+    // commit[107]: 使用 relocation 记录 RHS 的信息
     Relocation HEAD = {};
     char* buffer = calloc(1, var->var_type->BaseSize);
     writeGlobalData(&HEAD, Init, var->var_type, buffer, 0);
@@ -1876,7 +1773,6 @@ static void initGlobalNode(Token** rest, Token* tok, Object* var) {
 // commit[97]: 最顶层的初始化器结点
 static Node* initLocalNode(Token** rest, Token* tok, Object* var) {
     // 一阶段: 完成 init 数据结构分配  赋值数值的映射
-    // commit[101]: 在赋值元素解析后更新 linerArray.BaseSize
     Initializer* init = initialize(rest, tok, var->var_type, &var->var_type);
 
     // 二阶段: LHS 除了最后一个元素的所有元素完成赋值 => 针对 BaseSize 进行 codeGen 赋零操作
@@ -1914,7 +1810,6 @@ static Initializer* initialize(Token** rest, Token* tok, Type* varType, Type** r
         // 通过已经确定长度的 children 重置定义的数组类型
         mem->memberType = Init->children[mem->Idx]->initType;
         varType->BaseSize += mem->memberType->BaseSize;
-
         *reSetType = varType;
         return Init;
     }
@@ -1925,12 +1820,12 @@ static Initializer* initialize(Token** rest, Token* tok, Type* varType, Type** r
     return Init;
 }
 
-// 针对不同的数据类型进行递归找到可以进行赋值的叶子结点
+// 针对不同的数据类型进行递归找到可以进行赋值的 *叶子* 结点
 // commit[108]: 在省略 "{" "}" 的情况下  编译器只会根据顺序推导元素  所以无法再支持元素跳过
 static void DataInit(Token** rest, Token* tok, Initializer* Init) {
-// Tip: (数组 结构体) 和 联合体的 "{" 判断层次不同
-// 因为联合体只针对第一个成员进行赋值  所以不像数组或结构体需要多个 "{}" 表示维度
-// 并且只能省略最外层的大括号或所有大括号  不能只省略中间层或内层的大括号，而保留其他层次的大括号  会导致解析结构错误
+    // Tip: (数组 结构体) 和 联合体的 "{" 判断层次不同
+    // 因为联合体只针对第一个成员进行赋值  所以不像数组或结构体需要多个 "{}" 表示维度
+    // 并且只能省略最外层的大括号或所有大括号  不能只省略中间层或内层的大括号，而保留其他层次的大括号  会导致解析结构错误
 
     if (Init->initType->Kind == TY_ARRAY_LINER && tok->token_kind == TOKEN_STR) {
         stringInitializer(rest, tok, Init);
@@ -1957,6 +1852,7 @@ static void DataInit(Token** rest, Token* tok, Initializer* Init) {
             Node* Expr = assign(rest, tok);
 
             // 针对赋值量进行合法化检查  但是这里没有对类型的一致性进行检查
+            // 只要是结构体之间的赋值都可以通过 RVCC
             addType(Expr);
             if (Expr->node_type->Kind == TY_STRUCT) {
                 Init->initAssignRightExpr = Expr;
@@ -1974,7 +1870,7 @@ static void DataInit(Token** rest, Token* tok, Initializer* Init) {
     }
 
     if (equal(tok, "{")) {
-        // 非特殊数据结构直接跳过大括号即可  因为不会涉及维度解析
+        // 非特殊数据结构直接跳过多余大括号  eg. int a = {{{1}}};
         DataInit(&tok, tok->next, Init);
         *rest = skip(tok, "}");
         return;
@@ -1989,13 +1885,9 @@ static void DataInit(Token** rest, Token* tok, Initializer* Init) {
 
 // 根据数组的结构进行递归
 static void arrayRecurDefault(Token** rest, Token* tok, Initializer* Init) {
-    // 根据递归层次找到被赋值元素的位置
     tok = skip(tok, "{");
 
-    // 如果显示定义数组大小  会在 createInitializer() 中判断并重置为 false
     if (Init->isArrayFixed) {
-        // 通过对赋值元素的递归 找到数组长度
-        // Tip: 因为对语法正确性的要求  存在对 createInitializer() 的重复调用  效率较低
         int len = countArrayInitElem(tok, Init->initType);
         *Init = *createInitializer(
                     linerArrayType(Init->initType->Base, len),  // 通过 linerArrayType() 创造一个新的数组类型覆盖
@@ -2005,13 +1897,11 @@ static void arrayRecurDefault(Token** rest, Token* tok, Initializer* Init) {
     // Tip: 如果一个都没有根本不会进入循环
     for (int I = 0; !consumeEnd(rest, tok); I++) {
         if (I > 0)
-            // 针对多余元素还要判断 "," 所以移动到循环体内部
             tok = skip(tok, ",");
 
         // commit[98]: 默认存在和数组元素数量一致的初始化值  在赋值数量不足时防止过早结束
         if (I < Init->initType->arrayElemCount)
             // Tip: 使用完当前的数值就要更新到下一个  所以是 &tok
-            // 多维字符串通过数组结构递归到 tok->TOKEN_STR 的字符串叶子  需要调用到上一层进行判断
             DataInit(&tok, tok, Init->children[I]);
         else
             tok = skipExcessElem(tok);
@@ -2028,10 +1918,8 @@ static void arrayRecurWithoutBrack(Token** rest, Token* tok, Initializer* Init) 
     for (int I = 0; I < Init->initType->arrayElemCount && !isEnd(tok); I++) {
         if (I > 0)
             tok = skip(tok, ",");
-        
         DataInit(&tok, tok, Init->children[I]);
     }
-
     *rest = tok;
 }
 
@@ -2051,7 +1939,7 @@ static void stringInitializer(Token** rest, Token* tok, Initializer* Init) {
         Init->children[I]->initAssignRightExpr = numNode(tok->strContent[I], tok);
     }
 
-    // 执行到 "\"" 跳过
+    // 执行到 (") 跳过
     *rest = tok->next;
 }
 
@@ -2070,14 +1958,12 @@ static void structInitDefault(Token** rest, Token* tok, Initializer* Init) {
         if (currMem != Init->initType->structMemLink)
             // 与第一个成员进行比较  即使类型相同  通过 Idx 也能比较出区别  如果不是第一个成员就需要跳过 ","
             tok = skip(tok, ",");
-        
-        // 如果规定了结构体结构  通过 currMem 判断当前的赋值是否有对应的左值  多余的跳过
 
         if (currMem) {
+            // 如果规定了结构体结构  通过 currMem 判断当前的赋值是否有对应的左值  多余的跳过
             DataInit(&tok, tok, Init->children[currMem->Idx]);
             currMem = currMem->next;
         }
-
         else {
             tok = skipExcessElem(tok);
         }
@@ -2091,11 +1977,10 @@ static void structInitWithoutBrack(Token** rest, Token* tok, Initializer* Init) 
     for (structMember* currMem = Init->initType->structMemLink; currMem && !isEnd(tok); currMem = currMem->next) {
         if (!First)
             tok = skip(tok, ",");
-        
         First = false;
+        // 根据默认顺序进行推导
         DataInit(&tok, tok, Init->children[currMem->Idx]);
     }
-
     *rest = tok;
 }
 
@@ -2105,12 +1990,9 @@ static void unionInitializer(Token** rest, Token* tok, Initializer* Init) {
 
     if (equal(tok, "{")) {
         DataInit(&tok, tok->next, Init->children[0]);
-
-        // 针对可能存在的 "," 进行处理
         consume(&tok, tok, ",");
         *rest = skip(tok, "}");
     }
-
     else {
         DataInit(rest, tok, Init->children[0]);
     }
@@ -2121,7 +2003,7 @@ static Node* createInitAST(Initializer* Init, Type* varType, initStructInfo* arr
     // 针对数组结构递归到元素完成赋值语句的翻译  然后构造出合适的 AST 结构
     if (varType->Kind == TY_ARRAY_LINER) {
         // 维持 ND_COMMA.LHS 返回值为 NULL
-        // Tip: 数组赋值语句在 rvcc 中返回最后一个赋值数值
+        // Tip: 逗号表达式  数组赋值语句在 rvcc 中返回最后一个赋值数值
         Node* ND = createNode(ND_NULL_EXPR1, tok);
 
         for (int currOffset = 0; currOffset < varType->arrayElemCount; currOffset++) {
@@ -2133,13 +2015,11 @@ static Node* createInitAST(Initializer* Init, Type* varType, initStructInfo* arr
             // 在确定下一层的递归过程中更新根节点和元素的偏移量
             Node* RHS = createInitAST(Init->children[currOffset], varType->Base, &arrayElemInit, tok);
 
-            // 自底向上  挂载到最终的 AST 树上
             ND = createAST(ND_COMMA, ND, RHS, tok);
         }
         return ND;
     }
 
-    // 如果是结构体实例赋值  右侧的映射本身就是 AST 结构  不需要额外处理
     if (varType->Kind == TY_STRUCT && !Init->initAssignRightExpr) {
         Node* ND = createNode(ND_NULL_EXPR1, tok);
 
@@ -2163,7 +2043,6 @@ static Node* createInitAST(Initializer* Init, Type* varType, initStructInfo* arr
     }
 
     if (!Init->initAssignRightExpr) {
-        // 针对无赋值的情况 使用 NULL 占位
         return createNode(ND_NULL_EXPR2, tok);
     }
 
@@ -2177,11 +2056,11 @@ static Node* createInitAST(Initializer* Init, Type* varType, initStructInfo* arr
 // 获取初始化赋值的 LHS 的地址
 static Node* initASTLeft(initStructInfo* initInfo, Token* tok) {
     if (initInfo->var)
-        // 找到根地址  Tip: 这个递归效率会比较低
+        // 变量地址 | 数组名称的基地址
         return singleVarNode(initInfo->var, tok);
 
     if (initInfo->initStructMem) {
-        // 通过 ND_STRUCT_MEMBER 构造对成员变量的访问结构
+        // 通过 ND_STRUCT_MEMBER 递归完成对成员变量的访问结构
         Node* ND = createSingle(ND_STRUCT_MEMEBER, initASTLeft(initInfo->upDimension, tok), tok);
         ND->structTargetMember = initInfo->initStructMem;
         return ND;
@@ -2798,7 +2677,6 @@ static Node* typeCast(Token** rest, Token* tok) {
         // 通过 ")" 明确此时已经解析 k 层的目标转换类型  如果存在 (k - 1) 层   递归寻找
         Node* ND = newCastNode(typeCast(rest, tok), castTargetType);
         ND->token = Start;
-
         return ND;
     }
 
@@ -2807,9 +2685,8 @@ static Node* typeCast(Token** rest, Token* tok) {
     return third_class_expr(rest, tok);
 }
 
-// 对一元运算符的单边递归
+// 对一元运算符的单边递归  可以连用但要分隔开
 // commit[67]: 计算运算符也会参与强制类型转换  eg. (int)+(-1) => (-1)  (int)-(-1) => (1)  都是合法的
-// Tip: 一元运算符可以连用但要分隔开
 static Node* third_class_expr(Token** rest, Token* tok) {
     if (equal(tok, "+")) {
         return typeCast(rest, tok->next);
@@ -2840,9 +2717,8 @@ static Node* third_class_expr(Token** rest, Token* tok) {
         return ND;
     }
 
-    // Tip: 被运算变量在右边  所以仍然需要调用 third_class_expr 解析
-
     if (equal(tok, "++")) {
+        // Tip: 被运算变量在右边  所以仍然需要调用 third_class_expr 解析
         return toAssign(newPtrAdd(third_class_expr(rest, tok->next), numNode(1, tok), tok));
     }
 
@@ -2896,7 +2772,6 @@ static Node* postFix(Token** rest, Token* tok) {
     }
 
     Node* ND = primary_class_expr(&tok, tok);
-    // 访问结构体成员: 使用 "->" 的变量是指针  结构体实例使用 "."
 
     while (true) {
         if (equal(tok, "[")) {
@@ -2950,7 +2825,6 @@ static Node* primary_class_expr(Token** rest, Token* tok) {
     if (equal(tok, "(") && equal(tok->next, "{")) {
         Node* ND = createNode(ND_GNU_EXPR, tok);
         ND->Body = compoundStamt(&tok, tok->next->next)->Body;
-
         *rest = skip(tok, ")");
         return ND;
     }
@@ -2962,11 +2836,8 @@ static Node* primary_class_expr(Token** rest, Token* tok) {
     }
 
     if (equal(tok, "sizeof") && equal(tok->next, "(") && isTypeName(tok->next->next)) {
-        // commit[65]: 针对匿名复合类型声明进行 sizeof(type) 的求值
         Type* targetType = getTypeInfo(&tok, tok->next->next);
         *rest = skip(tok, ")");
-
-        // sizeof 在编译器阶段直接进行处理  不需要 codeGen 的额外操作
         return unsignedLongNode(targetType->BaseSize, Start);
     }
 
@@ -2977,11 +2848,8 @@ static Node* primary_class_expr(Token** rest, Token* tok) {
     }
 
     if (equal(tok, "_Alignof") && equal(tok->next, "(") && isTypeName(tok->next->next)) {
-        // 针对类型的解析
         Type* varType = getTypeInfo(&tok, tok->next->next);
         *rest = skip(tok, ")");
-
-        // Tip: 即使是超级大的数组  它的对齐值也只能基本类型相关  所以需要单独的变量
         return unsignedLongNode(varType->alignSize, tok);
     }
 
@@ -3009,14 +2877,12 @@ static Node* primary_class_expr(Token** rest, Token* tok) {
     }
 
     if ((tok->token_kind) == TOKEN_IDENT) {
-        // 提前一个 token 判断是否是函数声明
         if (equal(tok->next, "(")) {
             return funcall(rest, tok);
         }
 
         VarInScope* varScope = findVar(tok);
-        // 能进入这里的变量判断说明进入了 stamt() 被 isTypeName() 判断为非别名
-        // 所以只剩下两种可能性
+        // 能进入这里的变量判断说明进入了 stamt() 被 isTypeName() 判断为非别名  只有两种可能性
         if (!varScope || (!varScope->varList && !varScope->enumType)) {
             tokenErrorAt(tok, "undefined variable");
         }
@@ -3035,20 +2901,20 @@ static Node* primary_class_expr(Token** rest, Token* tok) {
     return NULL;
 }
 
-// commit[24]: 处理含参函数调用
-// Tip: 函数调用的真正查找是在 codeGen() 中的汇编标签实现的  和 parse 无关  只负责把 call funcLabel 结点插入 AST
-// commit[69]: 根据 Scope 的查找  对未定义的函数调用报错
+// 函数调用
 static Node* funcall(Token** rest, Token* tok) {
+    // Tip: 函数调用的真正查找是在 codeGen() 中的汇编标签实现的
     Node* ND = createNode(ND_FUNCALL, tok);
     ND->FuncName = getVarName(tok);
 
-    // 根据 HEADScope 查找被调用函数
+    // 查找被调用函数
     VarInScope* targetScope = findVar(tok);
     if (!targetScope)
         tokenErrorAt(tok, "implicit declaration of a function");
 
-// Q: 为什么是两个判断条件  直接采用后者判断不可以吗  截至 commit[69] 把前面的判断注释掉也没影响
-    if (!targetScope->varList || targetScope->varList->var_type->Kind != TY_FUNC)
+    // Q: 为什么是两个判断条件  直接采用后者判断不可以吗  截至 commit[138] 把前面的判断注释掉也没影响
+    // if (!targetScope->varList || targetScope->varList->var_type->Kind != TY_FUNC)
+    if (targetScope->varList->var_type->Kind != TY_FUNC)
         tokenErrorAt(tok, "not a function");
     tok = tok->next->next;
 
@@ -3057,7 +2923,6 @@ static Node* funcall(Token** rest, Token* tok) {
     Type* formalParamType = definedFuncType->formalParamLink;
     Type* formalRetType = targetScope->varList->var_type->ReturnType;
 
-    // 读取至多 6 个参数作为链表表达式
     Node HEAD = {};
     Node* Curr = &HEAD;
 
@@ -3091,11 +2956,9 @@ static Node* funcall(Token** rest, Token* tok) {
 Object* parse(Token* tok) {
     Global = NULL;
 
-    // commit[64]: 因为 typedef 提前了类型前缀的解析
     while (tok->token_kind != TOKEN_EOF) {
         VarAttr Attr = {};
         Type* BaseType = declspec(&tok, tok, &Attr);
-
         if (Attr.isTypeDef) {
             tok = parseTypeDef(tok, BaseType);
             continue;
@@ -3112,6 +2975,5 @@ Object* parse(Token* tok) {
             tok = gloablDefinition(tok, globalBaseType, &Attr);
         }
     }
-
     return Global;
 }
