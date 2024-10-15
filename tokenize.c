@@ -108,7 +108,7 @@ static bool isKeyWords(Token* input) {
                                 "long", "short", "void", "typedef", "int", "extern",
                                 "_Alignof", "_Alignas", "do", "signed", "unsigned",
                                 "const", "volatile", "auto", "register", "restrict", "__restrict",
-                                "__restrict__", "_Noreturn",
+                                "__restrict__", "_Noreturn", "float", "double",
                             };
 
     for (int i = 0; i < sizeof(keywords) / sizeof(*keywords); i ++) {

@@ -378,7 +378,7 @@ static bool isTypeName(Token* tok) {
         "void", "char", "int", "long", "struct", "union",
         "short", "typedef", "_Bool", "enum", "static", "extern", "_Alignas",
         "signed", "unsigned", "const", "auto", "volatile", "register",
-        "restrict", "__restrict", "__restrict__", "_Noreturn",
+        "restrict", "__restrict", "__restrict__", "_Noreturn", "float", "double",
     };
 
     for (int I = 0; I < sizeof(typeNameKeyWord) / sizeof(*typeNameKeyWord); I++) {
@@ -978,9 +978,12 @@ static Type* declspec(Token** rest, Token* tok, VarAttr* varAttr) {
         SHORT = 1 << 6,
         INT = 1 << 8,
         LONG = 1 << 10,
-        OTHER = 1 << 12,
-        SIGNED = 1 << 13,       // Tip: 符号声明独立于类型  无法被加法覆盖
-        UNSIGNED = 1 << 14,
+
+        FLOAT = 1 << 12,
+        DOUBLE = 1 << 14,       // Q: 为什么这里是 14 位的判断  float float 是不合法的
+        OTHER = 1 << 16,
+        SIGNED = 1 << 17,       // Tip: 符号声明独立于类型  无法被加法覆盖
+        UNSIGNED = 1 << 18,
     };
     
     Type* BaseType = TYINT_GLOBAL;  // 缺省默认 INT
@@ -1077,6 +1080,10 @@ static Type* declspec(Token** rest, Token* tok, VarAttr* varAttr) {
             typeCounter += INT;
         else if (equal(tok, "long"))
             typeCounter += LONG;
+        else if (equal(tok, "float"))
+            typeCounter += FLOAT;
+        else if (equal(tok, "double"))
+            typeCounter += DOUBLE;
         else if (equal(tok, "signed"))
             typeCounter |= SIGNED;
         else if (equal(tok, "unsigned"))
@@ -1144,6 +1151,12 @@ static Type* declspec(Token** rest, Token* tok, VarAttr* varAttr) {
             BaseType = TY_UNSIGNED_LONG_GLOBAL;
             break;
 
+        case FLOAT:
+            BaseType = TYFLOAT_GLOBAL;
+            break;
+        case DOUBLE:
+            BaseType = TYDOUBLE_GLOBAL;
+            break;
         default:
             tokenErrorAt(tok, "unexpected preFix declaration\n");
         }

@@ -10,7 +10,7 @@ static int StackDepth;
 static char* ArgReg[] = {"a0", "a1", "a2", "a3", "a4", "a5", "a6", "a7"};
 
 // commit[67]: 枚举可以互相转换的类型
-enum {I8, I16, I32, I64, U8, U16, U32, U64};
+enum {I8, I16, I32, I64, U8, U16, U32, U64, F32, F64};
 
 // commit[67]: 判断当前类型需要的存储空间
 // Tip: 好巧妙的设计... 感叹自己活着的无意义(
@@ -22,6 +22,10 @@ static int getTypeMappedId(Type* keyType) {
         return keyType->IsUnsigned ? U16 : I16;
     case TY_INT:
         return keyType->IsUnsigned ? U32 : I32;
+    case TY_FLOAT:
+        return F32;
+    case TY_DOUBLE:
+        return F64;
     default:
         return U64;
     }
@@ -60,20 +64,120 @@ static char u32i64[] = "  # 转换为 I64 类型\n"
                        "  slli a0, a0, 32\n"
                        "  srli a0, a0, 32";
 
+// 有符号数与浮点数转换
+static char i32f32[] = "  # i32 转换为 f32 类型\n"
+                       "  fcvt.s.w fa0, a0";
+
+static char i32f64[] = "  # i32 转换为 f64 类型\n"
+                       "  fcvt.d.w fa0, a0";
+
+static char i64f32[] = "  # i64 转换为 f32 类型\n"
+                       "  fcvt.s.l fa0, a0";
+
+static char i64f64[] = "  # i64 转换为 f64 类型\n"
+                       "  fcvt.d.l fa0, a0";
+
+// 无符号数与浮点数转换
+static char u32f32[] = "  # u32转换为f32类型\n"
+                       "  fcvt.s.wu fa0, a0";
+static char u32f64[] = "  # u32转换为f64类型\n"
+                       "  fcvt.d.wu fa0, a0";
+
+static char u64f32[] = "  # u64转换为f32类型\n"
+                       "  fcvt.s.lu fa0, a0";
+static char u64f64[] = "  # u64转换为f64类型\n"
+                       "  fcvt.d.lu fa0, a0";
+
+// 单精度浮点数转换为整型
+static char f32i8[] = "  # f32转换为i8类型\n"
+                      "  fcvt.w.s a0, fa0, rtz\n"
+                      "  slli a0, a0, 56\n"
+                      "  srai a0, a0, 56";
+static char f32i16[] = "  # f32转换为i16类型\n"
+                       "  fcvt.w.s a0, fa0, rtz\n"
+                       "  slli a0, a0, 48\n"
+                       "  srai a0, a0, 48";
+static char f32i32[] = "  # f32转换为i32类型\n"
+                       "  fcvt.w.s a0, fa0, rtz\n"
+                       "  slli a0, a0, 32\n"
+                       "  srai a0, a0, 32";
+static char f32i64[] = "  # f32转换为i64类型\n"
+                       "  fcvt.l.s a0, fa0, rtz";
+
+// 单精度浮点数转换为无符号浮点数
+static char f32u8[] = "  # f32转换为u8类型\n"
+                      "  fcvt.wu.s a0, fa0, rtz\n"
+                      "  slli a0, a0, 56\n"
+                      "  srli a0, a0, 56";
+static char f32u16[] = "  # f32转换为u16类型\n"
+                       "  fcvt.wu.s a0, fa0, rtz\n"
+                       "  slli a0, a0, 48\n"
+                       "  srli a0, a0, 48\n";
+static char f32u32[] = "  # f32转换为u32类型\n"
+                       "  fcvt.wu.s a0, fa0, rtz\n"
+                       "  slli a0, a0, 32\n"
+                       "  srai a0, a0, 32";
+static char f32u64[] = "  # f32转换为u64类型\n"
+                       "  fcvt.lu.s a0, fa0, rtz";
+
+// 单精度转换为双精度浮点数
+static char f32f64[] = "  # f32转换为f64类型\n"
+                       "  fcvt.d.s fa0, fa0";
+
+// 双精度浮点数转换为整型
+static char f64i8[] = "  # f64转换为i8类型\n"
+                      "  fcvt.w.d a0, fa0, rtz\n"
+                      "  slli a0, a0, 56\n"
+                      "  srai a0, a0, 56";
+static char f64i16[] = "  # f64转换为i16类型\n"
+                       "  fcvt.w.d a0, fa0, rtz\n"
+                       "  slli a0, a0, 48\n"
+                       "  srai a0, a0, 48";
+static char f64i32[] = "  # f64转换为i32类型\n"
+                       "  fcvt.w.d a0, fa0, rtz\n"
+                       "  slli a0, a0, 32\n"
+                       "  srai a0, a0, 32";
+static char f64i64[] = "  # f64转换为i64类型\n"
+                       "  fcvt.l.d a0, fa0, rtz";
+
+// 双精度浮点数转换为无符号整型
+static char f64u8[] = "  # f64转换为u8类型\n"
+                      "  fcvt.wu.d a0, fa0, rtz\n"
+                      "  slli a0, a0, 56\n"
+                      "  srli a0, a0, 56";
+static char f64u16[] = "  # f64转换为u16类型\n"
+                       "  fcvt.wu.d a0, fa0, rtz\n"
+                       "  slli a0, a0, 48\n"
+                       "  srli a0, a0, 48";
+static char f64u32[] = "  # f64转换为u32类型\n"
+                       "  fcvt.wu.d a0, fa0, rtz\n"
+                       "  slli a0, a0, 32\n"
+                       "  srai a0, a0, 32";
+static char f64u64[] = "  # f64转换为u64类型\n"
+                       "  fcvt.lu.d a0, fa0, rtz";
+
+// 双精度转换为单精度浮点数
+static char f64f32[] = "  # f64转换为f32类型\n"
+                       "  fcvt.s.d fa0, fa0";
+
+
 // commit[67]: 建立类型转换的映射表 | 二维数组
 // 这里的每一个数组元素都是对应的类型转换汇编语句
 // commit[131]: 新增对无符号类型的强制转换
 static char* castTable[11][11] = {
 //  {i8         i16         i32         i64         u8          u16         u32         u64}      Target
-    {NULL,      NULL,       NULL,       NULL,       i64u8,      i64u16,     i64u32,     NULL},  //  i8
-    {i64i8,     NULL,       NULL,       NULL,       i64u8,      i64u16,     i64u32,     NULL},  //  i16
-    {i64i8,     i64i16,     NULL,       NULL,       i64u8,      i64u16,     i64u32,     NULL},  //  i32
-    {i64i8,     i64i16,     i64i32,     NULL,       i64u8,      i64u16,     i64u32,     NULL},  //  i64
+  {NULL,   NULL,    NULL,    NULL,    i64u8,  i64u16,  i64u32,  NULL,    i32f32,  i32f64}, // 从i8转换
+  {i64i8,  NULL,    NULL,    NULL,    i64u8,  i64u16,  i64u32,  NULL,    i32f32,  i32f64}, // 从i16转换
+  {i64i8,  i64i16,  NULL,    NULL,    i64u8,  i64u16,  i64u32,  NULL,    i32f32,  i32f64}, // 从i32转换
+  {i64i8,  i64i16,  i64i32,  NULL,    i64u8,  i64u16,  i64u32,  NULL,    i64f32,  i64f64}, // 从i64转换
 
-    {i64i8,     NULL,       NULL,       NULL,       NULL,       NULL,       NULL,       NULL},  //  u8
-    {i64i8,     i64i16,     NULL,       NULL,       i64u8,      NULL,       NULL,       NULL},  //  u16
-    {i64i8,     i64i16,     i64i32,     u32i64,     i64u8,      i64u16,     NULL,       u32i64},//  u32
-    {i64i8,     i64i16,     i64i32,     NULL,       i64u8,      i64u16,     i64u32,     NULL},  //  u64
+  {i64i8,  NULL,    NULL,    NULL,    NULL,   NULL,    NULL,    NULL,    u32f32,  u32f64}, // 从u8转换
+  {i64i8,  i64i16,  NULL,    NULL,    i64u8,  NULL,    NULL,    NULL,    u32f32,  u32f64}, // 从u16转换
+  {i64i8,  i64i16,  i64i32,  u32i64,  i64u8,  i64u16,  NULL,    u32i64,  u32f32,  u32f64}, // 从u32转换
+  {i64i8,  i64i16,  i64i32,  NULL,    i64u8,  i64u16,  i64u32,  NULL,    u64f32,  u64f64}, // 从u64转换
+
+  {f32i8,  f32i16,  f32i32,  f32i64,  f32u8,  f32u16,  f32u32,  f32u64,  NULL,    f32f64}, // 从f32转换
+  {f64i8,  f64i16,  f64i32,  f64i64,  f64u8,  f64u16,  f64u32,  f64u64,  f64f32,  NULL},   // 从f64转换
 };
 
 
@@ -137,12 +241,32 @@ static void pop_stack(char* reg) {
 // commit[33]: 在新增 char 类型后 不同类型读写的字节数量不同 需要进行判断 byte word ddouble
 
 static void Load(Type* type) {
-    if (type->Kind == TY_ARRAY_LINER)
+    // commit[140]: 针对浮点数有特殊的寄存器
+    switch (type->Kind) {
+    case TY_ARRAY_LINER:
         // 数组的 AST 结构本身就是 ND_DEREF  通过 calcuGen(DEREF->LHS) 已经可以得到数组的地址
         return;
-
-    if (type->Kind == TY_STRUCT || type->Kind == TY_UNION)
+    case TY_STRUCT:
+    case TY_UNION:
         return;
+
+    case TY_FLOAT:
+    {
+        printLn("  # 根据 reg-a0 存储的地址的值存入 fa0");
+        printLn("  flw fa0, 0(a0)");
+        return;
+    }
+
+    case TY_DOUBLE:
+    {
+        printLn("  # 根据 reg-a0 存储的地址的值存入 fa0");
+        printLn("  fld fa0, 0(a0)");
+        return;
+    }
+
+    default:
+        break;
+    }
 
     // 汇编阶段 通过 Type 传递的信息对数字解析添加后缀
     // 因为读取的字节数不一定能填满寄存器的 64bit 所以需要进行符号扩展  所以 Load 指令有符号后缀
@@ -164,20 +288,24 @@ static void Load(Type* type) {
 // Tip: 在 C 中无论是 struct 还是 Union 都只支持相同 Tag 之间的赋值  现在的 zacc 不支持
 static void Store(Type* type) {
     pop_stack("a1");
-    // commit[55]: 实现结构体实例之间完整的赋值
-    if (type->Kind == TY_STRUCT || type->Kind == TY_UNION) {
+
+    switch (type->Kind) {
+    case TY_STRUCT:
+    case TY_UNION:
+    {
+        // commit[55]: 实现结构体实例之间完整的赋值
         // 类型在 codeGen() 中只能用来辅助判断 任何读写都是字节角度
         printLn("  # 对 %s 赋值", type->Kind == TY_STRUCT ? "Struct" : "Union");
 
         for (int I = 0; I < type->BaseSize; I++) {
-            // 读取 RHS 的起始地址 + 偏移量 => RHS 目标地址
+            // 读取 RHS 的起始地址 + 偏移量 I => RHS 目标地址
             printLn("  li t0, %d", I);
             printLn("  add t0, a0, t0");
 
             // 将 RHS 目标地址的内容写入 reg-t1 中
             printLn("  lb t1, 0(t0)");
 
-            // 读取 LHS 的起始地址 + 偏移量 => LHS 目标地址
+            // 读取 LHS 的起始地址 + 偏移量 I => LHS 目标地址
             printLn("  li t0, %d", I);
             printLn("  add t0, a1, t0");
 
@@ -185,6 +313,24 @@ static void Store(Type* type) {
         }
 
         return;
+    }
+
+    case TY_FLOAT:
+    {
+        printLn("  将 fa0 的内容写入 reg-a1 的地址");
+        printLn("  fsw fa0, 0(a1)");
+        return;
+    }
+
+    case TY_DOUBLE:
+    {
+        printLn("  将 fa0 的内容写入 ");
+        printLn("  fsd fa0, 0(a1)");
+        return;
+    }
+
+    default:
+        break;
     }
 
     printLn("  # 将 a0 的值写入 a1 存储的地址");
@@ -354,7 +500,8 @@ static void calcuGen(Node* AST) {
         // fmv.w.x: 将整数寄存器 (x) 的低 32 位 (w) 移动到浮点寄存器中
         // fmv.x.w: 将浮点寄存器复制到整数寄存器中
         union {
-            // 这里定义无符号类型  只是为了保证数据完整  浮点数本身没有无符号的概念
+            // 如果使用有符号整数  最高位可能会被解释为符号位进行补码扩展  影响整数表示
+            // 浮点数的位模式不遵循整数的符号扩展  所以使用无符号整数类型来处理浮点数的位模式
             float F32;
             uint32_t UF32;
             double D64;
@@ -365,14 +512,14 @@ static void calcuGen(Node* AST) {
         case TY_FLOAT:
         {
             U.F32 = AST->FloatVal;
-            printLn("  li a0, %u  # float %f", U.UF32, AST->FloatVal);
+            printLn("  li a0, %u  # float %f", U.UF32, AST->FloatVal);// 避免符号位扩展的干扰
             printLn("  fmv.w.x fa0, a0");
             return;
         }
 
         case TY_DOUBLE:
         {
-            U.UD64 = AST->FloatVal;
+            U.D64 = AST->FloatVal;
             printLn("  li a0, %lu  # double %f", U.UD64, AST->FloatVal);
             printLn("  fmv.d.x fa0, a0");
             return;
