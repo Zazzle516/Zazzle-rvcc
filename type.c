@@ -13,6 +13,8 @@ Type* TY_UNSIGNED_SHORT_GLOBAL = &(Type){.Kind = TY_SHORT, .BaseSize = 2, .align
 Type* TY_UNSIGNED_INT_GLOBAL = &(Type){.Kind = TY_INT, .BaseSize = 4, .alignSize = 4, .IsUnsigned = true};
 Type* TY_UNSIGNED_LONG_GLOBAL = &(Type){.Kind = TY_LONG, .BaseSize = 8, .alignSize = 8, .IsUnsigned = true};
 
+Type* TYFLOAT_GLOBAL = &(Type){.Kind = TY_FLOAT, .BaseSize = 4, .alignSize = 4};
+Type* TYDOUBLE_GLOBAL = &(Type){.Kind = TY_DOUBLE, .BaseSize = 8, .alignSize = 8};
 
 // Q: 为什么给 void 大小和对齐  这里定义为 1 和后面的 void* 任意类型定义有关吗
 // A: 在 commit[61] 的测试改 0 是可以的  我一开始猜想可能和 BaseSize 的运算有关
@@ -33,10 +35,15 @@ static Type* newType(Typekind typeKind, int typeSize, int typeAlign) {
 
 
 // 判断是否是基础类型
-bool isInteger(Type* TY) {
-    Typekind KIND = TY->Kind;
+bool isInteger(Type* numType) {
+    Typekind KIND = numType->Kind;
     return KIND == TY_INT || KIND == TY_CHAR || KIND == TY_BOOL ||
             KIND == TY_LONG || KIND == TY_SHORT || KIND == TY_ENUM;
+}
+
+// 判断是否是浮点数
+bool isFloatNum(Type* numType) {
+    return numType->Kind == TY_FLOAT || numType->Kind == TY_DOUBLE;
 }
 
 // 新建指针变量结点 根据 Base 定义指向

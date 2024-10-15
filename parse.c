@@ -839,7 +839,7 @@ static Node* createNode(NODE_KIND node_kind, Token* tok) {
 }
 
 // 针对数字结点的额外的值定义
-static Node* numNode(int64_t val, Token* tok) {
+static Node* numIntNode(int64_t val, Token* tok) {
     Node* newNode = createNode(ND_NUM, tok);
     newNode->val = val;
     return newNode;
@@ -855,7 +855,7 @@ static Node* longNode(int64_t val, Token* tok) {
 
 // commit[133]: 用 Long 代替 Int 类型在 Parse 中的使用
 static Node* unsignedLongNode(long val, Token* tok) {
-    Node* ND = numNode(ND_NUM, tok);
+    Node* ND = numIntNode(ND_NUM, tok);
     ND->val = val;
     ND->node_type = TY_UNSIGNED_LONG_GLOBAL;
     return ND;
@@ -943,7 +943,7 @@ static Node* newPtrSub(Node* LHS, Node* RHS, Token* tok) {
         ND->node_type = TYLONG_GLOBAL;
 
         // 挂载到 LHS: LHS / RHS(8)     除法需要区分左右子树
-        return createAST(ND_DIV, ND, numNode(LHS->node_type->Base->BaseSize, tok), tok);
+        return createAST(ND_DIV, ND, numIntNode(LHS->node_type->Base->BaseSize, tok), tok);
     }
 
     // num - num 正常计算
@@ -1763,6 +1763,8 @@ static void initGlobalNode(Token** rest, Token* tok, Object* var) {
 
     // commit[107]: 使用 relocation 记录 RHS 的信息
     Relocation HEAD = {};
+
+    // 根据声明的类型分配空间  而不是赋值的实际类型
     char* buffer = calloc(1, var->var_type->BaseSize);
     writeGlobalData(&HEAD, Init, var->var_type, buffer, 0);
 
@@ -1936,7 +1938,7 @@ static void stringInitializer(Token** rest, Token* tok, Initializer* Init) {
 
     for (int I = 0; I < stringLen; I++) {
         // 以 ASCII 编码的方式存储字符
-        Init->children[I]->initAssignRightExpr = numNode(tok->strContent[I], tok);
+        Init->children[I]->initAssignRightExpr = numIntNode(tok->strContent[I], tok);
     }
 
     // 执行到 (") 跳过
@@ -2071,7 +2073,7 @@ static Node* initASTLeft(initStructInfo* initInfo, Token* tok) {
     Node* LHS = initASTLeft(initInfo->upDimension, tok);
 
     // 得到该元素在当前维度中的偏移量
-    Node* RHS = numNode(initInfo->elemOffset, tok);
+    Node* RHS = numIntNode(initInfo->elemOffset, tok);
 
     // 得到该元素在栈空间分配的具体位置
     return createSingle(ND_DEREF, newPtrAdd(LHS, RHS, tok), tok);
@@ -2719,11 +2721,11 @@ static Node* third_class_expr(Token** rest, Token* tok) {
 
     if (equal(tok, "++")) {
         // Tip: 被运算变量在右边  所以仍然需要调用 third_class_expr 解析
-        return toAssign(newPtrAdd(third_class_expr(rest, tok->next), numNode(1, tok), tok));
+        return toAssign(newPtrAdd(third_class_expr(rest, tok->next), numIntNode(1, tok), tok));
     }
 
     if (equal(tok, "--")) {
-        return toAssign(newPtrSub(third_class_expr(rest, tok->next),numNode(1, tok), tok));
+        return toAssign(newPtrSub(third_class_expr(rest, tok->next),numIntNode(1, tok), tok));
     }
 
     return postFix(rest, tok);
@@ -2737,8 +2739,8 @@ static Node *postIncNode(Node *ND, Token *tok, int AddOrSub) {
     // Tip: 本质上返回的是一个新的结点  因为 (-op 1) 并没有赋值给 A  与 varA 无关而且中间可能溢出
     return newCastNode(
         newPtrAdd(                                              // 最后用 Add 连接
-            toAssign(newPtrAdd(ND, numNode(AddOrSub, tok), tok)),   // ExprA: (A op= 1)
-            numNode(-AddOrSub, tok),                                // ExprB: (-op) 1
+            toAssign(newPtrAdd(ND, numIntNode(AddOrSub, tok), tok)),   // ExprA: (A op= 1)
+            numIntNode(-AddOrSub, tok),                                // ExprB: (-op) 1
             tok),
         ND->node_type);
 }
@@ -2861,7 +2863,13 @@ static Node* primary_class_expr(Token** rest, Token* tok) {
     }
 
     if ((tok->token_kind) == TOKEN_NUM) {
-        Node* ND = numNode(tok->value, tok);
+        Node* ND;
+        if (isFloatNum(tok->tokenType)) {
+            ND = createNode(ND_NUM, tok);
+            ND->FloatVal = tok->FloatValue;
+        }
+        else
+            ND = numIntNode(tok->value, tok);
 
         // commit[132]: 根据 tokenize 解析的数字类型结果进行覆盖
         ND->node_type = tok->tokenType;
@@ -2891,7 +2899,7 @@ static Node* primary_class_expr(Token** rest, Token* tok) {
         if (varScope->varList)
             ND = singleVarNode(varScope->varList, tok);
         else
-            ND = numNode(varScope->enumValue, tok);
+            ND = numIntNode(varScope->enumValue, tok);
 
         *rest = tok->next;
         return ND;

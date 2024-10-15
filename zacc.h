@@ -61,6 +61,7 @@ struct Token {
     int LineNum;        // commit[46]: 记录行号 方便报错
 
     int64_t value;      // commit[57]: 支持 long 类型后需要扩大
+    double FloatValue;  // commit[139]: 支持浮点运算
     char* place;
     unsigned int length;
 
@@ -103,6 +104,9 @@ typedef enum {
     TY_BOOL,            // commit[72]: 基础 bool 类型
 
     TY_ENUM,            // commit[74]: 支持枚举类型
+
+    TY_FLOAT,
+    TY_DOUBLE,
 } Typekind;
 
 // 自定义类型
@@ -160,8 +164,12 @@ extern Type* TY_UNSIGNED_SHORT_GLOBAL;
 extern Type* TY_UNSIGNED_INT_GLOBAL;
 extern Type* TY_UNSIGNED_LONG_GLOBAL;
 
+extern Type* TYFLOAT_GLOBAL;
+extern Type* TYDOUBLE_GLOBAL;
+
 // 判断是否是指针
-bool isInteger(Type* TY);
+bool isInteger(Type* numType);
+bool isFloatNum(Type* numType);
 
 // 构建一个指针类型
 Type* newPointerTo(Type* Base);
@@ -311,6 +319,7 @@ struct Node {
 
 // ND_NUM
     int64_t val;            // commit[57]: 同理在 long 支持后扩容
+    double FloatVal;        // commit[139]: 加载浮点数
 
 // ND_STAMT
     Node* next;             // commit[9]: 每个完整语句通过一个 Node 表示

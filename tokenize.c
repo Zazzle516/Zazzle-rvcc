@@ -98,6 +98,7 @@ void charErrorAt(char* place, char* FMT, ...) {
 
 /* 工具函数声明 */
 static bool strCmp(char* input_ptr, char* target);
+static Token* readIntNumLiteral(char* start);
 
 // 关键字声明
 static bool isKeyWords(Token* input) {
@@ -182,6 +183,44 @@ static int fromHex(char hexNumber) {
     if (hexNumber >= 'a' && hexNumber <= 'f')
         return hexNumber - 'a' + 10;
     return hexNumber - 'A' + 10;
+}
+
+// commit[139]: 词法解析浮点数常量
+static Token* readNumber(char* start) {
+    // strchr: 查找第一个匹配的字符，并返回该字符在字符串中的位置
+    // 反向判断当前指向的字符是否是 ".eEfF" 中的一个 从而判断是否属于浮点数
+
+    // strtod: 将字符串转换为双精度浮点数
+    // 如果整个字符串成功转换 end 会指向结尾的 '\0'  如果失败  返回 0.0 并指向 start 本身
+
+    // 解析 "." 前面的数字(不一定正确  但是允许进制声明
+    // 此时 start 的位置指向数字后半的开始位置
+    Token* tok = readIntNumLiteral(start);
+    if (!strchr(".eEfF", start[tok->length])) 
+        return tok;
+
+    char* End;
+    double Val = strtod(start, &End);
+    Type* floatSuffix;
+    if (*End == 'f' || *End == 'F') {
+        floatSuffix = TYFLOAT_GLOBAL;
+        End++;
+    }
+
+    else if (*End == 'l' ||*End == 'L') {
+        floatSuffix = TYDOUBLE_GLOBAL;
+        End++;
+    }
+
+    else {
+        floatSuffix = TYDOUBLE_GLOBAL;  // 如果没有后缀  默认 double
+    }
+
+    // 覆盖前半判断出的类型
+    tok = newToken(TOKEN_NUM, start, End);
+    tok->FloatValue = Val;
+    tok->tokenType = floatSuffix;
+    return tok;
 }
 
 // commit[36]: 在含有转义字符的情况处理字符串 读取到真正的结束符 '"' 返回位置
@@ -344,9 +383,11 @@ static Token* readCharLiteral(char* start) {
 }
 
 // commit[80]: 处理 二进制 八进制 十六进制的数字字面量
-static Token* readNumLiteral(char* start) {
+static Token* readIntNumLiteral(char* start) {
     char* P = start;    // 记录起始位置  用于后面的长度计算
     int Base = 10;      // 默认十进制
+
+    // Tip: 因为同样参与了浮点数前半的判断  所以可能无法正确解析  会在 readNumber 中覆盖
 
     // strncasecmp: 比较两个字符串的前 n 个字符，而不区分大小写
     // isalnum: 判断一个字符是否是字母或数字
@@ -403,8 +444,9 @@ static Token* readNumLiteral(char* start) {
     }
 
     // 在后缀匹配完成后不应该还有数字  这里进行语法检查
-    if (isalnum(*P))
-        charErrorAt(P, "invalid digit");
+    // commit[139]: 如果是浮点数  此时是 '.' 不能进行报错判定
+    // if (isalnum(*P))
+    //     charErrorAt(P, "invalid digit");
 
     Type* numType;
     if (Base == 10) {   // 为什么十进制和其他进制分开讨论呢  都是移位其他进制却可以放在一起
@@ -527,7 +569,7 @@ Token* tokenize(char* fileName, char* P) {
             P += currToken->length;
             continue;
         }
-        
+
         if (isspace(*P)) {
             // 跳过空格 \t \n \v \f \r
             P ++;
@@ -535,9 +577,10 @@ Token* tokenize(char* fileName, char* P) {
         }
 
         // 仅处理数字
-        if (isdigit(*P)) {
-            // commit[80]: 抽象在 readNumLiteral() 实现
-            currToken->next = readNumLiteral(P);
+        // commit[139]: 新增对浮点数判断
+        if (isdigit(*P) || (*P == '.' && isdigit(P[1]))) {
+            // commit[80]: 抽象在 readIntNumLiteral() 实现
+            currToken->next = readNumber(P);
 
             currToken = currToken->next;
             P += currToken->length;     // 类似 根据具体长度进行更新  包括符号

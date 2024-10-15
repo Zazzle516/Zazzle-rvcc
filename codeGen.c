@@ -347,10 +347,44 @@ static void calcuGen(Node* AST) {
 
     case ND_NUM:
     {
-        printLn("  # 加载立即数 %d 到 a0", AST->val);
-        // commit[57]: 支持 long / double word 的立即数
-        printLn("  li a0, %ld", AST->val);
-        return;
+        // RISCV 架构本身包含一套 32 个的浮点寄存器  和一般寄存器  a0-a31 硬件独立
+        // RISCV 单精度浮点运算 fsub.s  fmul.s  fdiv.s  双精度浮点运算 fsub.d  fmul.d  fdiv.d
+        // fcvt.s.d: 双精度转换为单精度
+        // fcvt.d.s: 单精度转换为双精度
+        // fmv.w.x: 将整数寄存器 (x) 的低 32 位 (w) 移动到浮点寄存器中
+        // fmv.x.w: 将浮点寄存器复制到整数寄存器中
+        union {
+            // 这里定义无符号类型  只是为了保证数据完整  浮点数本身没有无符号的概念
+            float F32;
+            uint32_t UF32;
+            double D64;
+            uint64_t UD64;
+        } U;
+
+        switch (AST->node_type->Kind) {
+        case TY_FLOAT:
+        {
+            U.F32 = AST->FloatVal;
+            printLn("  li a0, %u  # float %f", U.UF32, AST->FloatVal);
+            printLn("  fmv.w.x fa0, a0");
+            return;
+        }
+
+        case TY_DOUBLE:
+        {
+            U.UD64 = AST->FloatVal;
+            printLn("  li a0, %lu  # double %f", U.UD64, AST->FloatVal);
+            printLn("  fmv.d.x fa0, a0");
+            return;
+        }
+
+        default:
+        {
+            printLn("  # 加载整数 %ld 到寄存器中", AST->val);
+            printLn("  li a0, %ld", AST->val);
+            return;
+        }
+        } 
     }
 
     case ND_NEG:
