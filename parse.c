@@ -905,12 +905,12 @@ static Node* newPtrAdd(Node* LHS, Node* RHS, Token* tok) {
     addType(RHS);
     
     // ptr + ptr 非法运算
-    if ((!isInteger(LHS->node_type)) && (!isInteger(RHS->node_type))) {
+    if ((LHS->node_type->Base) && (RHS->node_type->Base)) {
         tokenErrorAt(tok, "can't add two pointers");
     }
 
-    // int + int 正常计算
-    if (isInteger(LHS->node_type) && isInteger(RHS->node_type)) {
+    // num + num 正常计算
+    if (isNumeric(LHS->node_type) && isNumeric(RHS->node_type)) {
         return createAST(ND_ADD, LHS, RHS, tok);
     }
     
@@ -947,7 +947,7 @@ static Node* newPtrSub(Node* LHS, Node* RHS, Token* tok) {
     }
 
     // num - num 正常计算
-    if (isInteger(LHS->node_type) && isInteger(RHS->node_type)) {
+    if (isNumeric(LHS->node_type) && isNumeric(RHS->node_type)) {
         return createAST(ND_SUB, LHS, RHS, tok);
     }
 

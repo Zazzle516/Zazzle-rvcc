@@ -46,6 +46,11 @@ bool isFloatNum(Type* numType) {
     return numType->Kind == TY_FLOAT || numType->Kind == TY_DOUBLE;
 }
 
+// 在 parse 中支持浮点计算  Tip: 指针的加减一定是整数
+bool isNumeric(Type* numType) {
+    return (isInteger(numType) || isFloatNum(numType));
+}
+
 // 新建指针变量结点 根据 Base 定义指向
 Type* newPointerTo(Type* Base) {
     Type* returnType = newType(TY_PTR, 8, 8);

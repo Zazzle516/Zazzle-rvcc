@@ -553,9 +553,21 @@ static void calcuGen(Node* AST) {
     case ND_NEG:
     {
         calcuGen(AST->LHS);
-        printLn("  # 对 a0 的值取反");
-        printLn("  neg%s a0, a0", AST->node_type->BaseSize <= 4 ? "w" : "");
-        return;
+
+        switch (AST->node_type->Kind) {
+        case TY_FLOAT:
+            printLn("  fneg.s fa0, fa0");
+            return;
+
+        case TY_DOUBLE:
+            printLn("  fneg.d fa0, fa0");
+            return;
+
+        default:
+            printLn("  # 对 a0 的值取反");
+            printLn("  neg%s a0, a0", AST->node_type->BaseSize <= 4 ? "w" : "");
+            return;
+        }
     }
 
     case ND_VAR:
@@ -836,8 +848,23 @@ static void calcuGen(Node* AST) {
 
         char* Suffix = (AST->LHS->node_type->Kind == TY_FLOAT) ? "s" : "d";
 
-        switch (AST->node_kind)
-        {
+        switch (AST->node_kind) {
+        case ND_ADD:
+            printLn("  fadd.%s fa0, fa0, fa1", Suffix);
+            return;
+
+        case ND_SUB:
+            printLn("  fsub.%s fa0, fa0, fa1", Suffix);
+            return;
+
+        case ND_MUL:
+            printLn("  fmul.%s fa0, fa0, fa1", Suffix);
+            return;
+
+        case ND_DIV:
+            printLn("  fdiv.%s fa0, fa0, fa1", Suffix);
+            return;
+
         case ND_EQ:
             printLn("  feq.%s a0, fa0, fa1", Suffix);
             return;

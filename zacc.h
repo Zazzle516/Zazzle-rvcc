@@ -170,6 +170,7 @@ extern Type* TYDOUBLE_GLOBAL;
 // 判断是否是指针
 bool isInteger(Type* numType);
 bool isFloatNum(Type* numType);
+bool isNumeric(Type* numType);
 
 // 构建一个指针类型
 Type* newPointerTo(Type* Base);
