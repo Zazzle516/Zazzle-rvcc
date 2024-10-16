@@ -233,6 +233,22 @@ static void pop_stack(char* reg) {
     StackDepth--;
 }
 
+// commit[141]: 支持浮点数出入栈
+// Q: 为什么浮点数会有特殊的指令 fsd fld
+// 因为 RISCV 的硬件设计要求  sd 指令在硬件层面只能访问到整数寄存器
+// 如果想绕过 fsd fld 执行  只能使用 fmv 指令先把内容移动到整数寄存器中  sd 才能使用
+static void push_stackFloat(void) {
+    printLn("  addi sp, sp, -8");
+    printLn("  fsd fa0, 0(sp)");
+    StackDepth ++;
+}
+
+static void pop_stackFloat(char* reg) {
+    printLn("  fld %s, 0(sp)", reg);
+    printLn("  addi sp, sp, 8");
+    StackDepth --;
+}
+
 // commit[66]: 支持 32 位指令
 // Tip: RV64 的环境并不能完全兼容 RV32  eg. 前 32 位会被截断而在 64 位则不会  在反转数字的过程中  前 32 位会被反转到后 32 位中
 // 导致反转的错位  所以在计算操作的时候要控制反转的数字长度
@@ -811,144 +827,191 @@ static void calcuGen(Node* AST) {
         break;
     }
 
-    // 递归完成对复合运算结点的预处理
-    calcuGen(AST->RHS);
-    push_stack();
-    calcuGen(AST->LHS);
-    pop_stack("a1");        // 把 RHS 的计算结果弹到 reg-a1 中
+    // 针对浮点数运算
+    if (isFloatNum(AST->LHS->node_type)) {
+        calcuGen(AST->RHS);
+        push_stackFloat();
+        calcuGen(AST->LHS);
+        pop_stackFloat("fa1");
 
-    // commit[66]: 在运算中 char | short 会自动转换到 int 计算  如果 int 溢出会转换到 long
-    // 与其说这个 commit 在支持 32 位指令  本质上是在根据类型限制读写的内存字节
-    // 无后缀是 RV64  添加了后缀是 RV32  如果是 long 或者指针(在本项目环境中也就是 8 字节)  Suffix 为空
-    // 否则其他 char | short 其他乱七八糟的都是 4 字节  需要后缀添加 "w"
-    char* Suffix = AST->LHS->node_type->Kind == TY_LONG || AST->LHS->node_type->Base ? "" : "w";
+        char* Suffix = (AST->LHS->node_type->Kind == TY_FLOAT) ? "s" : "d";
 
-    // 复合运算结点 此时左右结点都已经在上面处理完成 可以直接计算
-    switch (AST->node_kind)
-    {
-    case ND_ADD:
-        printLn("  add%s a0, a0, a1", Suffix);
-        return;
-    case ND_SUB:
-        printLn("  sub%s a0, a0, a1", Suffix);
-        return;
-    case ND_MUL:
-        printLn("  mul%s a0, a0, a1", Suffix);
-        return;
+        switch (AST->node_kind)
+        {
+        case ND_EQ:
+            printLn("  feq.%s a0, fa0, fa1", Suffix);
+            return;
 
-    case ND_DIV:
-    {
-        if (AST->node_type->IsUnsigned)
-            printLn("  divu%s a0, a0, a1", Suffix);
-        else
-            printLn("  div%s a0, a0, a1", Suffix);
-        return;
+        case ND_NEQ:
+            printLn("  feq.%s a0, fa0, fa1", Suffix);
+            printLn("  seqz a0, a0");
+            return;
+        
+        case ND_LE:
+            printLn("  fle.%s a0, fa0, fa1", Suffix);
+            return;
+        
+        case ND_LT:
+            printLn("  flt.%s a0, fa0, fa1", Suffix);
+            return;
+
+        case ND_GE:
+            printLn("  fge.%s a0, fa0, fa1", Suffix);
+            return;
+        
+        case ND_GT:
+            printLn("  fgt.%s a0, fa0, fa1", Suffix);
+            return;
+
+        default:
+            tokenErrorAt(AST->token, "invalid float expr");
+        }
     }
 
-    case ND_MOD:
-    {
-        if (AST->node_type->IsUnsigned)
-            printLn("  remu%s a0, a0, a1", Suffix);
-        else
-            printLn("  rem%s a0, a0, a1", Suffix);
-        return;
-    }
+    // 针对整数的运算
+    else {
+        // 递归完成对复合运算结点的预处理
+        calcuGen(AST->RHS);
+        push_stack();
+        calcuGen(AST->LHS);
+        pop_stack("a1");        // 把 RHS 的计算结果弹到 reg-a1 中
 
-    case ND_BITAND:
-        printLn("  and a0, a0, a1");
-        return;
-    case ND_BITOR:
-        printLn("  or a0, a0, a1");
-        return;
-    case ND_BITXOR:
-        printLn("  xor a0, a0, a1");
-        return;
+        // commit[66]: 在运算中 char | short 会自动转换到 int 计算  如果 int 溢出会转换到 long
+        // 与其说这个 commit 在支持 32 位指令  本质上是在根据类型限制读写的内存字节
+        // 无后缀是 RV64  添加了后缀是 RV32  如果是 long 或者指针(在本项目环境中也就是 8 字节)  Suffix 为空
+        // 否则其他 char | short 其他乱七八糟的都是 4 字节  需要后缀添加 "w"
+        char* Suffix = AST->LHS->node_type->Kind == TY_LONG || AST->LHS->node_type->Base ? "" : "w";
 
-    case ND_EQ:
-    case ND_NEQ:
-    {
-        if (AST->LHS->node_type->IsUnsigned && AST->LHS->node_type->Kind == TY_INT) {
-            printLn("  # LHS 为 U32 类型进行截断");
-            printLn("slli a0, a0, 32");
-            printLn("srli a0, a0, 32");
+        // 复合运算结点 此时左右结点都已经在上面处理完成 可以直接计算
+        switch (AST->node_kind)
+        {
+        case ND_ADD:
+            printLn("  add%s a0, a0, a1", Suffix);
+            return;
+        case ND_SUB:
+            printLn("  sub%s a0, a0, a1", Suffix);
+            return;
+        case ND_MUL:
+            printLn("  mul%s a0, a0, a1", Suffix);
+            return;
+
+        case ND_DIV:
+        {
+            if (AST->node_type->IsUnsigned)
+                printLn("  divu%s a0, a0, a1", Suffix);
+            else
+                printLn("  div%s a0, a0, a1", Suffix);
+            return;
         }
 
-        if (AST->RHS->node_type->IsUnsigned && AST->RHS->node_type->Kind == TY_INT) {
-            printLn("  # RHS 为 U32 类型进行截断");
-            printLn("slli a0, a0, 32");
-            printLn("srli a0, a0, 32");
+        case ND_MOD:
+        {
+            if (AST->node_type->IsUnsigned)
+                printLn("  remu%s a0, a0, a1", Suffix);
+            else
+                printLn("  rem%s a0, a0, a1", Suffix);
+            return;
         }
 
-        // 汇编层面通过 xor 比较结果
-        printLn("  xor a0, a0, a1");       // 异或结果储存在 a0 中
-        if (AST->node_kind == ND_EQ) 
-            printLn("  seqz a0, a0");      // 判断结果 == 0
-        if (AST->node_kind == ND_NEQ)
-            printLn("  snez a0, a0");      // 判断结果 > 0
-        return;
+        case ND_BITAND:
+            printLn("  and a0, a0, a1");
+            return;
+        case ND_BITOR:
+            printLn("  or a0, a0, a1");
+            return;
+        case ND_BITXOR:
+            printLn("  xor a0, a0, a1");
+            return;
+
+        case ND_EQ:
+        case ND_NEQ:
+        {
+            if (AST->LHS->node_type->IsUnsigned && AST->LHS->node_type->Kind == TY_INT) {
+                printLn("  # LHS 为 U32 类型进行截断");
+                printLn("slli a0, a0, 32");
+                printLn("srli a0, a0, 32");
+            }
+
+            if (AST->RHS->node_type->IsUnsigned && AST->RHS->node_type->Kind == TY_INT) {
+                printLn("  # RHS 为 U32 类型进行截断");
+                printLn("slli a0, a0, 32");
+                printLn("srli a0, a0, 32");
+            }
+
+            // 汇编层面通过 xor 比较结果
+            printLn("  xor a0, a0, a1");       // 异或结果储存在 a0 中
+            if (AST->node_kind == ND_EQ) 
+                printLn("  seqz a0, a0");      // 判断结果 == 0
+            if (AST->node_kind == ND_NEQ)
+                printLn("  snez a0, a0");      // 判断结果 > 0
+            return;
+        }
+
+        case ND_GT:
+        {
+            if (AST->LHS->node_type->IsUnsigned)
+                printLn("  sgtu a0, a0, a1");
+            else
+                printLn("  sgt a0, a0, a1");
+            return;
+        }
+
+        case ND_LT: {
+            if (AST->LHS->node_type->IsUnsigned)
+                printLn("  sltu a0, a0, a1");
+            else
+                printLn("  slt a0, a0, a1");
+            return;
+        }
+
+        case ND_GE:
+        {
+            // 转换为判断是否小于
+            if (AST->node_type->IsUnsigned)
+                printLn("  sltu a0, a0, a1");       // 先判断 > 情况
+            else
+                printLn("  slt a0, a0, a1");
+            printLn("  xori a0, a0, 1");       // 再判断 == 情况
+            return;
+        }
+
+        case ND_LE:
+        {
+            if (AST->node_type->IsUnsigned)
+                printLn("  sgtu a0, a0, a1");
+            else
+                printLn("  sgt a0, a0, a1");
+            printLn("  xori a0, a0, 1");
+            return;
+        }
+
+        case ND_SHL:
+        {
+            printLn("  # a0 逻辑左移 a1 比特");
+            printLn("  sll%s a0, a0, a1", Suffix);
+            return;
+        }
+
+        case ND_SHR:
+        {
+            // commit[131]: 无符号针对算数右移特殊处理  逻辑移位没区别
+            printLn("  # a0 算数右移 a1 比特");
+            if (AST->node_type->IsUnsigned)
+                printLn("  srl%s a0, a0, a1", Suffix);
+            else
+                printLn("  sra%s a0, a0, a1", Suffix);
+            return;
+        }
+
+        default:
+            // errorHint("invalid expr\n");
+            // tokenErrorAt(AST->token, "invalid expr\n");
+            break;
+        }
+
     }
 
-    case ND_GT:
-    {
-        if (AST->LHS->node_type->IsUnsigned)
-            printLn("  sgtu a0, a0, a1");
-        else
-            printLn("  sgt a0, a0, a1");
-        return;
-    }
-
-    case ND_LT: {
-        if (AST->LHS->node_type->IsUnsigned)
-            printLn("  sltu a0, a0, a1");
-        else
-            printLn("  slt a0, a0, a1");
-        return;
-    }
-
-    case ND_GE:
-    {
-        // 转换为判断是否小于
-        if (AST->node_type->IsUnsigned)
-            printLn("  sltu a0, a0, a1");       // 先判断 > 情况
-        else
-            printLn("  slt a0, a0, a1");
-        printLn("  xori a0, a0, 1");       // 再判断 == 情况
-        return;
-    }
-
-    case ND_LE:
-    {
-        if (AST->node_type->IsUnsigned)
-            printLn("  sgtu a0, a0, a1");
-        else
-            printLn("  sgt a0, a0, a1");
-        printLn("  xori a0, a0, 1");
-        return;
-    }
-
-    case ND_SHL:
-    {
-        printLn("  # a0 逻辑左移 a1 比特");
-        printLn("  sll%s a0, a0, a1", Suffix);
-        return;
-    }
-
-    case ND_SHR:
-    {
-        // commit[131]: 无符号针对算数右移特殊处理  逻辑移位没区别
-        printLn("  # a0 算数右移 a1 比特");
-        if (AST->node_type->IsUnsigned)
-            printLn("  srl%s a0, a0, a1", Suffix);
-        else
-            printLn("  sra%s a0, a0, a1", Suffix);
-        return;
-    }
-
-    default:
-        // errorHint("invalid expr\n");
-        tokenErrorAt(AST->token, "invalid expr\n");
-    }
-
+    tokenErrorAt(AST->token, "invalid expr");
 }
 
 // 表达式代码

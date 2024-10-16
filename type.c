@@ -110,6 +110,13 @@ static Type* singleLongType(Type* leftType, Type* rightType) {
     if (leftType->Base)
         return newPointerTo(leftType->Base);
 
+    // commit[141]: 针对浮点数比较  优先判断 double
+    if (leftType->Kind == TY_DOUBLE || rightType->Kind == TY_DOUBLE)
+        return TYDOUBLE_GLOBAL;
+
+    if (leftType->Kind == TY_FLOAT || rightType->Kind == TY_FLOAT)
+        return TYFLOAT_GLOBAL;
+
     // commit[131]: C 语言隐式转换到 INT 类型
     if (leftType->BaseSize < 4)
         leftType = TYINT_GLOBAL;
