@@ -6,8 +6,10 @@
 // 记录当前的栈深度 用于后续的运算合法性判断
 static int StackDepth;
 
+// commit[144]: 在引入浮点寄存器后 寄存器名称优化到用数字编号表示
+// 这样避免了二次定义浮点寄存器的名称数组
 // 全局变量定义传参用到的至多 6 个寄存器
-static char* ArgReg[] = {"a0", "a1", "a2", "a3", "a4", "a5", "a6", "a7"};
+// static char* ArgReg[] = {"a0", "a1", "a2", "a3", "a4", "a5", "a6", "a7"};
 
 // commit[67]: 枚举可以互相转换的类型
 enum {I8, I16, I32, I64, U8, U16, U32, U64, F32, F64};
@@ -228,9 +230,9 @@ static void push_stack(void) {
     StackDepth++;
 }
 
-static void pop_stack(char* reg) {
+static void pop_stack(int regNum) {
     printLn("  # 出栈ing 将原 a0 的内容写入 reg 恢复栈顶");
-    printLn("  ld %s, 0(sp)", reg);
+    printLn("  ld a%d, 0(sp)", regNum);
     printLn("  addi sp, sp, 8");
     StackDepth--;
 }
@@ -245,8 +247,8 @@ static void push_stackFloat(void) {
     StackDepth ++;
 }
 
-static void pop_stackFloat(char* reg) {
-    printLn("  fld %s, 0(sp)", reg);
+static void pop_stackFloat(int regNum) {
+    printLn("  fld fa%d, 0(sp)", regNum);
     printLn("  addi sp, sp, 8");
     StackDepth --;
 }
@@ -278,6 +280,26 @@ static void floatIfZero(Type* numType) {
     default:
         break;
     }
+}
+
+// commit[144]: 该函数是对 FUNCALL 传参压栈的抽象  新增浮点数寄存器传参的支持
+static void pushArgs(Node* funcArgs) {
+    if (!funcArgs)
+        return;
+
+    // 因为栈的 FIFO 原则  对传参顺序的强要求和栈相关 (包含可变参数)
+    pushArgs(funcArgs->next);
+
+    printLn("\n  # 计算 %s 表达式后压栈", isFloatNum(funcArgs->node_type) ? "Float" : "Integer");
+    calcuGen(funcArgs);
+
+    // 经过 calcuGen 此时无论是整数还是浮点数  已经存到了各自的寄存器 reg-fa0 reg-a0
+    if (isFloatNum(funcArgs->node_type))
+        push_stackFloat();
+    else
+        push_stack();
+
+    printLn("  # 结束压栈");
 }
 
 // commit[66]: 支持 32 位指令
@@ -334,7 +356,7 @@ static void Load(Type* type) {
 
 // Tip: 在 C 中无论是 struct 还是 Union 都只支持相同 Tag 之间的赋值  现在的 zacc 不支持
 static void Store(Type* type) {
-    pop_stack("a1");
+    pop_stack(1);
 
     switch (type->Kind) {
     case TY_STRUCT:
@@ -393,25 +415,25 @@ static void Store(Type* type) {
 
 // commit[56]: 将整形寄存器的值写入栈中
 static void storeGenral(int sourceReg, int offset, int targetSize) {
-    printLn("  # 将 %s 寄存器的内容写入 %d(fp) 的栈地址中", ArgReg[sourceReg], offset);
+    printLn("  # 将 a%d 寄存器的内容写入 %d(fp) 的栈地址中", sourceReg, offset);
     printLn("  li t0, %d", offset);
     printLn("  add t0, fp, t0");
 
     switch (targetSize) {
     case 1:
-        printLn("  sb %s, 0(t0)", ArgReg[sourceReg], offset);
+        printLn("  sb a%d, 0(t0)", sourceReg);
         return;
 
     case 2:
-        printLn("  sh %s, 0(t0)", ArgReg[sourceReg], offset);
+        printLn("  sh a%d, 0(t0)", sourceReg);
         return;
 
     case 4:
-        printLn("  sw %s, 0(t0)", ArgReg[sourceReg], offset);
+        printLn("  sw a%d, 0(t0)", sourceReg);
         return;
 
     case 8:
-        printLn("  sd %s, 0(t0)", ArgReg[sourceReg], offset);
+        printLn("  sd a%d, 0(t0)", sourceReg);
         return;
     }
 
@@ -682,26 +704,51 @@ static void calcuGen(Node* AST) {
 
     case ND_FUNCALL:
     {
-        // 先通过遍历 得到传参的个数 因为栈的 FILO 会逆序出栈 保证传参的完整性
+        // 所有的参数已经入栈  根据栈的结构  维持相同顺序得到参数
+        pushArgs(AST->Func_Args);
 
-        // 初始化参数的个数
-        int argNum = 0;
+        int IntegerRegCount = 0;
+        int FloatRegCount = 0;
 
-        for (Node* Arg = AST->Func_Args; Arg; Arg = Arg->next) {
-            // 计算每个传参的表达式
-            calcuGen(Arg);
-            push_stack();
-            argNum++;
-        }
+        // 得到被调用的函数定义的当前传参类型  访问到第一个空就是可变参数的开始
+        Type* vardictArg = AST->definedFuncType->formalParamLink;
+        for (Node* currArg = AST->Func_Args; currArg; currArg = currArg->next) {
+            if (AST->definedFuncType->IsVariadic && vardictArg == NULL) {
+                // 但是此时仍然是伪可变参数  数量要求在 8 个寄存器的范围  emitText() 中定义的读取
+                // 区别在这个时候  多余的可变参数已经存储在栈上 (后续可能通过计数的方式对栈进行读取)
+                if (IntegerRegCount < 8) {
+                    printLn("  # reg-a%d 传递可变实参", IntegerRegCount);
+                    // 无论什么类型  统一读到整型寄存器中
+                    pop_stack(IntegerRegCount++);
+                }
+                // 如果后续仍有可变参数  不对 vardictArg 更新  继续执行
+                continue;
+            }
+            vardictArg = vardictArg->formalParamNext;
+            // 判断当前参数是否为可变参数  所以 arg 的位置更新在判断后面
 
-        // 把参数出栈放在对应的寄存器中
-        for (int i = argNum - 1; i >= 0; i--) {
-            pop_stack(ArgReg[i]);
+            // 显式传参  在要求的 8 个寄存器的范围内完成
+            if (isFloatNum(currArg->node_type)) {
+                // Q: 为什么浮点数有两种情况讨论
+                if (FloatRegCount < 8) {
+                    printLn("  # reg-f%d 传递浮点参数", FloatRegCount);
+                    pop_stackFloat(FloatRegCount++);
+                }
+                // else if (IntegerRegCount < 8) {
+                //     printLn("  # reg-a%d 传递参数", IntegerRegCount);
+                //     pop_stack(IntegerRegCount++);
+                // }
+            }
+            else {
+                if (IntegerRegCount < 8) {
+                    printLn("  # reg-a%d 传递整数");
+                    pop_stack(IntegerRegCount++);
+                }
+            }
         }
 
         // 在 RISC-V 中  强制要求栈指针对齐到 16 字节边界
         // Tip: 在 call funcName 之后  从一个新的空间开始  提高新函数内部的执行效率
-
         if (StackDepth % 2 == 0) {
             // 因为 Depth 的加减单位是 8
             printLn("  # 调用 %s 函数", AST->FuncName);
@@ -716,6 +763,7 @@ static void calcuGen(Node* AST) {
             printLn("  addi sp, sp, 8");
         }
 
+        // callFunc 函数执行结束后返回
         // commit[126]: 支持被调用函数的返回值类型对短整数进行 reg 的高位截断
         // eg. short bool char
         // commit[131]: 在返回短整数的情况中  针对无符号数进行逻辑移位运算
@@ -881,7 +929,7 @@ static void calcuGen(Node* AST) {
         calcuGen(AST->RHS);
         push_stackFloat();
         calcuGen(AST->LHS);
-        pop_stackFloat("fa1");
+        pop_stackFloat(1);
 
         char* Suffix = (AST->LHS->node_type->Kind == TY_FLOAT) ? "s" : "d";
 
@@ -938,7 +986,7 @@ static void calcuGen(Node* AST) {
         calcuGen(AST->RHS);
         push_stack();
         calcuGen(AST->LHS);
-        pop_stack("a1");        // 把 RHS 的计算结果弹到 reg-a1 中
+        pop_stack(1);        // 把 RHS 的计算结果弹到 reg-a1 中
 
         // commit[66]: 在运算中 char | short 会自动转换到 int 计算  如果 int 溢出会转换到 long
         // 与其说这个 commit 在支持 32 位指令  本质上是在根据类型限制读写的内存字节
