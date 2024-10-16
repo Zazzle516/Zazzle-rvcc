@@ -190,6 +190,7 @@ static FILE* compileResult;
 static void calcuGen(Node* AST);
 static void exprGen(Node* AST);
 static void printLn(char* Fmt, ...);
+static void floatIfZero(Type* numType);
 
 
 // commit[67]: 从内存的空间分配角度进行强制类型转换
@@ -199,6 +200,7 @@ static void typeCast(Type* typeSource, Type* typeTarget) {
 
     // commit[72]: 将其他类型转换为 Bool 类型的时候比较特殊
     if (typeTarget->Kind == TY_BOOL) {
+        floatIfZero(typeSource);
         printLn("  # 转换为 Bool 类型");
         printLn("  snez a0, a0");   // 测试 reg-a0 的值是否为 0  如果不为 0 则设置为 1  如果为 0 则不改变
         return;
@@ -247,6 +249,35 @@ static void pop_stackFloat(char* reg) {
     printLn("  fld %s, 0(sp)", reg);
     printLn("  addi sp, sp, 8");
     StackDepth --;
+}
+
+// commit[143]: 支持表达式语句中浮点数可能参与的零判
+// Tip: 插入位置  整数对结果的判断一定在 reg-a0 中  通过 calcuGen 计算的表达式会直接存储在 reg-a0 中
+// 相反浮点数有单独的寄存器  所以移动一定发生在 calcuGen 后面  此时浮点寄存器已经计算好结果
+static void floatIfZero(Type* numType) {
+    // 直接在表达式语句块中添加对浮点数的判断会太过臃肿  而且判断发生在很多地方
+    // 所以针对浮点数的情况  先在浮点寄存器环境中进行比较  把结果写入整数寄存器中
+    switch (numType->Kind) {
+    case TY_FLOAT:
+    {
+        // 将 reg-zero 复制到浮点寄存器 fa1 中  对被比较的浮点寄存器清零
+        printLn("  fmv.s.x fa1, zero");
+        printLn("  feq.s a0, fa0, fa1");
+        printLn("  xori a0, a0, 1");
+        return;
+    }
+
+    case TY_DOUBLE:
+    {
+        printLn("  fmv.d.x fa1, zero");
+        printLn("  feq.d a0, fa0, fa1");
+        printLn("  xori a0, a0, 1");
+        return;
+    }
+
+    default:
+        break;
+    }
 }
 
 // commit[66]: 支持 32 位指令
@@ -333,14 +364,14 @@ static void Store(Type* type) {
 
     case TY_FLOAT:
     {
-        printLn("  将 fa0 的内容写入 reg-a1 的地址");
+        printLn("  # 将 fa0 的内容写入 reg-a1 的地址");
         printLn("  fsw fa0, 0(a1)");
         return;
     }
 
     case TY_DOUBLE:
     {
-        printLn("  将 fa0 的内容写入 ");
+        printLn("  # 将 fa0 的内容写入 ");
         printLn("  fsd fa0, 0(a1)");
         return;
     }
@@ -751,6 +782,7 @@ static void calcuGen(Node* AST) {
     case ND_NOT:
     {
         calcuGen(AST->LHS);
+        floatIfZero(AST->LHS->node_type);
         printLn("  # 非运算");
         printLn("  seqz a0, a0");
         return;
@@ -772,6 +804,7 @@ static void calcuGen(Node* AST) {
         printLn("\n# ==== 三目运算符 %d ====", C);
 
         calcuGen(AST->Cond_Block);
+        floatIfZero(AST->Cond_Block->node_type);
         printLn("  beqz a0, .L.else.%d", C);
 
         calcuGen(AST->If_BLOCK);
@@ -795,10 +828,12 @@ static void calcuGen(Node* AST) {
 
         // 利用镜像 Haffman 的结构优先计算左部  如果左部为 false 直接返回
         calcuGen(AST->LHS);
+        floatIfZero(AST->LHS->node_type);
         printLn("  beqz a0, .L.false.%d", C);
 
         // 判断当与表达式的右部  写入 reg-a0 中
         calcuGen(AST->RHS);
+        floatIfZero(AST->RHS->node_type);
         printLn("  beqz a0, .L.false.%d", C);
 
         // Branch-true  进入剩余表达式判断
@@ -819,9 +854,11 @@ static void calcuGen(Node* AST) {
         printLn("\n# ==== 逻辑或 %d ====", C);
 
         calcuGen(AST->LHS);
+        floatIfZero(AST->LHS->node_type);
         printLn("  bnez a0, .L.true.%d", C);
 
         calcuGen(AST->RHS);
+        floatIfZero(AST->RHS->node_type);
         printLn("  bnez a0, .L.true.%d", C);
 
         printLn("  li a0, 0");
@@ -1083,6 +1120,7 @@ static void exprGen(Node* AST) {
         // cond-expr 执行开始
         printLn("  # if-condition");
         calcuGen(AST->Cond_Block);
+        floatIfZero(AST->Cond_Block->node_type);
         printLn("  beqz a0, .L.else.%d", num);
 
         // true-branch  不需要 .L.if 标签直接继续执行
@@ -1126,6 +1164,7 @@ static void exprGen(Node* AST) {
         if (AST->Cond_Block) {
             printLn("  # while-condition-true");
             calcuGen(AST->Cond_Block);
+            floatIfZero(AST->Cond_Block->node_type);
             printLn("  beqz a0, %s", AST->BreakLabel);
         }
 
@@ -1161,6 +1200,7 @@ static void exprGen(Node* AST) {
         printLn("\n# ==== ND_COND ====");
         printLn("%s:", AST->ContinueLabel);
         calcuGen(AST->Cond_Block);
+        floatIfZero(AST->Cond_Block->node_type);
         printLn("\n# 跳转到循环 %d 的 .L.begin.%d 段", C, C);
         printLn("  bnez a0, .L.begin.%d", C);
 
