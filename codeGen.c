@@ -440,6 +440,26 @@ static void storeGenral(int sourceReg, int offset, int targetSize) {
     unreachable();
 }
 
+// commit[145]: 将浮点寄存器的值写入栈中
+static void stroreFloat(int sourceReg, int offset, int targetSize) {
+    printLn("  # 将 fa%d 浮点寄存器的值写入栈 %d(fp) 地址", sourceReg, offset);
+    printLn("  li t0, %d", offset);
+    printLn("  add t0, fp, t0");
+
+    switch (targetSize) {
+    case 4:
+        printLn("  fsw fa%d, 0(t0)", sourceReg);
+        return;
+
+    case 8:
+        printLn("  fsd fa%d, 0(t0)", sourceReg);
+        return;
+
+    default:
+        unreachable();
+    }
+}
+
 // commit[50]: 修改为 public 函数调用
 int alignTo(int realTotal, int aimAlign) {
     // 在真实使用的空间 realTotal 上加上 (+ Align - 1) 不足以形成一次对齐倍数的空间 防止对齐后导致的空间不足
@@ -704,6 +724,7 @@ static void calcuGen(Node* AST) {
 
     case ND_FUNCALL:
     {
+        // 把实参从当前函数的栈帧中写入 ABI 约定的寄存器
         // 所有的参数已经入栈  根据栈的结构  维持相同顺序得到参数
         pushArgs(AST->Func_Args);
 
@@ -730,14 +751,15 @@ static void calcuGen(Node* AST) {
             // 显式传参  在要求的 8 个寄存器的范围内完成
             if (isFloatNum(currArg->node_type)) {
                 // Q: 为什么浮点数有两种情况讨论
+                // Q: 有说法是和 RISCV 的 ABI 相关  但是不是很清楚
                 if (FloatRegCount < 8) {
                     printLn("  # reg-f%d 传递浮点参数", FloatRegCount);
                     pop_stackFloat(FloatRegCount++);
                 }
-                // else if (IntegerRegCount < 8) {
-                //     printLn("  # reg-a%d 传递参数", IntegerRegCount);
-                //     pop_stack(IntegerRegCount++);
-                // }
+                else if (IntegerRegCount < 8) {
+                    printLn("  # reg-a%d 传递参数", IntegerRegCount);
+                    pop_stack(IntegerRegCount++);
+                }
             }
             else {
                 if (IntegerRegCount < 8) {
@@ -809,7 +831,7 @@ static void calcuGen(Node* AST) {
             break;
         }
 
-        return;
+    return;
     }
 
     case ND_COMMA:
@@ -1358,13 +1380,26 @@ void emitText(Object* Global) {
         printLn("  li t0, -%d", currFunc->StackSize);
         printLn("  add sp, sp, t0");
 
-        // commot[26]: 支持函数传参
-        int I = 0;
+        // commit[145]: 把实参从 ABI 约定的寄存器中读取到自己的函数栈帧中  通过寄存器更换了参数在栈上位置
+        int IntegerRegCount = 0;
+        int FloatRegCount = 0;
 
-        // commit[56]: 针对函数传参抽象函数 storeGenral
         for (Object* obj = currFunc->formalParam; obj; obj = obj->next) {
-            // 根据 ABI 将寄存器的内容写到栈中
-            storeGenral(I++, obj->offset, obj->var_type->BaseSize);
+            if (isFloatNum(obj->var_type)) {
+                if (FloatRegCount < 8) {
+                    printLn("  # 将浮点形参寄存器 %s 的值 fa%d 压栈", obj->var_name, FloatRegCount);
+                    stroreFloat(FloatRegCount++, obj->offset, obj->var_type->BaseSize);
+                }
+                else {
+                    printLn("  # 将浮点形参寄存器 %s 的值 a%d 压栈", obj->var_name, IntegerRegCount);
+                    storeGenral(IntegerRegCount++, obj->offset, obj->var_type->BaseSize);
+                }
+            }
+
+            else {
+                printLn("  # 将整型形参寄存器 %s 的值 a%d 压栈", obj->var_name, IntegerRegCount);
+                storeGenral(IntegerRegCount++, obj->offset, obj->var_type->BaseSize);
+            }
         }
 
         // commit[128]: 并没有真正实现 "可变" 参数的传参  只是支持到 8 个传参的可变形式
@@ -1372,11 +1407,11 @@ void emitText(Object* Global) {
             // Tip: 在 C 中可变参数必须作为最后一个参数  并且 C 无法推断出参数的类型
             int offset = currFunc->VariadicParam->offset;
 
-            while (I < 8) {
+            while (IntegerRegCount < 8) {
                 printLn("  # 当前可变参数相对于 %s 偏移量 %d", currFunc->VariadicParam->var_name,
                                                             offset - currFunc->VariadicParam->offset);
                 // Tip: 这里的 I 的下标是已经处理 formalParam 后的下标
-                storeGenral(I++, offset, 8);
+                storeGenral(IntegerRegCount++, offset, 8);
                 offset += 8;
             }
         }
