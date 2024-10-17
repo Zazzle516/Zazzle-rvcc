@@ -737,6 +737,7 @@ static void calcuGen(Node* AST) {
             if (AST->definedFuncType->IsVariadic && vardictArg == NULL) {
                 // 但是此时仍然是伪可变参数  数量要求在 8 个寄存器的范围  emitText() 中定义的读取
                 // 区别在这个时候  多余的可变参数已经存储在栈上 (后续可能通过计数的方式对栈进行读取)
+                // commit[147]: 即使是浮点数  可变参数统一用整数寄存器传参
                 if (IntegerRegCount < 8) {
                     printLn("  # reg-a%d 传递可变实参", IntegerRegCount);
                     // 无论什么类型  统一读到整型寄存器中
