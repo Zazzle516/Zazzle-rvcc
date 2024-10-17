@@ -2961,6 +2961,9 @@ static Node* funcall(Token** rest, Token* tok) {
             actualParamNode = newCastNode(actualParamNode, formalParamType);
             formalParamType = formalParamType->formalParamNext;
         }
+        else if (actualParamNode->node_type->Kind == TY_FLOAT) {
+            actualParamNode = newCastNode(actualParamNode, TYDOUBLE_GLOBAL);
+        }
 
         Curr->next = actualParamNode;
         Curr = Curr->next;
