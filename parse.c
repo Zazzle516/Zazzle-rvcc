@@ -483,6 +483,7 @@ static void initGlobalNode(Token** rest, Token* tok, Object* var);
 static void writeBuffer(char* buffer, uint64_t val, int Size);
 static Relocation* writeGlobalData(Relocation* curr, Initializer* Init, Type* varType, char* buffer, int offset);
 static int64_t eval(Node* ND);
+static double evalDouble(Node* ND);
 static int64_t evalWithLabel(Node* ND, char** Label);
 static int64_t evalRightVal(Node* ND, char** Label);
 
@@ -630,10 +631,23 @@ static Relocation* writeGlobalData(Relocation* curr, Initializer* Init, Type* va
                                 offset);
     }
 
+
 // Tip: 执行到这里一定是叶节点  具体的数据结构递归已经在上面实现  所以 Offset 直接通过传参即可
 
     if (!Init->initAssignRightExpr)
         return curr;
+
+    if (varType->Kind == TY_FLOAT) {
+        // 把分配的 buffer 强制转到到目标类型的读取方式
+        *(float*)(buffer + offset) = evalDouble(Init->initAssignRightExpr);
+        return curr;
+    }
+
+    if (varType->Kind == TY_DOUBLE) {
+        *(double*)(buffer + offset) = evalDouble(Init->initAssignRightExpr);
+        return curr;
+    }
+
 
     // 本质上是在汇编的层面进行存储  必须把类型的大小转换为字节
     // label: 使用的用于赋值的其他全局量的名称  Q: 需要看完 CSAPP 再重新看一下 ???
@@ -661,10 +675,53 @@ static int64_t eval(Node* ND) {
     return evalWithLabel(ND, NULL);
 }
 
+static double evalDouble(Node* ND) {
+    addType(ND);
+
+    if (isInteger(ND->node_type)) {
+        if (ND->node_type->IsUnsigned)
+            return (unsigned long)eval(ND);
+        return eval(ND);
+    }
+
+    switch (ND->node_kind) {
+    case ND_ADD:
+        return evalDouble(ND->LHS) + evalDouble(ND->RHS);
+    case ND_SUB:
+        return evalDouble(ND->LHS) - evalDouble(ND->RHS);
+    case ND_MUL:
+        return evalDouble(ND->LHS) * evalDouble(ND->RHS);
+    case ND_DIV:
+        return evalDouble(ND->LHS) / evalDouble(ND->RHS);
+    case ND_NEG:
+        return -evalDouble(ND->LHS);
+    case ND_TERNARY:
+        return evalDouble(ND->Cond_Block) ? evalDouble(ND->If_BLOCK) : evalDouble(ND->Else_BLOCK);
+    case ND_COMMA:
+        return evalDouble(ND->RHS);
+    case ND_TYPE_CAST:
+    {
+        if (isFloatNum(ND->LHS->node_type))
+            return evalDouble(ND->LHS);     // Q: 为什么会导致段访问的错误呢 ???
+        return eval(ND->LHS);
+    }
+
+    case ND_NUM:
+        return ND->FloatVal;
+
+    default:
+        tokenErrorAt(ND->token, "not a compile-time float constant");
+        return -1;
+    }
+}
+
 // 全局变量赋值预处理
 static int64_t evalWithLabel(Node* ND, char** Label) {
     // 这里用 char** 本质上是因为内部可能更新 label 需要返回重新判断
     addType(ND);
+
+    if (isFloatNum(ND->node_type))
+        return evalDouble(ND);
 
     switch (ND->node_kind) {
     // 这里只是选择把 label 存在 ND.LHS 中  然后通过调用 eval() 重置 label  得到 ND.RHS 
@@ -1779,6 +1836,9 @@ static void initGlobalNode(Token** rest, Token* tok, Object* var) {
 
     // 根据声明的类型分配空间  而不是赋值的实际类型
     char* buffer = calloc(1, var->var_type->BaseSize);
+
+    // 这里的 offset 是针对特殊数据结构的  比如数组结构体
+    // 它们的元素或者说成员需要基址的概念  而单纯的变量赋值仅针对自己  是没有 offset 的  这里是为了统一
     writeGlobalData(&HEAD, Init, var->var_type, buffer, 0);
 
     var->InitData = buffer;
