@@ -1212,6 +1212,7 @@ static Type* declspec(Token** rest, Token* tok, VarAttr* varAttr) {
             BaseType = TYFLOAT_GLOBAL;
             break;
         case DOUBLE:
+        case DOUBLE + LONG:
             BaseType = TYDOUBLE_GLOBAL;
             break;
         default:
