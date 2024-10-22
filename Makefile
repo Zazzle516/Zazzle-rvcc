@@ -19,6 +19,8 @@ $(TEST_OBJS): test/test.h
 # 定义 C 编译器
 CC=clang-18
 
+# ------------ stage1 ------------
+
 # Makefile 会自动进行推导从 main.c 生成 main.o
 # $@ 表示目标文件 rvcc
 # $^ 表示依赖文件 $(OBJS)
@@ -63,7 +65,7 @@ test: $(TEST_OBJS)
 #   echo $$i: 本质是 shell 命令  只是 shell-$ 被 Makefile-$ 转义了
 #   ./$$i:  在 qemu 中运行对应测试文件
 	for i in $^; do echo $$i; qemu-riscv64 -L $(RISCV)/sysroot ./$$i || exit 1; echo; done
-	test/driver.sh
+	test/driver.sh ./rvcc
 
 #   换行也会被认为是错误的...
 #	for i in $^; do
@@ -73,9 +75,47 @@ test: $(TEST_OBJS)
 #	done
 #	test/dirver.sh
 
+# ------------ stage2 ------------
+
+# 1. 利用 stage1 的 rvcc 可执行编译器对 rvcc 源码自举编译
+# mkdir -p 递归方式的创建目录
+# 因为目前 rvcc 还不支持预处理  所以通过 self.py 执行
+# 通过 ./rvcc 编译 rvcc 源码本身
+stage2/%.s: rvcc self.py %.c
+	mkdir -p stage2/test
+	./self.py zacc.h $*.c > stage2/$*.c
+	./rvcc -o stage2/$*.s stage2/$*.c
+
+# 2. 调用汇编器把 rvcc 自举的 .s 文件翻译到 .o 文件
+# Tip: 这里汇编器根据 .s 文件的 ELF 信息自动推导目标执行平台
+stage2/%.o: stage2/%.s
+#	$(CC) -c stage2/$*.s -o stage2/$*.o
+	riscv64-unknown-linux-gnu-gcc -c stage2/$*.s -o stage2/$*.o
+
+# 3. 调用链接器
+stage2/rvcc: $(OBJS:%=stage2/%)
+#	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+	riscv64-unknown-linux-gnu-gcc $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+# rvcc 自举执行测试必须在 RISCV 物理机上进行
+# 利用 rvcc 自举编译后的结果执行测试文件
+stage2/test/%.exe: stage2/rvcc test/%.c
+#	$(CC) -o- -E -P -C test/$*.c | ./stage2/rvcc -o stage2/test/$*.s -
+#	$(CC) -o- $@ stage2/test/$*.s -xc test/common
+	mkdir -p stage2/test
+	riscv64-unknown-linux-gnu-gcc -o- -E -P -C test/$*.c | ./stage2/rvcc -o stage2/test/$*.s -
+	riscv64-unknown-linux-gnu-gcc -o- $@ stage2/test/$*.s -xc test/common
+
+test-stage2: $(TEST_OBJS:test/%=stage2/test/%)
+#	for i in $^; do echo $$i; ./$$i || exit 1; echo; done
+	for i in $^; do echo $$i; qemu-riscv64 -L $(RISCV)/sysroot ./$$i || exit 1; echo; done
+	test/driver.sh ./stage2/rvcc
+
+# 总测试
+test-all: test test-stage2
 
 clean:
-	rm -rf rvcc tmp* $(TEST_OBJS) test/*.s test/*.exe
+	rm -rf rvcc tmp* $(TEST_OBJS) test/*.s test/*.exe stage2/
 
 	find * -type f '(' -name '*~' -o -name '*.o' -o -name '*.s' ')' -exec rm {} ';'
 #	find * 	   表示从当前目录开始查找文件
@@ -95,4 +135,4 @@ create:
 
 # 伪代码
 # 声明 test 和 clean 并没有任何文件依赖
-.PHONY: test clean create
+.PHONY: test clean create test-stage2

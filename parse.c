@@ -1852,10 +1852,14 @@ static Node* initLocalNode(Token** rest, Token* tok, Object* var) {
     Initializer* init = initialize(rest, tok, var->var_type, &var->var_type);
 
     // 二阶段: LHS 除了最后一个元素的所有元素完成赋值 => 针对 BaseSize 进行 codeGen 赋零操作
-    initStructInfo arrayInitRoot = {.upDimension = NULL,
-                                    .elemOffset = 0,
-                                    .initStructMem = NULL,
-                                    .var = var };
+    // initStructInfo arrayInitRoot = {.upDimension = NULL,
+    //                                 .elemOffset = 0,
+    //                                 .initStructMem = NULL,
+    //                                 .var = var };
+
+    // commit[150]: 同理因为 rvcc 的自举修改语法
+    initStructInfo arrayInitRoot = {NULL, 0, var, NULL};
+
     Node* LHS = createNode(ND_MEMZERO, tok);
     LHS->var = var;
 
@@ -2086,7 +2090,8 @@ static Node* createInitAST(Initializer* Init, Type* varType, initStructInfo* arr
             // desig.var在 initLocalNode() 中初始化为数组的基址
             // 因为只有数组的根节点被定义  如果是 k 维数组在 initASTLeft() 中会递归 k 次
             // 通过字面量定义当前数组元素的基本信息  通过 upDimension 维持了链表结构  找到该元素相对于当前维度基址的偏移量
-            initStructInfo arrayElemInit = {.upDimension = arrayInitRoot, .elemOffset = currOffset};
+            // initStructInfo arrayElemInit = {.upDimension = arrayInitRoot, .elemOffset = currOffset};
+            initStructInfo arrayElemInit = {arrayInitRoot, currOffset};
 
             // 在确定下一层的递归过程中更新根节点和元素的偏移量
             Node* RHS = createInitAST(Init->children[currOffset], varType->Base, &arrayElemInit, tok);
@@ -2101,9 +2106,11 @@ static Node* createInitAST(Initializer* Init, Type* varType, initStructInfo* arr
 
         // 结构体相对于数组  区别在成员类型大小不一定相同  所以遍历通过成员本身进行遍历
         for (structMember* currMem = varType->structMemLink; currMem; currMem = currMem->next) {
-            initStructInfo structMemInit = {.upDimension = arrayInitRoot,
-                                            .elemOffset = 0,
-                                            .initStructMem = currMem };
+            // initStructInfo structMemInit = {.upDimension = arrayInitRoot,
+            //                                 .elemOffset = 0,
+            //                                 .initStructMem = currMem };
+
+            initStructInfo structMemInit = {arrayInitRoot, 0, NULL, currMem };
 
             Node* RHS = createInitAST(Init->children[currMem->Idx], currMem->memberType, &structMemInit, tok);
             ND = createAST(ND_COMMA, ND, RHS, tok);
@@ -2112,9 +2119,12 @@ static Node* createInitAST(Initializer* Init, Type* varType, initStructInfo* arr
     }
 
     if (varType->Kind == TY_UNION) {
-        initStructInfo unionInit = {.upDimension = arrayInitRoot,
-                                    .elemOffset = 0,
-                                    .initStructMem = varType->structMemLink};
+        // initStructInfo unionInit = {.upDimension = arrayInitRoot,
+        //                             .elemOffset = 0,
+        //                             .initStructMem = varType->structMemLink};
+
+        initStructInfo unionInit = {arrayInitRoot, 0, NULL, varType->structMemLink};
+
         return createInitAST(Init->children[0], varType->structMemLink->memberType, &unionInit, tok);
     }
 

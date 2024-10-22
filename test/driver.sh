@@ -1,5 +1,8 @@
 #!/bin/bash
 
+# 因为加入了 stage2 的自举部分  把 rvcc 替换为一个变量
+rvcc=$1
+
 # 创建一个临时文件夹
 # mktemp: 创建临时文件或者临时目录
 # -d: 声明创建临时目录
@@ -43,7 +46,7 @@ rm -f $tmp/out
 # Q: test.sh 和 testDriver.sh 是什么关系
 # A: test.sh 和 testDriver.sh 是两种不同的输入模式
 # Q: 既然 empty.c 是刚刚声明的空文件    那么它现在读取的是什么呢    在读之前难道要写吗
-./rvcc -o $tmp/out $tmp/empty.c
+$rvcc -o $tmp/out $tmp/empty.c
 
 # 检查输出文件的存在并且是否为常规文件
 [ -f $tmp/out ]
@@ -55,7 +58,7 @@ check -o
 # &1: stdout
 # -q: 静默模式搜索  不会输出任何匹配的内容只返回状态码指示是否找到了匹配行
 # q0: 找到匹配      q1: 未找到匹配      q2: 执行中出错
-./rvcc --help 2>&1 | grep -q zacc
+$rvcc --help 2>&1 | grep -q zacc
 check --help
 
 

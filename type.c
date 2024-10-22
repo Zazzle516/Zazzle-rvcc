@@ -1,26 +1,44 @@
 #include "zacc.h"
 
+// commit[150]: 在 rvcc 进行自举后  目前不支持 .Kind 语法
+
 // commit[50]: 更新不同类型需要的对齐长度
-Type* TYINT_GLOBAL = &(Type){.Kind = TY_INT, .BaseSize = 4, .alignSize = 4};
-Type* TYCHAR_GLOBAL = &(Type){.Kind = TY_CHAR, .BaseSize = 1, .alignSize = 1};
-Type* TYLONG_GLOBAL = &(Type){.Kind = TY_LONG, .BaseSize = 8, .alignSize = 8};
-Type* TYSHORT_GLOBAL = &(Type){.Kind = TY_SHORT, .BaseSize = 2, .alignSize = 2};
-Type* TYBOOL_GLOBAL = &(Type){.Kind = TY_BOOL, .BaseSize = 1, .alignSize = 1};
+// Type* TYINT_GLOBAL = &(Type){.Kind = TY_INT, .BaseSize = 4, .alignSize = 4};
+// Type* TYCHAR_GLOBAL = &(Type){.Kind = TY_CHAR, .BaseSize = 1, .alignSize = 1};
+// Type* TYLONG_GLOBAL = &(Type){.Kind = TY_LONG, .BaseSize = 8, .alignSize = 8};
+// Type* TYSHORT_GLOBAL = &(Type){.Kind = TY_SHORT, .BaseSize = 2, .alignSize = 2};
+// Type* TYBOOL_GLOBAL = &(Type){.Kind = TY_BOOL, .BaseSize = 1, .alignSize = 1};
+
+Type* TYINT_GLOBAL = &(Type){TY_INT, 4, 4};
+Type* TYCHAR_GLOBAL = &(Type){TY_CHAR, 1, 1};
+Type* TYLONG_GLOBAL = &(Type){TY_LONG, 8, 8};
+Type* TYSHORT_GLOBAL = &(Type){TY_SHORT, 2, 2};
+Type* TYBOOL_GLOBAL = &(Type){TY_BOOL, 1, 1};
 
 // commit[131]: 无符号类型字面量
-Type* TY_UNSIGNED_CHAR_GLOBAL = &(Type){.Kind = TY_CHAR, .BaseSize = 1, .alignSize = 1, .IsUnsigned = true};
-Type* TY_UNSIGNED_SHORT_GLOBAL = &(Type){.Kind = TY_SHORT, .BaseSize = 2, .alignSize = 2, .IsUnsigned = true};
-Type* TY_UNSIGNED_INT_GLOBAL = &(Type){.Kind = TY_INT, .BaseSize = 4, .alignSize = 4, .IsUnsigned = true};
-Type* TY_UNSIGNED_LONG_GLOBAL = &(Type){.Kind = TY_LONG, .BaseSize = 8, .alignSize = 8, .IsUnsigned = true};
+// Type* TY_UNSIGNED_CHAR_GLOBAL = &(Type){.Kind = TY_CHAR, .BaseSize = 1, .alignSize = 1, .IsUnsigned = true};
+// Type* TY_UNSIGNED_SHORT_GLOBAL = &(Type){.Kind = TY_SHORT, .BaseSize = 2, .alignSize = 2, .IsUnsigned = true};
+// Type* TY_UNSIGNED_INT_GLOBAL = &(Type){.Kind = TY_INT, .BaseSize = 4, .alignSize = 4, .IsUnsigned = true};
+// Type* TY_UNSIGNED_LONG_GLOBAL = &(Type){.Kind = TY_LONG, .BaseSize = 8, .alignSize = 8, .IsUnsigned = true};
 
-Type* TYFLOAT_GLOBAL = &(Type){.Kind = TY_FLOAT, .BaseSize = 4, .alignSize = 4};
-Type* TYDOUBLE_GLOBAL = &(Type){.Kind = TY_DOUBLE, .BaseSize = 8, .alignSize = 8};
+// Type* TYFLOAT_GLOBAL = &(Type){.Kind = TY_FLOAT, .BaseSize = 4, .alignSize = 4};
+// Type* TYDOUBLE_GLOBAL = &(Type){.Kind = TY_DOUBLE, .BaseSize = 8, .alignSize = 8};
+
+Type* TY_UNSIGNED_CHAR_GLOBAL = &(Type){TY_CHAR, 1, 1, true};
+Type* TY_UNSIGNED_SHORT_GLOBAL = &(Type){TY_SHORT, 2, 2, true};
+Type* TY_UNSIGNED_INT_GLOBAL = &(Type){TY_INT, 4, 4, true};
+Type* TY_UNSIGNED_LONG_GLOBAL = &(Type){TY_LONG, 8, 8, true};
+
+Type* TYFLOAT_GLOBAL = &(Type){TY_FLOAT, 4, 4};
+Type* TYDOUBLE_GLOBAL = &(Type){TY_DOUBLE, 8, 8};
 
 // Q: 为什么给 void 大小和对齐  这里定义为 1 和后面的 void* 任意类型定义有关吗
 // A: 在 commit[61] 的测试改 0 是可以的  我一开始猜想可能和 BaseSize 的运算有关
 // 但是合法的 void* 在 newptr() 的执行中指针大小是通过常量赋值的  和 TY_VOID.BaseSize 无关 所以我也不知道了
 // commit[61]: 只是定义了 (void*) 这个任意类型  而不是 void 传参
-Type* TYVOID_GLOBAL = &(Type){.Kind = TY_VOID, .BaseSize = 1, .alignSize = 1};
+// Type* TYVOID_GLOBAL = &(Type){.Kind = TY_VOID, .BaseSize = 1, .alignSize = 1};
+Type* TYVOID_GLOBAL = &(Type){TY_VOID, 1, 1};
+
 
 // commit[50]: 对每个类型新增 typeAlign 保证 codeGen().alignTo() 计算正确性
 static Type* newType(Typekind typeKind, int typeSize, int typeAlign) {

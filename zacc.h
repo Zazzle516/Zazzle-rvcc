@@ -126,8 +126,8 @@ struct structMember {
 struct Type {
 // 基础信息(匿名)
     Typekind Kind;
-    int alignSize;                  // 该类型内存对齐标准
     int BaseSize;                   // commit[27]: 类型 sizeof() 计算的返回值
+    int alignSize;                  // 该类型内存对齐标准
     bool IsUnsigned;                // commit[131]: 支持符号定义
 
 // 被声明变量的基础信息 (结构体 | 函数 | ...)
