@@ -345,7 +345,6 @@ struct Node {
     Node* defaultCase;      // default 作为特殊的 case 语句存在
 
 // ND_FUNCALL
-    char* FuncName;
     Node* Func_Args;        // Tip: 参数可能是计算式 eg. &param
     Type* definedFuncType;  // 与被调用函数的函数定义类型保持一致
 

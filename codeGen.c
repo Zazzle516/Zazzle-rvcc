@@ -318,6 +318,9 @@ static void Load(Type* type) {
     case TY_STRUCT:
     case TY_UNION:
         return;
+    case TY_FUNC:
+        // 函数名本身在 getAddr() 进行占位处理  不需要 load 操作
+        return;
 
     case TY_FLOAT:
     {
@@ -493,8 +496,10 @@ static void preAllocStackSpace(Object* func) {
 }
 
 static void getAddr(Node* nd_assign) {
+// GOT: Global Offset Table 全局偏移表  用于动态链接的程序
+// 在运行时解析和访问全局变量 外部函数 动态库符号
+
     switch (nd_assign->node_kind) {
-    
     // 这里同时完成了对 ND_VAR 和 ND_ADDR 的支持
     case ND_VAR:
     {
@@ -505,14 +510,45 @@ static void getAddr(Node* nd_assign) {
             // 栈帧是内存的一部分 虽然都是寄存器运算 但是最终 a0 会指向内存中该栈帧所储存的变量指针
             printLn("  li t0, %d", nd_assign->var->offset);
             printLn("  add a0, fp, t0");
+            return;
+        }
+
+        if (nd_assign->node_type->Kind == TY_FUNC) {
+            // 在当前文件中定义函数名  作为局部变量存储  和 GOT 无关
+            // 1. 编译器的编译阶段调用函数的时候，在 .s 文件中写的是函数名 起到占位的作用
+            // 2. 在执行链接后，变成相对地址
+            // 3. 加载后，变成绝对地址
+            // 4. OS 在执行的时候，会通过 mmu 换成实际地址
+            if (nd_assign->var->IsFuncOrVarDefine) {
+                printLn("  # 获取函数 %s 的栈内地址", nd_assign->var->var_name);
+                printLn("  la a0, %s", nd_assign->var->var_name);
+            }
+
+            else {
+                // 定义在其他文件中的函数需要通过链接 (GOT) 得到地址
+                int C = count();
+                printLn("  # 获取外部函数的绝对地址");
+                printLn(".Lpcrel_hi%d:", C);
+                printLn("  auipc a0, %%got_pcrel_hi(%s)", nd_assign->var->var_name);
+                printLn("  ld a0, %%pcrel_lo(.Lpcrel_hi%d)(a0)", C);
+            }
+            return;
         }
 
         else {
-            printLn("  # 获取全局变量 %s 的地址", nd_assign->var->var_name);
-            // 伪指令 la: load address 用于加载大数
-            printLn("  la a0, %s", nd_assign->var->var_name);
+            // 结合 PC 相对寻址 + GOT(Global Offset Table) 中获取全局变量地址
+            // Lpcrel_hi: Local pc-relative high
+            // Lpcrel_lo: Local pc-relative low
+            // %got_pcrel_hi(var): 转义 获取全局变量在 GOT 表中偏移量的高位
+            int C = count();
+            printLn("  # 获取全局变量的绝对地址");
+            printLn(".Lpcrel_hi%d:", C);
+            printLn("  auipc a0, %%got_pcrel_hi(%s)", nd_assign->var->var_name);
+    
+            // 组合成全局变量的完整地址写入 reg-a0
+            printLn("  ld a0, %%pcrel_lo(.Lpcrel_hi%d)(a0)", C);
+            return;
         }
-        return;
     }
 
     case ND_DEREF:
@@ -728,6 +764,10 @@ static void calcuGen(Node* AST) {
         // 所有的参数已经入栈  根据栈的结构  维持相同顺序得到参数
         pushArgs(AST->Func_Args);
 
+        // commit[151]: 要通过 reg-a0 实现跳转  而后面的传参可能修改 reg-a0
+        calcuGen(AST->LHS);
+        printLn("  mv t5, a0");
+
         int IntegerRegCount = 0;
         int FloatRegCount = 0;
 
@@ -764,7 +804,7 @@ static void calcuGen(Node* AST) {
             }
             else {
                 if (IntegerRegCount < 8) {
-                    printLn("  # reg-a%d 传递整数");
+                    printLn("  # reg-a%d 传递整数", IntegerRegCount);
                     pop_stack(IntegerRegCount++);
                 }
             }
@@ -772,17 +812,22 @@ static void calcuGen(Node* AST) {
 
         // 在 RISC-V 中  强制要求栈指针对齐到 16 字节边界
         // Tip: 在 call funcName 之后  从一个新的空间开始  提高新函数内部的执行效率
+        // commit[151]: 此时函数名不再额外存储  而是作为变量处理
+        // 所以原本的 (call funcName) => 通过 reg-t5 存储的地址执行 jalr 间接跳转执行
+        // jalr rd, offset(rs1)     隐含了对 ra（返回地址寄存器）的保存 当前 PC + 4
+        // rd: 存储 jalr 跳转的返回地址
+        // offset: 12 位的有符号立即数  如果 offset 为零可省略默认寄存器 reg-a0
         if (StackDepth % 2 == 0) {
             // 因为 Depth 的加减单位是 8
-            printLn("  # 调用 %s 函数", AST->FuncName);
-            printLn("  call %s", AST->FuncName);
+            printLn("  # 调用函数");
+            printLn("  jalr t5");
         }
 
         else {
             // 如果是奇数  需要跳过 8 个字节
             printLn("  # 新函数执行空间进行 16 字节对齐");
             printLn("  addi sp, sp, -8");
-            printLn("  call %s", AST->FuncName);
+            printLn("  jalr t5");
             printLn("  addi sp, sp, 8");
         }
 

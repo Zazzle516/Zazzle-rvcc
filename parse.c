@@ -175,11 +175,21 @@ struct initStructInfo {
 
 // commit[49]: 支持对结构体成员的访问
 // commit[53]: 支持对结构体实例成员的访问  写入左子树结构  注意结构体可能是递归的 x->y->z
-// postFix = primary_calss_expr ("[" expr"]" | ("." ident)* | ("->" ident) | "++" | "--")*
+// postFix = primary_class_expr
+//           | ident "(" funcall ")" postfixTail*
+//           | primary_class_expr postfixTail*
+
+// commit[151]: 支持函数指针
+// postfixTail = "[" expr "]"
+//               | "(" funcall ")"
+//               | "." ident
+//               | "->" ident
+//               | "++"
+//               | "--"
 
 // commit[23] [30] [39]: 添加对零参函数名 | "sizeof" | ND_GNU_EXPR 声明的支持
 // primary_class_expr = "(" "{" stamt+ "}" ")"
-//                      | "(" expr ")" | num | ident fun_args? | str
+//                      | "(" expr ")" | num | ident | str
 //                      | "sizeof" third_class_expr
 //                      | "sizeof" "(" typeName")"
 //                      | "_Alignof" third_class_expr
@@ -190,7 +200,7 @@ struct initStructInfo {
 // abstractDeclarator = "*"* ("(" abstractDeclarator ")")? typeSuffix
 
 // commit[24]: 函数调用 在 primary_class_expr 前看一个字符确认是函数声明后的定义
-// funcall = ident "(" (expr ("," expr)*)? ")"
+// funcall = "(" (assign ("," assign)*)? ")"
 
 // 在传递到 codeGen 的时候  只有 Global 是暴露在外的  Local 会被写入 Func.local 中
 Object* Local;      // 函数内部变量
@@ -474,7 +484,7 @@ static Node* typeCast(Token** rest, Token* tok);
 static Node *postIncNode(Node *Nd, Token *Tok, int Addend);
 static Node* postFix(Token** rest, Token* tok);
 static Node* primary_class_expr(Token** rest, Token* tok);
-static Node* funcall(Token** rest, Token* tok);
+static Node* funcall(Token** rest, Token* tok, Node* ND);
 
 /* 初始化器 */
 
@@ -1296,11 +1306,14 @@ static Type* declarator(Token** rest, Token* tok, Type* Base) {
         Token* Start = tok;
 
         // 因为外层大小没有确定  内层解析没有意义  最后丢弃
+        // commit[151]: 函数指针因为有括号 (*func) 判断在这里
+        // 同时函数指针解析依赖嵌套语法解析结构  首次解析跳过(*func(param)) 直接得到返回值类型
         Type Dummy = {};
         declarator(&tok, Start->next, &Dummy);
         tok = skip(tok, ")");
 
         // 把外层类型的大小通过 Base 传入内层  通过 Start 重新解析内层类型
+        // commit[151]: 解析函数指针的参数列表
         Base = typeSuffix(rest, tok, Base);
         return declarator(&tok, Start->next, Base);
     }
@@ -2025,6 +2038,7 @@ static void stringInitializer(Token** rest, Token* tok, Initializer* Init) {
 
 // 标准类型数组元素映射
 static void dataInitializer(Token** rest, Token* tok, Initializer* Init) {
+    // commit[151]: 针对函数指针的赋值  这里并没有检查类型的匹配性
     Init->initAssignRightExpr = assign(rest, tok);
     return;
 }
@@ -2857,9 +2871,16 @@ static Node* postFix(Token** rest, Token* tok) {
         }
     }
 
+    // commit[151]: 针对函数调用 fucall 的语法的优先级做出了一点修改  优先级后移
+    // 因为此时 ND 可能是函数指针的变量结点  所以作为普通变量处理
     Node* ND = primary_class_expr(&tok, tok);
 
     while (true) {
+        if (equal(tok, "(")) {
+            ND = funcall(&tok, tok->next, ND);
+            continue;
+        }
+
         if (equal(tok, "[")) {
             // commit[28]: postFix = primary_class_expr ("[" expr "]")*  eg. x[y] 先解析 x 再是 y
             Token* idxStart = tok;
@@ -2969,24 +2990,22 @@ static Node* primary_class_expr(Token** rest, Token* tok) {
     }
 
     if ((tok->token_kind) == TOKEN_IDENT) {
-        if (equal(tok->next, "(")) {
-            return funcall(rest, tok);
-        }
-
+        // commit[151]: 取消对 funcall 的判断  即使是函数名也作为普通变量处理
         VarInScope* varScope = findVar(tok);
-        // 能进入这里的变量判断说明进入了 stamt() 被 isTypeName() 判断为非别名  只有两种可能性
-        if (!varScope || (!varScope->varList && !varScope->enumType)) {
-            tokenErrorAt(tok, "undefined variable");
+        *rest = tok->next;
+
+        if (varScope) {
+            // 由于 isTypeName() 的判断  运行到此处已经排除了 typedef 别名的可能性
+            if (varScope->varList)
+                return singleVarNode(varScope->varList, tok);
+            if (varScope->enumType)
+                return numIntNode(varScope->enumValue, tok);
         }
 
-        Node* ND;
-        if (varScope->varList)
-            ND = singleVarNode(varScope->varList, tok);
-        else
-            ND = numIntNode(varScope->enumValue, tok);
-
-        *rest = tok->next;
-        return ND;
+        if (equal(tok->next, "("))
+            // 未声明的函数变量名称  也有可能是声明顺序的问题
+            tokenErrorAt(tok, "implict declaration of a function");
+        tokenErrorAt(tok, "undefined variable");
     }
 
     tokenErrorAt(tok, "expected an expr");
@@ -2994,27 +3013,28 @@ static Node* primary_class_expr(Token** rest, Token* tok) {
 }
 
 // 函数调用
-static Node* funcall(Token** rest, Token* tok) {
+// commit[151]: 新增函数指针的变量节点考虑
+static Node* funcall(Token** rest, Token* tok, Node* FN) {
+    addType(FN);
+
+    // 检查该变量结点 FN 是否是函数类型或者函数指针类型
+    if (FN->node_type->Kind != TY_FUNC && 
+        (FN->node_type->Kind != TY_PTR || FN->node_type->Base->Kind != TY_FUNC))
+        tokenErrorAt(FN->token, "not a function");
+
+    // 在真正的函数调用中进行了类型检查
+    Type* definedFuncType = (FN->node_type->Kind == TY_FUNC) ? FN->node_type : FN->node_type->Base;
+
     // Tip: 函数调用的真正查找是在 codeGen() 中的汇编标签实现的
-    Node* ND = createNode(ND_FUNCALL, tok);
-    ND->FuncName = getVarName(tok);
+    // commit[151]: 对应到后续 codeGen().Load() 针对 FUNC 变量直接返回
+    Node* ND = createSingle(ND_FUNCALL, FN, tok);
 
-    // 查找被调用函数
-    VarInScope* targetScope = findVar(tok);
-    if (!targetScope)
-        tokenErrorAt(tok, "implicit declaration of a function");
+    // 在 commit[151] 把函数名作为变量对待之后  就不再需要 funcName
+    // ND->FuncName = getVarName(tok);
+    // 并且对 func 变量的存在性判断转移到 primary_class_expr 处理  此处不再需要
 
-    // Q: 为什么是两个判断条件  直接采用后者判断不可以吗  截至 commit[138] 把前面的判断注释掉也没影响
-    // if (!targetScope->varList || targetScope->varList->var_type->Kind != TY_FUNC)
-    if (targetScope->varList->var_type->Kind != TY_FUNC)
-        tokenErrorAt(tok, "not a function");
-    tok = tok->next->next;
-
-    // commit[71]: 获取被调用函数的定义信息
-    Type* definedFuncType = targetScope->varList->var_type;
+    // Tip: 在 commit[151] 的实现中  可以对函数指针赋值函数  但是无法检查赋值的类型合法性
     Type* formalParamType = definedFuncType->formalParamLink;
-    Type* formalRetType = targetScope->varList->var_type->ReturnType;
-
     Node HEAD = {};
     Node* Curr = &HEAD;
 
