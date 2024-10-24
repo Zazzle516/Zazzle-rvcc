@@ -686,6 +686,7 @@ static int64_t eval(Node* ND) {
 }
 
 static double evalDouble(Node* ND) {
+    // 针对浮点数不能进行位运算
     addType(ND);
 
     if (isInteger(ND->node_type)) {
@@ -1421,11 +1422,17 @@ static Type* funcFormalParams(Token** rest, Token* tok, Type* returnType) {
 
         Type* formalBaseType = declspec(&tok, tok, NULL);
         Type* formalType = declarator(&tok, tok, formalBaseType);
+        Token* Name = formalType->Name;
 
         // commit[87]: 把形参中的数组传参转换为指针
         if (formalType->Kind == TY_ARRAY_LINER) {
-            Token* Name = formalType->Name;
             formalType = newPointerTo(formalType->Base);
+            formalType->Name = Name;
+        }
+
+        else if (formalType->Kind == TY_FUNC) {
+            // commit[152]: 针对参数中的旧式声明 eg. int x() 手动转换为函数指针类型
+            formalType = newPointerTo(formalType);
             formalType->Name = Name;
         }
 
@@ -1758,7 +1765,7 @@ static Node* compoundStamt(Token** rest, Token* tok) {
             // commit[117]: 针对代码块内部的变量声明  支持在函数内部使用 extern 声明
             // Tip: 虽然是在代码块中使用的其他文件定义的变量  生命范围也是该代码块
             // 但是因为它的外部链接性质，它仍然是一个全局概念的变量
-            if (!GlobalOrFunction(tok)) {
+            if (!GlobalOrFunction(tok)) {   // 可以在代码块内部声明其他文件定义的函数
                 tok = functionDefinition(tok, BaseType, &Attr);
                 continue; }
             if (Attr.isExtern) {
@@ -2409,6 +2416,7 @@ static Node* stamt(Token** rest, Token* tok) {
             tokenErrorAt(tok, "stray case");
 
         Node* ND = createNode(ND_CASE, tok);
+        // Tip: 这里调用的 constExpr 无法对 case 的整型进行判断
         int caseVal = constExpr(&tok, tok->next);
         tok = skip(tok, ":");
 
