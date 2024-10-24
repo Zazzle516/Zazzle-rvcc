@@ -945,6 +945,8 @@ Node* newCastNode(Node* lastNode, Type* currTypeTarget) {
     castTypeNode->node_kind = ND_TYPE_CAST;
     castTypeNode->token = lastNode->token;
     castTypeNode->LHS = lastNode;
+
+    // 无兼容性检查的强制转换
     castTypeNode->node_type = copyType(currTypeTarget);
 
     return castTypeNode;
@@ -1765,7 +1767,8 @@ static Node* compoundStamt(Token** rest, Token* tok) {
             // commit[117]: 针对代码块内部的变量声明  支持在函数内部使用 extern 声明
             // Tip: 虽然是在代码块中使用的其他文件定义的变量  生命范围也是该代码块
             // 但是因为它的外部链接性质，它仍然是一个全局概念的变量
-            if (!GlobalOrFunction(tok)) {   // 可以在代码块内部声明其他文件定义的函数
+            if (!GlobalOrFunction(tok)) {
+                // 可以在代码块内部声明其他文件定义的函数
                 tok = functionDefinition(tok, BaseType, &Attr);
                 continue; }
             if (Attr.isExtern) {

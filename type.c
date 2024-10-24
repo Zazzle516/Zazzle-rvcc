@@ -129,9 +129,18 @@ Type* structBasicDeclType(void) {
 
 // commit[68]: 针对单返回结果 ND 结点进行判断
 static Type* singleLongType(Type* leftType, Type* rightType) {
+    // Tip: 这里优先判断 LHS 会隐含兼容性和左值类型 bug 的问题  在 commit[153] 的测试中体现
     // 针对 LHS 的左指针类型  需要向上传递
     if (leftType->Base)
         return newPointerTo(leftType->Base);
+
+    // commit[153]: 仍然是对函数名的隐式转换
+    // 对比 commit[152] 参数处理  这里针对函数名调用的一般情况
+    if (leftType->Kind == TY_FUNC)
+        // 指针类型已经是最大的类型  直接返回就行了
+        return newPointerTo(leftType);
+    if (rightType->Kind == TY_FUNC)
+        return newPointerTo(rightType);
 
     // commit[141]: 针对浮点数比较  优先判断 double
     if (leftType->Kind == TY_DOUBLE || rightType->Kind == TY_DOUBLE)
