@@ -45,6 +45,7 @@ size_t fwrite(void* ptr, size_t size, size_t nmemb, FILE* stream);
 int fflush(FILE* stream);
 int fputc(int c, FILE* stream);
 int feof(FILE* stream);
+int close(int fd);
 
 static void assert() {}
 
@@ -77,6 +78,45 @@ long strtoul(char* nptr, char** endptr, int base);
 
 void exit(int code);
 double log2(double);
+
+// POSIX: libgen.h
+// GNY: string.h
+// 提取文件路径中的文件名  如果路径为空返回 . 如果没有路径部分返回整个路径
+char* basename(char* path);
+
+// stdio.h
+// 在目标字符串 s 中搜索字符 c 的最后一次出现  返回指向该位置的指针  找不到返回 NULL
+// strchr(): 返回第一次出现的位置
+char* strrchr(char* s, int c);
+
+// POSIX: unisted.h
+// 对参数文件删除文件名链接  成功返回 0 本质上就是引用 -1 当引用为零时 文件被真正删除
+// Tip: unlink() 只能处理文件  rmdir() 处理目录
+int unlink(char* pathname);
+
+// POSIX: 创建一个唯一的临时文件  参数通过 XXX 指定文件名模板  返回 fd 进行读写操作
+// Tip: 模板至少以 6 个 XXXXXX 结尾
+int mkstemp(char* template);
+
+// POSIX: unisted.h 创建新进程
+int fork(void);
+
+// POSIX: unisted.h
+// 替换当前进程的内存空间 加载新程序 从新程序的 main() 函数开始执行 原有的执行状态不会被保留。
+int execvp(char* file, char** argv);
+
+// POSIX: unisted.h 立刻终止当前进程  不执行清理函数
+// Tip: 通常用于中止 fork() 创建的子进程 防止共享的 fd 被影响
+// 子进程刷新了文件缓冲区或关闭了文件描述符 父进程的行为可能会受到干扰 通过不清理 将后续交给父进程处理
+void _exit(int code);
+
+// POSIX: unisted.h 父进程等待子进程的终止并获取终止状态
+int wait(int* wstatus);
+
+// POSIX: stdlib.h
+// 在程序退出前通过回调函数指针执行一些自定义的清除工作  LIFO
+// 可以多次调用 atexit() 来注册多个清理函数
+int atexit(void (*)(void));
 """)
 
 for Path in sys.argv[1:]:

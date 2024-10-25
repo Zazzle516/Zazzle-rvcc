@@ -18,6 +18,9 @@
 #include <errno.h>
 #include <stdint.h>
 #include <strings.h>
+#include <sys/types.h>
+#include <sys/wait.h>       // 进程间的同步和状态查询
+#include <unistd.h>         // 系统调用相关的函数声明  fork() exec() ...
 
 // 替换声明  在后续的变量声明中省略 struct 关键字
 // Q: 为什么 typedef 可以作为一个组合识别到 (struct structName)
