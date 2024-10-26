@@ -61,5 +61,23 @@ check -o
 $rvcc --help 2>&1 | grep -q zacc
 check --help
 
+# commit[155]: 在 driver.sh 中测试新支持的链接模块
+
+echo 'int main(void) {}' | $rvcc -S -o - - | grep -q 'main:'
+check -S
+rm -f $tmp/out.o $tmp/out.s
+
+# shell 中直接使用 [] 直接执行条件测试  结果会直接影响整个命令的退出状态 ($?)
+# Tip: [] 内部的所有参数前后都要有空格
+# shell 中 () 创建新的子 shell 进程运行内部的命令组
+
+echo 'int main(void) {}' > $tmp/out.c
+($rvcc $tmp/out.c > $tmp/out.o )
+[ -f $tmp/out.o ]
+check 'default output file'
+
+($rvcc -S $tmp/out.c > $tmp/out.s)
+[ -f $tmp/out.s ]
+check 'default output file'
 
 echo OK

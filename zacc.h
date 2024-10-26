@@ -21,6 +21,7 @@
 #include <sys/types.h>
 #include <sys/wait.h>       // 进程间的同步和状态查询
 #include <unistd.h>         // 系统调用相关的函数声明  fork() exec() ...
+#include <libgen.h>
 
 // 替换声明  在后续的变量声明中省略 struct 关键字
 // Q: 为什么 typedef 可以作为一个组合识别到 (struct structName)
@@ -38,8 +39,15 @@ typedef struct Relocation Relocation;
 
 /* 词法解析 tokenize() 数据结构和函数声明 */ 
 
-// 字符串
+// 定义参数存储格式
+typedef struct {
+    char** paramData;   // 参数内容
+    int Capacity;
+    int paramNum;       // 参数个数
+} StringArray;
+
 char* format(char* Fmt, ...);
+void strArrayPush(StringArray* Arr, char* S);
 
 // 在 tokenize() 阶段使用的工具函数
 void errorHint(char* errorInfo, ...);

@@ -36,6 +36,9 @@ rvcc: $(OBJS)
 #   Linux 中文件的后缀没有意义 重要的是文件本身的格式和内容是否匹配 所以生成 .exe 也是 Ok 的
 #   可以通过 file fileName 查看文件格式
 
+# commit[155]: 在 ZACC 支持编译器的汇编阶段后  在 (make test) 执行中直接编译到 .o 文件
+# 原来的第二行指令从 (汇编 + 链接) => 纯链接  在第一行 ./rvcc 额外执行了汇编
+
 # commit[45]: 执行 TEST 命令
 # $ 通配符 保证前后替换为相同的文件名  如果是不同的文件名 bar.c => foo.exe 需要显式声明
 # 目标模式规则: pathTo/%.target: pathTo/%.source  通配符 % 是判断命令是否是目标模式规则的重点
@@ -48,15 +51,15 @@ test/%.exe: rvcc test/%.c
 #   -P:  删掉多余的 #line 信息
 #   -C:  保留注释
 #   $*:  自动变量  只能用在模式规则 替换中 % 及其之前的部分  eg. 目标 dir/a.foo.b dir/a.%.b => $* = dir/a.foo
-	riscv64-unknown-linux-gnu-gcc -o- -E -P -C test/$*.c | ./rvcc -o test/$*.s -
+	riscv64-unknown-linux-gnu-gcc -o- -E -P -C test/$*.c | ./rvcc -o test/$*.o -
 
 #   -xc: 强制作为 C 语言代码解析(因为 common 没有后缀)
 #   -o:  指定输出的文件名
 #   $@:  替换完整的目标文件名 包括后缀和路径 可以在任何规则中使用
 #	$(CC) -o $@ test/$*.s -xc test/common
 
-#   交叉编译并且进行链接
-	riscv64-unknown-linux-gnu-gcc -static -o $@ test/$*.s -xc test/common
+#   使用静态链接编译为一个可独立执行的文件
+	riscv64-unknown-linux-gnu-gcc -static -o $@ test/$*.o -xc test/common
 
 test: $(TEST_OBJS)
 #	for i in $^; do echo $$i; ./$$i || exit 1; echo; done
@@ -81,16 +84,17 @@ test: $(TEST_OBJS)
 # mkdir -p 递归方式的创建目录
 # 因为目前 rvcc 还不支持预处理  所以通过 self.py 执行
 # 通过 ./rvcc 编译 rvcc 源码本身
-stage2/%.s: rvcc self.py %.c
+stage2/%.o: rvcc self.py %.c
 	mkdir -p stage2/test
 	./self.py zacc.h $*.c > stage2/$*.c
-	./rvcc -o stage2/$*.s stage2/$*.c
+	./rvcc -o stage2/$*.o stage2/$*.c
 
+# commit[155]: 把链接放到 ZACC 中实现了  这里可以省略掉了
 # 2. 调用汇编器把 rvcc 自举的 .s 文件翻译到 .o 文件
 # Tip: 这里汇编器根据 .s 文件的 ELF 信息自动推导目标执行平台
-stage2/%.o: stage2/%.s
-#	$(CC) -c stage2/$*.s -o stage2/$*.o
-	riscv64-unknown-linux-gnu-gcc -c stage2/$*.s -o stage2/$*.o
+# stage2/%.o: stage2/%.s
+# #	$(CC) -c stage2/$*.s -o stage2/$*.o
+# 	riscv64-unknown-linux-gnu-gcc -c stage2/$*.s -o stage2/$*.o
 
 # 3. 调用链接器
 stage2/rvcc: $(OBJS:%=stage2/%)
@@ -103,8 +107,8 @@ stage2/test/%.exe: stage2/rvcc test/%.c
 #	$(CC) -o- -E -P -C test/$*.c | ./stage2/rvcc -o stage2/test/$*.s -
 #	$(CC) -o- $@ stage2/test/$*.s -xc test/common
 	mkdir -p stage2/test
-	riscv64-unknown-linux-gnu-gcc -o- -E -P -C test/$*.c | ./stage2/rvcc -o stage2/test/$*.s -
-	riscv64-unknown-linux-gnu-gcc -o- $@ stage2/test/$*.s -xc test/common
+	riscv64-unknown-linux-gnu-gcc -o- -E -P -C test/$*.c | ./stage2/rvcc -o stage2/test/$*.o -
+	riscv64-unknown-linux-gnu-gcc -o- $@ stage2/test/$*.o -xc test/common
 
 test-stage2: $(TEST_OBJS:test/%=stage2/test/%)
 #	for i in $^; do echo $$i; ./$$i || exit 1; echo; done
