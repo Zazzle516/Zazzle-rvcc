@@ -2,6 +2,7 @@
 
 # 因为加入了 stage2 的自举部分  把 rvcc 替换为一个变量
 rvcc=$1
+BASE_PATH=/home/zazzle/Zazzle-rvcc
 
 # 创建一个临时文件夹
 # mktemp: 创建临时文件或者临时目录
@@ -9,10 +10,11 @@ rvcc=$1
 # XXXXXX: 名称模板
 # ``: 反引号 命令替换  优先执行 RHS 并将执行结果(临时目录路径)赋值给 tmp
 # 后续通过 $tmp 调用的时候实际是 /tmp/rvcc-test-XXXXXX 路径
-# tmp=`mktemp -d /tmp/rvcc-test-XXXXXX`
-tmp=$(mktemp -d ./rvcc-test-XXXXXX)
-echo $tmp
+tmp=`mktemp -d /tmp/rvcc-test-XXXXXX`
 
+# 该命令每次执行 $tmp 都会创建一个新的临时文件夹  实际上是对命令进行了缩写
+# tmp=$(mktemp -d ./rvcc-test-XXXXXX)
+echo $tmp
 
 # trap [exec command] [singal source] 根据捕获到的信号执行命令
 # INT: Interrupt    2      Ctrl+C 中断信号
@@ -79,5 +81,23 @@ check 'default output file'
 ($rvcc -S $tmp/out.c > $tmp/out.s)
 [ -f $tmp/out.s ]
 check 'default output file'
+
+# [156] 接受多个输入文件
+# $OLDPWD: 环境变量  表示你上一次所在的工作目录
+rm -f $tmp/foo.o $tmp/bar.o
+echo 'int x;' > $tmp/foo.c
+echo 'int y;' > $tmp/bar.c
+echo $PWD
+# 要把编译的结果放到 $tmp 文件夹下
+(cd $tmp; $BASE_PATH/rvcc $tmp/foo.c $tmp/bar.c)
+[ -f $tmp/foo.o ] && [ -f $tmp/bar.o ]
+check 'multiple input files test1'
+
+rm -f $tmp/foo.s $tmp/bar.s
+echo 'int x;' > $tmp/foo.c
+echo 'int y;' > $tmp/bar.c
+(cd $tmp; $BASE_PATH/rvcc -S $tmp/foo.c $tmp/bar.c)
+[ -f $tmp/foo.s ] && [ -f $tmp/bar.s ]
+check 'multiple input files test2'
 
 echo OK
