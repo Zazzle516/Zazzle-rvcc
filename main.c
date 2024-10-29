@@ -4,6 +4,9 @@
 // 源文件 -> 预处理文件 -> cc1编译的汇编文件 -> as 编译的可重定位文件 -> ld 链接的可执行文件
 // commit[154]: 把 zacc 视为一个驱动器 把编译作为 cc1 抽离出来  通过参数调用
 
+// -c
+static bool OptC;
+
 // -cc1
 static bool OptCC1;
 
@@ -33,10 +36,93 @@ static StringArray TmpFilePathParam;
 static void rvccIntroduce(int Status);
 static void runSubProcess(char** Argv);
 static void parseArgs(int argc, char** argv);
+static bool needOneArg(char* Arg);
+static bool endsWith(char* P, char* Q);
+
+// 文件处理函数
+static char* findFile(char* Pattern);
+static bool fileExist(char* Path);
+static char* findLibPath(void);
+static char* findGCCLibPath(void);
+
+// 编译器驱动函数
 static void cc1(void);
 static void runCC1(int Argc, char** Argv, char* inputParam, char* outputParam);
 static FILE* openFile(char* filePath);
-static bool needOneArg(char* Arg);
+static void runLinker(StringArray* input, char* output);
+
+/* 文件处理函数实现 */
+
+// 针对参数中存在通配符的情况的文件存在性判断
+static char* findFile(char* Pattern) {
+    char* Path = NULL;
+    glob_t filePathBuffer = {};
+
+    glob(Pattern, 0, NULL, &filePathBuffer);
+    if (filePathBuffer.gl_pathc > 0)
+        // 如果存在目标路径  提取路径名
+        Path = strdup(filePathBuffer.gl_pathv[filePathBuffer.gl_pathc - 1]);
+
+    globfree(&filePathBuffer);
+    return Path;
+}
+
+// 针对完整路径的文件存在性判断
+static bool fileExist(char* Path) {
+    struct stat St;
+    return !stat(Path, &St);
+}
+
+// riscv64-linux-gnu: C-GNU 运行时库  提供了底层支持，包括启动文件（初始化和清理代码）、底层函数库（libgcc）以及动态链接器支持
+// 包含程序运行时所需的库和启动文件
+static char* findLibPath(void) {
+    // crti.o: 包含初始化代码的入口 eg. 全局对象构造 动态库加载 退出的资源清理
+    // 从汇编角度: .init .fini
+    // 完整路径使用 fileExist() 处理
+
+    if (fileExist("/usr/lib/riscv64-linux-gnu/crti.o"))
+        return "/usr/lib/riscv64-linux-gnu";
+
+    if (fileExist("/usr/lib64/ctri.o"))
+        return "/usr/lib64";
+
+    // 交叉编译环境
+    if (fileExist(format("%s/sysroot/usr/lib/crti.o", RVPATH)))
+        return format("%s/sysroot/usr/lib/", RVPATH);
+
+    errorHint("library path is not found");
+    return NULL;
+}
+
+// riscv64-unknown-linux-gnu: 编译器自身相关的支持文件
+static char* findGCCLibPath(void) {
+    // crtbegin: c runtime begin
+    // 初始化 C 程序的运行环境  从汇编角度: .ctors  .dtors
+    // 这里省略的是 GNU 版本号  因为无法确定
+
+    char* paths[] = {
+        "/usr/lib/gcc/riscv64-linux-gnu/*/crtbegin.o",
+
+        // Gentoo: 高度定制的 Unix-like 系统
+        "/usr/lib/gcc/riscv64-pc-linux-gnu/*/crtbegin.o",
+
+        // Fedora: redhat 赞助的开源发行版
+        "/usr/lib/gcc/riscv64-redhat-linux/*/crtbegin.o",
+
+        // 交叉编译环境
+        format("%s/lib/gcc/riscv64-unknown-linux-gnu/*/crtbegin.o", RVPATH),
+    };
+
+    // 含有通配符 findFile.glob() 处理
+    for (int I = 0; I < sizeof(paths) / sizeof(*paths); I++) {
+        char* path = findFile(paths[I]);
+        if (path)
+            return dirname(path);
+    }
+
+    errorHint("gcc lib path not found");
+    return NULL;
+}
 
 // commit[42]: 无效参数提示
 static void rvccIntroduce(int Status) {
@@ -47,6 +133,15 @@ static void rvccIntroduce(int Status) {
 // 后续可能会对其他需要至少一个参数的参数进行判断
 static bool needOneArg(char* Arg) {
     return !strcmp(Arg, "-o");  // 如果存在 '-o' 返回 true
+}
+
+// 针对输入文件的后缀判断
+// Tip: 使用后缀判断文件是有局限性的  更详细的还是要通过 file xx | objdump 确定
+static bool endsWith(char* P, char* Q) {
+    int lenA = strlen(P);
+    int lenB = strlen(Q);
+    return ((lenA >= lenB)      &&
+            (!strcmp(P + lenA - lenB, Q)));
 }
 
 // 在编译器执行默认流程的时候  在编译和汇编两个阶段的中转文件
@@ -171,6 +266,11 @@ static void parseArgs(int argc, char** argv) {
             continue;
         }
 
+        if (!strcmp(argv[I], "-c")) {
+            OptC = true;
+            continue;
+        }
+
 // commit[156]: 在多输入文件的参数支持下  找到当前需要解析的单个文件参数
         if (!strcmp(argv[I], "-cc1-input")) {
             SingleBaseFile = argv[++I];
@@ -187,7 +287,7 @@ static void parseArgs(int argc, char** argv) {
             errorHint("unknown argument: %s\n", argv[I]);
         }
 
-        // 其他情况  匹配为输入文件
+        // commit[156]: 接受多个输入文件
         strArrayPush(&MultiInputFiles, argv[I]);
     }
 
@@ -213,7 +313,7 @@ static void cc1(void) {
 // commit[156]: 无论是编译还是汇编  都只能处理单个文件
 
 // 在子进程中执行编译部分
-static void runCC1(int Argc, char** Argv, char* compilInputPath, char* tmpFilePathParam) {
+static void runCC1(int Argc, char** Argv, char* compilInputPath, char* tmpA) {
     // 开辟了拷贝自父进程的子进程  模拟对 main 的传参
     char** Args = calloc(Argc + 10, sizeof(char*));
     memcpy(Args, Argv, Argc * sizeof(char*));
@@ -228,8 +328,8 @@ static void runCC1(int Argc, char** Argv, char* compilInputPath, char* tmpFilePa
         Args[Argc++] = compilInputPath; // 理论上我觉得 -cc1-* 也要放到 needOneArg 检查一下...
     }
 
-    if (tmpFilePathParam) {
-        // 由于 parseArg 的解析顺序  会被后面的 tmpFilePathParam 覆盖
+    if (tmpA) {
+        // 由于 parseArg 的解析顺序  会被后面的 tmpA 覆盖
         // 所以手动修改了编译阶段的文件输出位置
         // 和 GCC 也保持一致: 提供多个 -o 选项，只有最后一个 -o 的路径或文件名会被使用，其他会被忽略
 
@@ -238,23 +338,102 @@ static void runCC1(int Argc, char** Argv, char* compilInputPath, char* tmpFilePa
         // 目前 commit[156] (多文件执行) 和 (单文件 + cc1) 执行有冲突
         // eg. "args": ["/home/zazzle/Zazzle-rvcc/tmp1.c" ,"-cc1", "-###"],
         Args[Argc++] = "-cc1-output";
-        Args[Argc++] = tmpFilePathParam;
+        Args[Argc++] = tmpA;
     }
 
     runSubProcess(Args);
 }
 
 // 在子进程中执行汇编部分
-static void assemble(char* tmpFilePathParam, char* compilResPath) {
+static void assemble(char* tmpA, char* tmpB) {
     // 如果是交叉编译环境 需要使用工具链提供的链接器
     char* as = strlen(RVPATH)
                     ? format("%s/bin/riscv64-unknown-linux-gnu-as", RVPATH)
                     : "as";
 
-    // 把 Argv[0] 从 ./rvcc 修改为 as 汇编器  直接调用汇编器完成执行  此时不在 zacc 内部
-    char* CMD[] = {as, "-c", tmpFilePathParam, "-o", compilResPath, NULL};
+    // 把 Argv[0] 从 ./rvcc 修改为 as 汇编器  直接调用汇编器完成执行
+    // 所以不要从 main.c 的 parseArgs() 来判断这里的参数传递 因为调用的是 as 官方的汇编器哈
+    char* CMD[] = {as, "-c", tmpA, "-o", tmpB, NULL};
     runSubProcess(CMD);
 }
+
+// 这里直接输出可执行文件到 -o (如果存在指定) 的文件路径
+static void runLinker(StringArray* input, char* compileResPath) {
+    // 新开辟一片空间按顺序存储所有的链接参数
+    StringArray Arr = {};
+
+    // 指定要使用的链接器程序 包含静态链接和动态链接
+    // Tip: 除非有显示的 -static 参数否则默认使用动态链接
+    char* LD = strlen(RVPATH)
+                    ? format("%s/bin/riscv64-unknown-linux-gnu-ld", RVPATH)
+                    : "ld";
+    strArrayPush(&Arr, LD);
+
+    // 输出文件
+    strArrayPush(&Arr, "-o");
+    strArrayPush(&Arr, compileResPath);
+
+    // 指定目标文件格式 RISCV 64 位的 ELF 文件格式
+    strArrayPush(&Arr, "-m");
+    strArrayPush(&Arr, "elf64lriscv");
+
+    // 动态链接器  作用于程序运行时
+    strArrayPush(&Arr, "-dynamic-linker");
+    char* LP64D = 
+        strlen(RVPATH)
+            ? format("%s/sysroot/lib/ld-linux-riscv64-lp64d.so.1", RVPATH)
+            : "/lib/ld-linux-riscv64-lp64d.so.1";
+    strArrayPush(&Arr, LP64D);
+
+    char* LibPath = findLibPath();          // "/home/zazzle/riscv/sysroot/usr/lib/"
+    char* GCCLibPath = findGCCLibPath();    // "/home/zazzle/riscv/lib/gcc/riscv64-unknown-linux-gnu/11.1.0"
+
+    strArrayPush(&Arr, format("%s/crt1.o", LibPath));
+    strArrayPush(&Arr, format("%s/crti.o", LibPath));
+
+    strArrayPush(&Arr, format("%s/crtbegin.o", GCCLibPath));
+    strArrayPush(&Arr, format("-L%s", GCCLibPath));
+
+    strArrayPush(&Arr, format("-L%s", LibPath));
+    strArrayPush(&Arr, format("-L%s/..", LibPath));
+
+    // 判断是否是交叉编译的环境
+    if (strlen(RVPATH)) {
+        strArrayPush(&Arr, format("-L%s/sysroot/usr/lib64", RVPATH));
+        strArrayPush(&Arr, format("-L%s/sysroot/lib64", RVPATH));
+        strArrayPush(&Arr,
+                    format("-L%s/sysroot/usr/lib/riscv64-linux-gnu", RVPATH));
+        strArrayPush(&Arr,
+                    format("-L%s/sysroot/usr/lib/riscv64-pc-linux-gnu", RVPATH));
+        strArrayPush(&Arr,
+                    format("-L%s/sysroot/usr/lib/riscv64-redhat-linux", RVPATH));
+        strArrayPush(&Arr, format("-L%s/sysroot/usr/lib", RVPATH));
+        strArrayPush(&Arr, format("-L%s/sysroot/lib", RVPATH));
+    } else {
+        strArrayPush(&Arr, "-L/usr/lib64");
+        strArrayPush(&Arr, "-L/lib64");
+        strArrayPush(&Arr, "-L/usr/lib/riscv64-linux-gnu");
+        strArrayPush(&Arr, "-L/usr/lib/riscv64-pc-linux-gnu");
+        strArrayPush(&Arr, "-L/usr/lib/riscv64-redhat-linux");
+        strArrayPush(&Arr, "-L/usr/lib");
+        strArrayPush(&Arr, "-L/lib");
+    }
+
+    for (int I = 0; I < input->paramNum; I ++)
+        strArrayPush(&Arr, input->paramData[I]);
+
+    strArrayPush(&Arr, "-lc");
+    strArrayPush(&Arr, "-lgcc");
+    strArrayPush(&Arr, "--as-needed");
+    strArrayPush(&Arr, "-lgcc_s");
+    strArrayPush(&Arr, "--no-as-needed");
+    strArrayPush(&Arr, format("%s/crtend.o", GCCLibPath));
+    strArrayPush(&Arr, format("%s/crtn.o", LibPath));
+    strArrayPush(&Arr, NULL);
+
+    runSubProcess(Arr.paramData);
+}
+
 
 // commit[42]: 尝试打开输出文件
 static FILE* openFile(char* filePath) {
@@ -276,10 +455,16 @@ int main(int argc, char* argv[]) {
     atexit(cleanUp);
 
     parseArgs(argc, argv);
-    if (MultiInputFiles.paramNum > 1 && CompilResPath)
+
+    // 有多个文件输入只有一个文件输出的话 必须是链接后的结果
+    // 不然文件本身都是单独去编译的  没道理只有一个  所以这里要对 OptC 进行判定
+    if (MultiInputFiles.paramNum > 1 && CompilResPath && (OptC || OptS))
         // -o 选项只能在将多个源文件编译成单个输出文件时使用
         // 如果将多个源文件各自编译成不同的目标文件时使用 -o  
-        errorHint("cannot specify '-o' with multiple files");
+        errorHint("cannot specify '-o' with '-c' or '-S' with multiple files");
+
+    // 声明链接器参数
+    StringArray LdArgs = {};
 
 // 针对多输入文件  每次只取出一个文件参数  执行完整流程
     for (int I = 0; I < MultiInputFiles.paramNum; I ++) {
@@ -296,6 +481,22 @@ int main(int argc, char* argv[]) {
             // 用户没有要求执行到 .s 停止那么默认执行到 .o
             compilResPath = replaceExtern(singleInputFile, ".o");
 
+        // 判断是否是已经编译 / 编译 + 汇编执行结束的文件  如果是的话 直接调用链接就好了
+        if (endsWith(singleInputFile, ".s")) {
+            if (!OptS)
+                assemble(singleInputFile, compilResPath);
+            continue;
+        }
+
+        if (endsWith(singleInputFile, ".o")) {
+            strArrayPush(&LdArgs, singleInputFile);
+            continue;
+        }
+
+        // 目前能解析的文件后缀只支持 .c .s .o 目前没有对预处理文件 .i 的支持
+        if (!endsWith(singleInputFile, ".c") && strcmp(singleInputFile, "-"))
+            errorHint("unknown file extension: %s", singleInputFile);
+
     // 1.A 编译器驱动执行编译
         if (OptCC1) {
             cc1();
@@ -308,10 +509,26 @@ int main(int argc, char* argv[]) {
             continue;
         }
 
+        if (OptC) {
+            char* tmp = createTemplateFilePath();
+            runCC1(argc, argv, singleInputFile, tmp);
+            assemble(tmp, compilResPath);
+            continue;
+        }
+
     // 1.B 执行编译器驱动的默认流程 -o 使用临时文件作为中转
-        char* tmpFilePathParam = createTemplateFilePath();
-        runCC1(argc, argv, singleInputFile, tmpFilePathParam);
-        assemble(tmpFilePathParam, compilResPath);
+        char* tmpA = createTemplateFilePath();  // tmpA: 编译 -> 汇编中转
+        char* tmpB = createTemplateFilePath();  // tmpB: 汇编 -> 链接中转
+
+        // 在执行链接之前  必须先把所有文件编译到 .o 的状态
+        runCC1(argc, argv, singleInputFile, tmpA);
+        assemble(tmpA, tmpB);
+        strArrayPush(&LdArgs, tmpB);
+        continue;
     }
+
+    // 2. 对 .o 文件执行链接
+    if (LdArgs.paramNum > 0)
+        runLinker(&LdArgs, CompilResPath ? CompilResPath : "a.out");
     return 0;
 }

@@ -21,9 +21,22 @@ extern FILE* stdin;
 extern FILE* stdout;
 extern FILE* stderr;
 
+// 定义在 sys/stat.h 中的结构体  存储文件的各种属性信息
+// 核心函数 stat() 获取文件的状态信息
 struct stat {
     char _[512];
 };
+
+// glob_t 定义在 glob.h 中的结构体  用于存储匹配结果
+// glob.h 库很简单  只是对文件名匹配的支持  核心函数只有 glob() globfree()
+typedef struct {
+    size_t g1_pathc;    // 匹配的文件路径数量 eg. argc
+    char** g1_pathv;    // 匹配到的路径名列表 eg. argv
+    size_t g1_offs;
+
+// Q: 这个自定义是怎么回事
+    char _[512];
+} glob_t;
 
 typedef void* va_list;
 static void va_end(va_list ap) {}
@@ -79,10 +92,14 @@ long strtoul(char* nptr, char** endptr, int base);
 void exit(int code);
 double log2(double);
 
+// Tip: 这两个函数都是直接修改参数  并没有分配新的内存
+
 // POSIX: libgen.h
-// GNY: string.h
 // 提取文件路径中的文件名  如果路径为空返回 . 如果没有路径部分返回整个路径
 char* basename(char* path);
+
+// POSIX: libgen.h 获取文件路径中的目录部分
+char* dirname(char* path);
 
 // stdio.h
 // 在目标字符串 s 中搜索字符 c 的最后一次出现  返回指向该位置的指针  找不到返回 NULL
@@ -117,6 +134,25 @@ int wait(int* wstatus);
 // 在程序退出前通过回调函数指针执行一些自定义的清除工作  LIFO
 // 可以多次调用 atexit() 来注册多个清理函数
 int atexit(void (*)(void));
+
+// POSIX: glob.h
+// 提供了文件名模式匹配（通配符匹配）的功能，通常用于查找符合指定模式的文件或路径
+
+// pattern: 要匹配的模式字符串 eg. *.txt
+// flags: 控制匹配行为的标志
+// errfunc: 处理读取目录错误的回调函数 可以为 NULL
+// pglob: 指向 glob_t 类型的指针 存储匹配结果
+// return: 0 表示成功
+int glob(char* pattern, int flags, void* errfn, glob_t* pglob);
+
+// 释放 glob 存储的空间
+void globfree(glob_t* pglob);
+
+// POSIX: sys/stat.h
+// pathname: 文件路径 相对或绝对路径
+// statbuf: 通过该文件路径查询到的文件参数存储位置
+// return: 0 表示成功
+int stat(char* pathname, struct stat* statbuf);
 """)
 
 for Path in sys.argv[1:]:

@@ -3,6 +3,7 @@
 # 因为加入了 stage2 的自举部分  把 rvcc 替换为一个变量
 rvcc=$1
 BASE_PATH=/home/zazzle/Zazzle-rvcc
+RISCV=/home/zazzle/riscv
 
 # 创建一个临时文件夹
 # mktemp: 创建临时文件或者临时目录
@@ -48,7 +49,7 @@ rm -f $tmp/out
 # Q: test.sh 和 testDriver.sh 是什么关系
 # A: test.sh 和 testDriver.sh 是两种不同的输入模式
 # Q: 既然 empty.c 是刚刚声明的空文件    那么它现在读取的是什么呢    在读之前难道要写吗
-$rvcc -o $tmp/out $tmp/empty.c
+$rvcc -c -o $tmp/out $tmp/empty.c
 
 # 检查输出文件的存在并且是否为常规文件
 [ -f $tmp/out ]
@@ -74,30 +75,59 @@ rm -f $tmp/out.o $tmp/out.s
 # shell 中 () 创建新的子 shell 进程运行内部的命令组
 
 echo 'int main(void) {}' > $tmp/out.c
-($rvcc $tmp/out.c > $tmp/out.o )
+($rvcc -c $tmp/out.c > $tmp/out.o )
 [ -f $tmp/out.o ]
 check 'default output file'
 
-($rvcc -S $tmp/out.c > $tmp/out.s)
+($rvcc -c -S $tmp/out.c > $tmp/out.s)
 [ -f $tmp/out.s ]
 check 'default output file'
 
-# [156] 接受多个输入文件
+# commit[156]: 测试接受多个输入文件
 # $OLDPWD: 环境变量  表示你上一次所在的工作目录
 rm -f $tmp/foo.o $tmp/bar.o
 echo 'int x;' > $tmp/foo.c
 echo 'int y;' > $tmp/bar.c
 echo $PWD
 # 要把编译的结果放到 $tmp 文件夹下
-(cd $tmp; $BASE_PATH/rvcc $tmp/foo.c $tmp/bar.c)
+(cd $tmp; $BASE_PATH/rvcc -c $tmp/foo.c $tmp/bar.c)
 [ -f $tmp/foo.o ] && [ -f $tmp/bar.o ]
 check 'multiple input files test1'
 
+# commit[156]: 测试多个输入文件在 -S 选项的情况
 rm -f $tmp/foo.s $tmp/bar.s
 echo 'int x;' > $tmp/foo.c
 echo 'int y;' > $tmp/bar.c
-(cd $tmp; $BASE_PATH/rvcc -S $tmp/foo.c $tmp/bar.c)
+(cd $tmp; $BASE_PATH/rvcc -c -S $tmp/foo.c $tmp/bar.c)
 [ -f $tmp/foo.s ] && [ -f $tmp/bar.s ]
 check 'multiple input files test2'
 
+# commit[157]: 在没有 -c 选项的情况下默认使用 ld 链接
+rm -f $tmp/foo
+echo 'int main() { return 0; }' | $rvcc -o $tmp/foo -
+if [ "$RISCV" = "" ];then
+  $tmp/foo
+else
+  $RISCV/bin/qemu-riscv64 -L $RISCV/sysroot $tmp/foo
+fi
+check linker
+
+rm -f $tmp/foo
+echo 'int bar(); int main() { return bar(); }' > $tmp/foo.c
+echo 'int bar() { return 42; }' > $tmp/bar.c
+$rvcc -o $tmp/foo $tmp/foo.c $tmp/bar.c
+if [ "$RISCV" = "" ];then
+  $tmp/foo
+else
+  $RISCV/bin/qemu-riscv64 -L $RISCV/sysroot $tmp/foo
+fi
+[ "$?" = 42 ]
+check linker
+
+# 生成a.out
+rm -f $tmp/a.out
+echo 'int main() {}' > $tmp/foo.c
+(cd $tmp; $OLDPWD/$rvcc foo.c)
+[ -f $tmp/a.out ]
+check a.out
 echo OK

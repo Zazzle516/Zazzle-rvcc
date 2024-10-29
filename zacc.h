@@ -8,6 +8,8 @@
 
 #define _POSIX_C_SOURCE 200809L
 
+// 目前 RVCC 自举并不支持 #include
+// 所以才需要 self.py 声明所需要的库文件
 #include <assert.h>
 #include <ctype.h>
 #include <stdarg.h>
@@ -22,6 +24,8 @@
 #include <sys/wait.h>       // 进程间的同步和状态查询
 #include <unistd.h>         // 系统调用相关的函数声明  fork() exec() ...
 #include <libgen.h>
+#include <glob.h>
+#include <sys/stat.h>
 
 // 替换声明  在后续的变量声明中省略 struct 关键字
 // Q: 为什么 typedef 可以作为一个组合识别到 (struct structName)

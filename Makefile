@@ -21,6 +21,12 @@ CC=clang-18
 
 # ------------ stage1 ------------
 
+# 编译器参数
+# -E: 执行预处理                 tmp.i
+# -S: 编译                      tmp.s
+# -c: 编译 + 汇编  不链接        tmp.o
+# -o: 指定输出文件名称           tmp.*
+
 # Makefile 会自动进行推导从 main.c 生成 main.o
 # $@ 表示目标文件 rvcc
 # $^ 表示依赖文件 $(OBJS)
@@ -51,7 +57,7 @@ test/%.exe: rvcc test/%.c
 #   -P:  删掉多余的 #line 信息
 #   -C:  保留注释
 #   $*:  自动变量  只能用在模式规则 替换中 % 及其之前的部分  eg. 目标 dir/a.foo.b dir/a.%.b => $* = dir/a.foo
-	riscv64-unknown-linux-gnu-gcc -o- -E -P -C test/$*.c | ./rvcc -o test/$*.o -
+	riscv64-unknown-linux-gnu-gcc -o- -E -P -C test/$*.c | ./rvcc -c -o test/$*.o -
 
 #   -xc: 强制作为 C 语言代码解析(因为 common 没有后缀)
 #   -o:  指定输出的文件名
@@ -87,7 +93,7 @@ test: $(TEST_OBJS)
 stage2/%.o: rvcc self.py %.c
 	mkdir -p stage2/test
 	./self.py zacc.h $*.c > stage2/$*.c
-	./rvcc -o stage2/$*.o stage2/$*.c
+	./rvcc -c -o stage2/$*.o stage2/$*.c
 
 # commit[155]: 把链接放到 ZACC 中实现了  这里可以省略掉了
 # 2. 调用汇编器把 rvcc 自举的 .s 文件翻译到 .o 文件
@@ -107,7 +113,7 @@ stage2/test/%.exe: stage2/rvcc test/%.c
 #	$(CC) -o- -E -P -C test/$*.c | ./stage2/rvcc -o stage2/test/$*.s -
 #	$(CC) -o- $@ stage2/test/$*.s -xc test/common
 	mkdir -p stage2/test
-	riscv64-unknown-linux-gnu-gcc -o- -E -P -C test/$*.c | ./stage2/rvcc -o stage2/test/$*.o -
+	riscv64-unknown-linux-gnu-gcc -o- -E -P -C test/$*.c | ./stage2/rvcc -c -o stage2/test/$*.o -
 	riscv64-unknown-linux-gnu-gcc -o- $@ stage2/test/$*.o -xc test/common
 
 test-stage2: $(TEST_OBJS:test/%=stage2/test/%)
@@ -135,7 +141,7 @@ clean:
 #	find * -type f -name '*.s' -exec {} ';'		编译结果的汇编
 
 create:
-	touch tmp.s tmp.c
+	touch tmpA.c tmpB.c
 
 # 伪代码
 # 声明 test 和 clean 并没有任何文件依赖
