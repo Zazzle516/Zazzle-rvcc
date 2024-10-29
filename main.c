@@ -299,6 +299,7 @@ static void parseArgs(int argc, char** argv) {
 // 驱动的编译部分
 static void cc1(void) {
     Token* tok = tokenizeFile(SingleBaseFile);
+    tok = preprocess(tok);
     Object* prog = parse(tok);
 
     // 目前仅支持多文件输入的单文件打开

@@ -9,6 +9,7 @@ add_executable( rvcc
     tokenize.c
     parse.c
     codeGen.c
+    preprocess.c
 )
 
 target_compile_options(rvcc PRIVATE -std=c11 -g -fno-common)

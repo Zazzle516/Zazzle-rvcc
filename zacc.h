@@ -35,13 +35,14 @@ typedef struct Type Type;
 typedef struct Object Object;
 typedef struct Node Node;
 typedef struct Relocation Relocation;
+typedef struct Token Token;
 
 
 /* 工具函数 */
 #define MAX(x, y) ((x) < (y) ? (y) : (x))
 #define MIN(x, y) ((x) < (y) ? (x) : (y))
 
-/* 词法解析 tokenize() 数据结构和函数声明 */ 
+/* 编译器参数处理 */
 
 // 定义参数存储格式
 typedef struct {
@@ -53,10 +54,13 @@ typedef struct {
 char* format(char* Fmt, ...);
 void strArrayPush(StringArray* Arr, char* S);
 
+/* 词法解析 tokenize() 数据结构和函数声明 */ 
+
 // 在 tokenize() 阶段使用的工具函数
 void errorHint(char* errorInfo, ...);
 void errorAt(int errorLineNum, char* place, char* FMT, va_list VA);
 void charErrorAt(char* place, char* FMT, ...);
+void convertKeyWord(Token* tok);
 
 // 从词法分析的 IO 的角度分析 Token 的可能性
 typedef enum {
@@ -69,7 +73,6 @@ typedef enum {
     TOKEN_STR,          // 字符串字面量
 } TokenKind;
 
-typedef struct Token Token;
 struct Token {
     TokenKind token_kind;
     Token* next;
@@ -86,9 +89,11 @@ struct Token {
 
 Token* tokenizeFile(char* filePath);
 
+/* 预处理函数 preprocess() */
+
+Token* preprocess(Token* tok);
 
 /* 语法分析 parse() 分为声明语法和运算语法进行解析 */
-
 /* 声明语法解析的数据结构和函数声明 */
 
 bool equal(Token* input_token, char* target);

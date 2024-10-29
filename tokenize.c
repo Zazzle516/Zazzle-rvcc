@@ -119,7 +119,7 @@ static bool isKeyWords(Token* input) {
 }
 
 // 得到所有 Tokens 后针对 KEYWORD 进行判断
-static void convertKeyWord(Token* input_token) {
+void convertKeyWord(Token* input_token) {
     for (Token* tok = input_token; tok->token_kind != TOKEN_EOF; tok = tok->next) {
         if (isKeyWords(tok)) {
             tok->token_kind = TOKEN_KEYWORD;
@@ -624,9 +624,6 @@ Token* tokenize(char* fileName, char* P) {
 
     // 添加终结符
     currToken->next = newToken(TOKEN_EOF, P, P);
-
-    // 对完整的 Token 流进行判断 提取关键字
-    convertKeyWord(HEAD.next);
 
     // commit[46]: 为每个 Token 分配行号
     calcuLineNum(HEAD.next);

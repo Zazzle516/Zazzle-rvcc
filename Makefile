@@ -6,7 +6,7 @@ CFLAGS=-std=c11 -g -fno-common
 # target: depend
 #    recipt
 
-SRCS=main.c type.c string.c tokenize.c parse.c codeGen.c
+SRCS=main.c type.c string.c tokenize.c parse.c codeGen.c preprocess.c
 OBJS=$(SRCS:.c=.o)
 # 目标文件(.o)都依赖于头文件 zacc.h
 $(OBJS): zacc.h
