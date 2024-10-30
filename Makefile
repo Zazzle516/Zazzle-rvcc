@@ -45,6 +45,12 @@ rvcc: $(OBJS)
 # commit[155]: 在 ZACC 支持编译器的汇编阶段后  在 (make test) 执行中直接编译到 .o 文件
 # 原来的第二行指令从 (汇编 + 链接) => 纯链接  在第一行 ./rvcc 额外执行了汇编
 
+# commit[159]: 相比于后续的一般测试  这里通过 ./rvcc 直接处理语法含宏文件
+# 后续的一般测试仍然要先通过完整编译器进行预处理再输入 rvcc
+test/macro.exe: rvcc test/macro.c
+	./rvcc -c -o test/macro.o test/macro.c
+	riscv64-unknown-linux-gnu-gcc -static -o $@ test/macro.o -xc test/common
+
 # commit[45]: 执行 TEST 命令
 # $ 通配符 保证前后替换为相同的文件名  如果是不同的文件名 bar.c => foo.exe 需要显式声明
 # 目标模式规则: pathTo/%.target: pathTo/%.source  通配符 % 是判断命令是否是目标模式规则的重点
@@ -73,7 +79,7 @@ test: $(TEST_OBJS)
 #   Bash 循环 {for i in $^; do ...; done} 遍历所有依赖文件(TEST_OBJS)
 #   echo $$i: 本质是 shell 命令  只是 shell-$ 被 Makefile-$ 转义了
 #   ./$$i:  在 qemu 中运行对应测试文件
-	for i in $^; do echo $$i; qemu-riscv64 -L $(RISCV)/sysroot ./$$i || exit 1; echo; done
+	for i in $^; do echo $$i; qemu-riscv64 -L /home/zazzle/riscv/sysroot ./$$i || exit 1; echo; done
 	test/driver.sh ./rvcc
 
 #   换行也会被认为是错误的...
@@ -107,6 +113,12 @@ stage2/rvcc: $(OBJS:%=stage2/%)
 #	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 	riscv64-unknown-linux-gnu-gcc $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
+# commit[159]: 自举同样对宏语法进行支持
+stage2/test/macro.exe: stage2/rvcc test/macro.c
+	mkdir -p stage2/test
+	./stage2/rvcc -c -o stage2/test/macro.o test/macro.c
+	riscv64-unknown-linux-gnu-gcc -o $@ stage2/test/macro.o -xc test/common
+
 # rvcc 自举执行测试必须在 RISCV 物理机上进行
 # 利用 rvcc 自举编译后的结果执行测试文件
 stage2/test/%.exe: stage2/rvcc test/%.c
@@ -125,7 +137,7 @@ test-stage2: $(TEST_OBJS:test/%=stage2/test/%)
 test-all: test test-stage2
 
 clean:
-	rm -rf rvcc tmp* $(TEST_OBJS) test/*.s test/*.exe stage2/
+	rm -rf rvcc tmp* $(TEST_OBJS) test/*.s test/*.exe stage2/ *.out
 
 	find * -type f '(' -name '*~' -o -name '*.o' -o -name '*.s' ')' -exec rm {} ';'
 #	find * 	   表示从当前目录开始查找文件
@@ -141,7 +153,7 @@ clean:
 #	find * -type f -name '*.s' -exec {} ';'		编译结果的汇编
 
 create:
-	touch tmpA.c tmpB.c
+	touch tmpA.c
 
 # 伪代码
 # 声明 test 和 clean 并没有任何文件依赖

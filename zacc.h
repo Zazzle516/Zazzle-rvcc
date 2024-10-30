@@ -77,6 +77,7 @@ struct Token {
     TokenKind token_kind;
     Token* next;
     int LineNum;        // commit[46]: 记录行号 方便报错
+    bool atBeginOfLine; // commit[159]: 判断当前是否是行首      空格会影响 # 符号的判断吗
 
     int64_t value;      // commit[57]: 支持 long 类型后需要扩大
     double FloatValue;  // commit[139]: 支持浮点运算

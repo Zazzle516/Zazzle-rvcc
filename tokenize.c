@@ -16,6 +16,9 @@ static char* InputHEAD;
 // commit[40]: 记录输入的文件名  用于在错误信息提示时打印错误文件名
 static char* currentFileName;
 
+// commit[159]: 判断当前是否在行首
+static bool isAtBeginOfLine;
+
 // 极简版错误提示  一般用于系统错误
 void errorHint(char* errorInfo, ...) {
     va_list Info;
@@ -158,6 +161,11 @@ static Token* newToken(TokenKind token_kind, char* start, char* end) {
     currToken->token_kind = token_kind;
     currToken->place = start;
     currToken->length = end - start;
+
+    // 记录当前 token 的位置状态并重置到默认 非行首 状态
+    // 只有在 tokenize 中读取到 '\n' 后才会覆盖
+    currToken->atBeginOfLine = isAtBeginOfLine;
+    isAtBeginOfLine = false;
     return currToken;
 
     // 为了编译器的效率 这里分配的空间并没有释放
@@ -541,6 +549,8 @@ Token* tokenize(char* fileName, char* P) {
     // 此时因为写在了新文件中 所以无法使用全局变量 InputHEAD 就没什么用了 和我 rebase 掉的那个错误是一致的
     // 就是初始化一下   不知道会不会在后面用到
 
+    isAtBeginOfLine = true;
+
     while(*P) {
         // commit[43]: 跳过行注释
         if (strCmp(P, "//")) {
@@ -567,6 +577,13 @@ Token* tokenize(char* fileName, char* P) {
 
             // 虽然 commit[73] 只解析一个字符  但是字符本身可能是转义的  长度不一定为 1
             P += currToken->length;
+            continue;
+        }
+
+        // commit[159]: 判断当前是否到了行首
+        if (*P == '\n') {
+            P ++;
+            isAtBeginOfLine = true;
             continue;
         }
 
