@@ -608,7 +608,7 @@ static void calcuGen(Node* AST) {
     // .loc fileNumber lineNumber [columnNumber] [options]
     // fileNumber: 根据 .file 的定义 执行对文件名的索引
     // lineNumber: 当前汇编代码对应源码中的行
-    printLn("  .loc 1 %d", AST->token->LineNum);
+    printLn("  .loc %d %d", AST->token->inputFile->fileNo, AST->token->LineNum);
 
     switch (AST->node_kind)
     {
@@ -1197,7 +1197,7 @@ static void calcuGen(Node* AST) {
 // 表达式代码
 static void exprGen(Node* AST) {
     // 同理 声明下面这些汇编代码都属于某一条源代码语句
-    printLn("  .loc 1 %d", AST->token->LineNum);
+    printLn("  .loc %d %d", AST->token->inputFile->fileNo, AST->token->LineNum);
 
     switch (AST->node_kind)
     {
@@ -1579,6 +1579,11 @@ void emitGlobalData(Object* Global) {
 void codeGen(Object* Prog, FILE* result) {
     // commit[42]: 把 codeGen() 中所有的 printLn() 输出全部导向 cmopilerResult 文件中
     compileResult = result;
+
+    // commit[160]: 存在多文件的情况下  获取当前 token 对应的文件 并修改报错信息
+    InputFileArray** files = getAllIncludeFile();
+    for (int i = 0; files[i]; i++)
+        printLn("  .file %d \"%s\"", files[i]->fileNo, files[i]->fileName);
 
     // 在栈上预分配局部变量空间 结构更清晰
     preAllocStackSpace(Prog);

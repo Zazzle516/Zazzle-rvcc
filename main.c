@@ -20,7 +20,7 @@ static char* CompilResPath;
 static char* CompilInputPath;
 
 // commit[156]: 在多输入文件下 对单个文件的参数记录
-static char* SingleBaseFile;
+char* SingleBaseFile;
 static char* SingleOutputfile;
 
 // 定义交叉编译环境中的 as 路径
@@ -299,15 +299,14 @@ static void parseArgs(int argc, char** argv) {
 // 驱动的编译部分
 static void cc1(void) {
     Token* tok = tokenizeFile(SingleBaseFile);
+    if (!tok)
+        errorHint("%s: %s", SingleBaseFile, strerror(errno));
+
     tok = preprocess(tok);
     Object* prog = parse(tok);
 
     // 目前仅支持多文件输入的单文件打开
     FILE* result = openFile(SingleOutputfile);
-
-    // commit[47]: 为汇编文件添加调试信息  参考 DWARF 协议
-    // .file 1 "fileName"  定义数字 1 对应的文件名的映射 建立索引
-    fprintf(result, ".file 1 \"%s\"\n", SingleBaseFile);
     codeGen(prog, result);
 }
 
@@ -495,6 +494,7 @@ int main(int argc, char* argv[]) {
         }
 
         // 目前能解析的文件后缀只支持 .c .s .o 目前没有对预处理文件 .i 的支持
+        // commit[160]: 虽然有对 #include 的支持  但是不能直接解析头文件  只能是在 .c 文件中嵌套对 .h 文件的解析
         if (!endsWith(singleInputFile, ".c") && strcmp(singleInputFile, "-"))
             errorHint("unknown file extension: %s", singleInputFile);
 

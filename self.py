@@ -4,6 +4,8 @@
 import re
 import sys
 
+# Q: 为什么存在重复声明 ???
+
 print("""
 typedef signed char     int8_t;
 typedef short           int16_t;
@@ -34,7 +36,6 @@ typedef struct {
     char** g1_pathv;    // 匹配到的路径名列表 eg. argv
     size_t g1_offs;
 
-// Q: 这个自定义是怎么回事
     char _[512];
 } glob_t;
 

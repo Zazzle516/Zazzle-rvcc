@@ -9,12 +9,12 @@
 // __restrict: GNU 扩展
 // __restrict__: GNU 扩展
 
-// 全局变量 记录输入流的起始位置(方便后续找到具体的错误位置)
-// 写在最上面 如果只是定义在 main() 上面的话 tokenize() 找不到
-static char* InputHEAD;
+// commit[160]: 记录当前输入文件
+static InputFileArray* CurrInputFile;
 
-// commit[40]: 记录输入的文件名  用于在错误信息提示时打印错误文件名
-static char* currentFileName;
+// commit[160]: 指向指针数组的指针  类似  char** argv
+// 在包含对头文件解析  构成了多文件的情况
+static InputFileArray** InputFileArrayPtr;
 
 // commit[159]: 判断当前是否在行首
 static bool isAtBeginOfLine;
@@ -24,7 +24,7 @@ void errorHint(char* errorInfo, ...) {
     va_list Info;
     va_start(Info, errorInfo);
 
-    fprintf(stderr, errorInfo, Info);
+    vfprintf(stderr, errorInfo, Info);
     fprintf(stderr, "\n");
 
     va_end(Info);
@@ -32,11 +32,12 @@ void errorHint(char* errorInfo, ...) {
 }
 
 // commit[40]: 记录错误在文件中的位置 并打印错误信息
-void errorAt(int errorLineNum, char* place, char* FMT, va_list VA) {
+// commit[160]: 在支持递归性的多文件解析后  需要分辨当前错误属于哪个文件
+void errorAt(char* fileName, char* input, int errorLineNum, char* place, char* FMT, va_list VA) {
 
     // 找到 errorLineStart 最开始的位置
     char* errorLineStart = place;
-    while (InputHEAD < errorLineStart && errorLineStart[-1] != '\n')
+    while (input < errorLineStart && errorLineStart[-1] != '\n')
         errorLineStart--;
 
     // 找到 errorLineStart 结束的位置
@@ -44,15 +45,8 @@ void errorAt(int errorLineNum, char* place, char* FMT, va_list VA) {
     while (*errorLineEnd != '\n')
         errorLineEnd++;
 
-    // commit[46]: 在 zacc.h 中添加行号信息后 优化掉这段公共计算
-    // 找到整个文件中 errorLine 的行号
-    // int errorLine = 1;
-    // for (char* P = InputHEAD; P < errorLineStart; P ++)
-    //     if (*P == '\n')
-    //         errorLine++;
-
     // 对错误信息进行格式处理
-    int charNum = fprintf(stderr, "%s:%d: ", currentFileName, errorLineNum);
+    int charNum = fprintf(stderr, "%s:%d: ", fileName, errorLineNum);
     fprintf(stderr, "%.*s\n", (int)(errorLineEnd - errorLineStart), errorLineStart);
 
     int err_place = place - errorLineStart + charNum;
@@ -82,7 +76,7 @@ void tokenErrorAt(Token* token, char* FMT, ...) {
     va_start(VA, FMT);
 
     // commit[46]: 在 struct token 添加了 lineNUm 属性后通过空间提高了效率
-    errorAt(token->LineNum, token->place, FMT, VA);
+    errorAt(token->inputFile->fileName, token->inputFile->fileContent, token->LineNum, token->place, FMT, VA);
 }
 
 // 针对 char 的报错  只会在 tokenize 层调用
@@ -92,11 +86,11 @@ void charErrorAt(char* place, char* FMT, ...) {
 
     // commit[46]: 因为在 tokenize 层 token 是生成目标  所以通过编译的方式得到错误的字符位置
     int errorLineNum = 1;
-    for (char* P = InputHEAD; P < place; P ++)
+    for (char* P = CurrInputFile->fileContent; P < place; P ++)
         if (*P == '\n')
             errorLineNum ++;
 
-    errorAt(errorLineNum, place, FMT, VA);
+    errorAt(CurrInputFile->fileName, CurrInputFile->fileContent, errorLineNum, place, FMT, VA);
 }
 
 /* 工具函数声明 */
@@ -161,6 +155,9 @@ static Token* newToken(TokenKind token_kind, char* start, char* end) {
     currToken->token_kind = token_kind;
     currToken->place = start;
     currToken->length = end - start;
+
+    // commit[160]: 记录当前的 token 属于哪个文件
+    currToken->inputFile = CurrInputFile;
 
     // 记录当前 token 的位置状态并重置到默认 非行首 状态
     // 只有在 tokenize 中读取到 '\n' 后才会覆盖
@@ -522,8 +519,8 @@ static int readPunct(char* input_ptr) {
 
 // commit[46]: 计算 token 的行号
 static void calcuLineNum(Token* tok) {
-    int lineNum = 1;        // 预测下一次赋值的行号  lineNum 提前 P 一行 ??
-    char* P = InputHEAD;
+    int lineNum = 1;
+    char* P = CurrInputFile->fileContent;
 
     while (*P) {
         // Tip: 如果是个很长的单词 需要完全走过一遍才能进入下一个 token 效率不高但是实现简单
@@ -538,15 +535,14 @@ static void calcuLineNum(Token* tok) {
     }
 }
 
-Token* tokenize(char* fileName, char* P) {
+Token* tokenize(InputFileArray* FP) {
     Token HEAD = {};
     Token* currToken = &HEAD;
-    InputHEAD = P;
 
-    // commit[40]: 更新当前读取的文件路径 + 文件名
-    currentFileName = fileName;
+    CurrInputFile = FP;         // 设定 tokenize 中正在解析的文件
+    char* P = FP->fileContent;
 
-    // 此时因为写在了新文件中 所以无法使用全局变量 InputHEAD 就没什么用了 和我 rebase 掉的那个错误是一致的
+    // 此时因为写在了新文件中 所以无法使用全局变量 CurrInputFile 就没什么用了 和我 rebase 掉的那个错误是一致的
     // 就是初始化一下   不知道会不会在后面用到
 
     isAtBeginOfLine = true;
@@ -663,8 +659,9 @@ static char* readFile(char* filePath) {
         Fp = fopen(filePath, "r");
         if (!Fp)
             // errno: 全局的错误编号  根据标准库设置
-            // 通过 strerror() 把编号转换为一串描述性语言
-            errorHint("cannot open %s: %s", filePath, strerror(errno));
+            // 通过 strerror() 把编号转换为一串描述性语言  在 tokenizeFile 中统一处理了  所以这里注释掉
+            // errorHint("cannot open %s: %s", filePath, strerror(errno));
+            return NULL;
     }
 
     /* 无论是 stdin 或者 FILE 都是写入文件的 */
@@ -699,7 +696,7 @@ static char* readFile(char* filePath) {
     // A: 以 byte 计数  累计到最后一个有效字节的 <下一个可写入位置>
     if (fileBufferLength == 0 || fileBuffer[fileBufferLength - 1] != '\n')
         fputc('\n', fileContent);
-    
+
     // 写入结束  关掉 <写文件>
     fputc('\0', fileContent);
     fclose(fileContent);
@@ -707,6 +704,37 @@ static char* readFile(char* filePath) {
     return fileBuffer;
 }
 
+// commit[160]: 分配 InputFileArray 数组元素空间
+static InputFileArray* newFile(char* FileName, int FileNo, char* FileContent) {
+    InputFileArray* Fp = calloc(1, sizeof(InputFileArray));
+    Fp->fileName = FileName;
+    Fp->fileNo = FileNo;
+    Fp->fileContent = FileContent;
+    return Fp;
+}
+
 Token* tokenizeFile(char* filePath) {
-    return tokenize(filePath, readFile(filePath));
+    char* P = readFile(filePath);
+    if (!P)
+        return NULL;
+
+    // 文件编号对应到 codeGen 报错信息的优化
+    // 根据 DWARF 协议约定好文件编号 一般都从 1 开始
+    static int FileNo;
+    InputFileArray* Fp = newFile(filePath, FileNo + 1, P);
+
+    // void *realloc(void *ptr, size_t new_size)       新分配动态内存  可以调整已分配内存块的大小而不改变内容
+    // ptr：指向原来已分配的内存块的指针  如果分配失败返回 NULL
+    // new_size：重新分配的大小（以字节为单位）
+    // 线性扩大当前的数组空间  每次增加 1
+    InputFileArrayPtr = realloc(InputFileArrayPtr, sizeof(char*) * (FileNo + 2));
+
+    InputFileArrayPtr[FileNo] = Fp;
+    InputFileArrayPtr[FileNo + 1] = NULL;
+    FileNo++;
+    return tokenize(Fp);
+}
+
+InputFileArray** getAllIncludeFile(void) {
+    return InputFileArrayPtr;
 }

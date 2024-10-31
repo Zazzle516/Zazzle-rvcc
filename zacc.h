@@ -37,12 +37,25 @@ typedef struct Node Node;
 typedef struct Relocation Relocation;
 typedef struct Token Token;
 
+/* 当前解析的 .c 文件 */
+extern char* SingleBaseFile;
+
 
 /* 工具函数 */
 #define MAX(x, y) ((x) < (y) ? (y) : (x))
 #define MIN(x, y) ((x) < (y) ? (x) : (y))
 
-/* 编译器参数处理 */
+/* 从文件层面定义输入和文件包含 */
+typedef struct {
+    char* fileName;
+    int fileNo;
+    char* fileContent;
+} InputFileArray;
+
+// 获取当前输入文件的文件柄
+InputFileArray** getAllIncludeFile(void);
+
+/* 编译器驱动输入参数处理 */
 
 // 定义参数存储格式
 typedef struct {
@@ -51,16 +64,15 @@ typedef struct {
     int paramNum;       // 参数个数
 } StringArray;
 
-char* format(char* Fmt, ...);
 void strArrayPush(StringArray* Arr, char* S);
 
 /* 词法解析 tokenize() 数据结构和函数声明 */ 
 
 // 在 tokenize() 阶段使用的工具函数
 void errorHint(char* errorInfo, ...);
-void errorAt(int errorLineNum, char* place, char* FMT, va_list VA);
+void errorAt(char* fileName, char* input, int errorLineNum, char* place, char* FMT, va_list VA);
 void charErrorAt(char* place, char* FMT, ...);
-void convertKeyWord(Token* tok);
+char* format(char* Fmt, ...);
 
 // 从词法分析的 IO 的角度分析 Token 的可能性
 typedef enum {
@@ -74,20 +86,22 @@ typedef enum {
 } TokenKind;
 
 struct Token {
+    InputFileArray* inputFile;    // 记录当前读取的 token 对应的文件
     TokenKind token_kind;
     Token* next;
-    int LineNum;        // commit[46]: 记录行号 方便报错
-    bool atBeginOfLine; // commit[159]: 判断当前是否是行首      空格会影响 # 符号的判断吗
+    int LineNum;                // commit[46]: 记录行号 方便报错
+    bool atBeginOfLine;         // commit[159]: 判断当前是否是行首
 
-    int64_t value;      // commit[57]: 支持 long 类型后需要扩大
-    double FloatValue;  // commit[139]: 支持浮点运算
+    int64_t value;              // commit[57]: 支持 long 类型后需要扩大
+    double FloatValue;          // commit[139]: 支持浮点运算
     char* place;
     unsigned int length;
 
     char* strContent;
-    Type* tokenType;    // commit[132]: 在词法解析部分自定义数值后缀
+    Type* tokenType;            // commit[132]: 在词法解析部分自定义数值后缀
 };
 
+void convertKeyWord(Token* tok);
 Token* tokenizeFile(char* filePath);
 
 /* 预处理函数 preprocess() */
