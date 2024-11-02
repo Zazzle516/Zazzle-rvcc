@@ -5,6 +5,19 @@ static bool isHash(Token* tok) {
     return (tok->atBeginOfLine && equal(tok, "#"));
 }
 
+// Q: 到底跳过了什么 ??? 所有的空白符都会被 tokenize 处理的
+static Token* skipLine(Token* tok) {
+    if (tok->atBeginOfLine)
+        return tok;
+
+// 发现 curr.c 文件的符号不在行首的位置
+    warnTok(tok, "extra token");
+    while (!tok->atBeginOfLine)
+        tok = tok->next;
+
+    return tok;
+}
+
 // commit[160]: 完成对 .h 文件内容的拷贝
 static Token* copyToken(Token* tok) {
     Token* newTok = calloc(1, sizeof(Token));
@@ -58,7 +71,9 @@ static Token* processDefine(Token* tok) {
             if (!tokNext)
                 tokenErrorAt(tok, "%s", strerror(errno));
 
-            tok = append(tokNext, tok->next);
+            // Q: 不知道在跳过什么...
+            tok = skipLine(tok->next);
+            tok = append(tokNext, tok);
             continue;
         }
 

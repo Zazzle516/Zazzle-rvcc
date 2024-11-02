@@ -2,13 +2,14 @@
             // zacc.h   头文件  定义结构体和函数声明
             // type.c       变量类型定义实现
             // tokenize.c   词法解析
+            // preprocess.c 预处理
             // parse.c      语法解析
             // codeGen.c    后端代码生成
             // main.c       程序入口
 
 #define _POSIX_C_SOURCE 200809L
 
-// 目前 RVCC 自举并不支持 #include
+// 目前 RVCC 自举并不完全支持 #include
 // 所以才需要 self.py 声明所需要的库文件
 #include <assert.h>
 #include <ctype.h>
@@ -45,7 +46,7 @@ extern char* SingleBaseFile;
 #define MAX(x, y) ((x) < (y) ? (y) : (x))
 #define MIN(x, y) ((x) < (y) ? (x) : (y))
 
-/* 从文件层面定义输入和文件包含 */
+/* 从文件层面定义输入和头文件 */
 typedef struct {
     char* fileName;
     int fileNo;
@@ -102,6 +103,7 @@ struct Token {
 };
 
 void convertKeyWord(Token* tok);
+void warnTok(Token* tok, char* Fmt, ...);
 Token* tokenizeFile(char* filePath);
 
 /* 预处理函数 preprocess() */

@@ -64,7 +64,8 @@ void errorAt(char* fileName, char* input, int errorLineNum, char* place, char* F
     // 在这里统一清除变长参数
     va_end(VA);
 
-    exit(1);
+    // commit[161]: 适配 warning 不能提前终结
+    // exit(1);
 }
 
 
@@ -77,6 +78,7 @@ void tokenErrorAt(Token* token, char* FMT, ...) {
 
     // commit[46]: 在 struct token 添加了 lineNUm 属性后通过空间提高了效率
     errorAt(token->inputFile->fileName, token->inputFile->fileContent, token->LineNum, token->place, FMT, VA);
+    exit(1);
 }
 
 // 针对 char 的报错  只会在 tokenize 层调用
@@ -91,6 +93,16 @@ void charErrorAt(char* place, char* FMT, ...) {
             errorLineNum ++;
 
     errorAt(CurrInputFile->fileName, CurrInputFile->fileContent, errorLineNum, place, FMT, VA);
+    exit(1);
+}
+
+// Q: 怎么判定 error 和 warning 的界限  tok 解析 Warning
+// Q: 多余的终结符是指什么情况呢        猜测是制表符
+void warnTok(Token* tok, char* Fmt, ...) {
+    va_list VA;
+    va_start(VA, Fmt);
+    errorAt(tok->inputFile->fileName, tok->inputFile->fileContent, tok->LineNum, tok->place, Fmt, VA);
+    va_end(VA);
 }
 
 /* 工具函数声明 */
