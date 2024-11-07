@@ -62,12 +62,19 @@ static Token* processDefine(Token* tok) {
             tok = tok->next;
             if (tok->token_kind != TOKEN_STR)
                 tokenErrorAt(tok, "expected a filename");
-            
-            // 取出在字符双引号中的头文件名称  拼装成完整的可以解析的路径
-            // Tip: 在前面的路径选择中 是以当前文件所处的路径为基准的
-            // 在 tokenize 会把 "xx" 解析成一个完整的 TOKEN_STR  所以会把 "xx" 全部跳过替换为头文件对应的内容
-            char* path = format("%s/%s", dirname(strdup(tok->inputFile->fileName)), tok->strContent);
-            Token* tokNext = tokenizeFile(path);
+
+            char* filePath;
+            if (tok->strContent[0] == '/') {
+                filePath = tok->strContent;
+            }
+            else
+                // 以当前解析的 .c 文件为根路径  拼接头文件名称
+                // 取出在字符双引号中的头文件名称  拼装成完整的可以解析的路径
+                // Tip: 在前面的路径选择中 是以当前文件所处的路径为基准的
+                // 在 tokenize 会把 "xx" 解析成一个完整的 TOKEN_STR  所以会把 "xx" 全部跳过替换为头文件对应的内容
+                filePath = format("%s/%s", dirname(strdup(tok->inputFile->fileName)), tok->strContent);
+
+            Token* tokNext = tokenizeFile(filePath);
             if (!tokNext)
                 tokenErrorAt(tok, "%s", strerror(errno));
 

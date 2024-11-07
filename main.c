@@ -4,17 +4,20 @@
 // 源文件 -> 预处理文件 -> cc1编译的汇编文件 -> as 编译的可重定位文件 -> ld 链接的可执行文件
 // commit[154]: 把 zacc 视为一个驱动器 把编译作为 cc1 抽离出来  通过参数调用
 
+// -E
+static bool OptE;
+
 // -c
 static bool OptC;
 
-// -cc1
-static bool OptCC1;
+// -s
+static bool OptS;
 
 // -###
 static bool subProcessInfo;
 
-// -s / -as
-static bool OptS;
+// -cc1
+static bool OptCC1;
 
 static char* CompilResPath;
 static char* CompilInputPath;
@@ -45,8 +48,11 @@ static bool fileExist(char* Path);
 static char* findLibPath(void);
 static char* findGCCLibPath(void);
 
-// 编译器驱动函数
+// 编译器执行函数
 static void cc1(void);
+
+// 编译器驱动函数
+static void fileAfterPreProcess(Token* tok);
 static void runCC1(int Argc, char** Argv, char* inputParam, char* outputParam);
 static FILE* openFile(char* filePath);
 static void runLinker(StringArray* input, char* output);
@@ -179,7 +185,7 @@ static void cleanUp(void) {
 // 针对编译驱动 开辟新的子进程执行
 static void runSubProcess(char** Argv) {
     if (subProcessInfo) {
-        // 并不是真的错误输出  只是子进程执行开始打印用户传入的所有参数信息
+        // 子进程执行开始前打印用户传入的所有参数信息
         fprintf(stderr, "%s", Argv[0]);
         for (int I = 1; Argv[I]; I++)
             fprintf(stderr, " %s", Argv[I]);
@@ -266,6 +272,11 @@ static void parseArgs(int argc, char** argv) {
             continue;
         }
 
+        if (!strcmp(argv[I], "-E")) {
+            OptE = true;
+            continue;
+        }
+
         if (!strcmp(argv[I], "-c")) {
             OptC = true;
             continue;
@@ -296,13 +307,18 @@ static void parseArgs(int argc, char** argv) {
         errorHint("no input file\n");
 }
 
-// 驱动的编译部分
+// 编译器的完整流程
 static void cc1(void) {
     Token* tok = tokenizeFile(SingleBaseFile);
     if (!tok)
         errorHint("%s: %s", SingleBaseFile, strerror(errno));
 
     tok = preprocess(tok);
+    if (OptE) {
+        fileAfterPreProcess(tok);
+        return;
+    }
+
     Object* prog = parse(tok);
 
     // 目前仅支持多文件输入的单文件打开
@@ -311,6 +327,23 @@ static void cc1(void) {
 }
 
 // commit[156]: 无论是编译还是汇编  都只能处理单个文件
+
+// 在子进程中执行预处理部分
+static void fileAfterPreProcess(Token* tok) {
+    // 判断用户是否有指定输出路径  否则直接输出到控制台
+    FILE* out = openFile(CompilResPath ? CompilResPath : "-");
+
+    int Line = 1;
+    for (; tok->token_kind != TOKEN_EOF; tok = tok->next) {
+        // Tip: 在 tokenize 处理后不存在空格  在前面手动添加空格包括换行符
+        if (Line > 1 && tok->atBeginOfLine)
+            fprintf(out, "\n");
+        fprintf(out, " %.*s", tok->length, tok->place);
+        Line ++;
+    }
+
+    fprintf(out, "\n");
+}
 
 // 在子进程中执行编译部分
 static void runCC1(int Argc, char** Argv, char* compilInputPath, char* tmpA) {
@@ -458,10 +491,10 @@ int main(int argc, char* argv[]) {
 
     // 有多个文件输入只有一个文件输出的话 必须是链接后的结果
     // 不然文件本身都是单独去编译的  没道理只有一个  所以这里要对 OptC 进行判定
-    if (MultiInputFiles.paramNum > 1 && CompilResPath && (OptC || OptS))
+    if (MultiInputFiles.paramNum > 1 && CompilResPath && (OptC || OptS || OptE))
         // -o 选项只能在将多个源文件编译成单个输出文件时使用
         // 如果将多个源文件各自编译成不同的目标文件时使用 -o  
-        errorHint("cannot specify '-o' with '-c' or '-S' with multiple files");
+        errorHint("cannot specify '-o' with '-c' '-E' or '-S' with multiple files");
 
     // 声明链接器参数
     StringArray LdArgs = {};
@@ -498,11 +531,18 @@ int main(int argc, char* argv[]) {
         if (!endsWith(singleInputFile, ".c") && strcmp(singleInputFile, "-"))
             errorHint("unknown file extension: %s", singleInputFile);
 
-    // 1.A 编译器驱动执行编译
+    // 0. 子进程真正调用的编译功能
         if (OptCC1) {
             cc1();
             return 0;
         }
+
+    // 1.A 编译器驱动执行编译
+        if (OptE) {
+            runCC1(argc, argv, singleInputFile, NULL);
+            continue;
+        }
+
         if (OptS) {
             // 理论上 -s 选项是编译器对最终的输出结果剥离符号表和调试信息
             // RVCC 本身没有该功能  只是负责传递了 -s 参数

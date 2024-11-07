@@ -88,7 +88,6 @@ check 'default output file'
 rm -f $tmp/foo.o $tmp/bar.o
 echo 'int x;' > $tmp/foo.c
 echo 'int y;' > $tmp/bar.c
-echo $PWD
 # 要把编译的结果放到 $tmp 文件夹下
 (cd $tmp; $BASE_PATH/rvcc -c $tmp/foo.c $tmp/bar.c)
 [ -f $tmp/foo.o ] && [ -f $tmp/bar.o ]
@@ -112,6 +111,7 @@ else
 fi
 check linker
 
+# commit[157]: 支持链接
 rm -f $tmp/foo
 echo 'int bar(); int main() { return bar(); }' > $tmp/foo.c
 echo 'int bar() { return 42; }' > $tmp/bar.c
@@ -130,4 +130,18 @@ echo 'int main() {}' > $tmp/foo.c
 (cd $tmp; $OLDPWD/$rvcc foo.c)
 [ -f $tmp/a.out ]
 check a.out
+
+# commit[162]: 支持 -E 预处理器选项
+echo "-E test start"
+# 把 foo 写到 tmp/out 中  然后把 out 包含进来  在程序对头文件替换后应该访问到 foo 的存在
+echo foo > $tmp/out
+echo "#include \"$tmp/out\""
+echo "#include \"$tmp/out\"" | $rvcc -E - | grep -q foo
+check -E
+
+echo foo > $tmp/out1
+echo "#include \"$tmp/out1\"" | $rvcc -E -o $tmp/out2 -
+cat $tmp/out2 | grep -q foo
+check '-E and -o'
+
 echo OK
